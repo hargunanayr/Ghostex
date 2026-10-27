@@ -146,6 +146,9 @@ impl GhostexGpuiApp {
         if command_type == "openSidebarGitChangedFile" {
             copy_bools(command, &mut message, &["openLocation"]);
         }
+        if command_type == "openSidebarGitChangedFileDiff" {
+            copy_bools(command, &mut message, &["staged"]);
+        }
         if matches!(
             command_type,
             "confirmSidebarGitCommit" | "confirmSidebarGitDirectMerge"

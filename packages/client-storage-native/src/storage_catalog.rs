@@ -96,6 +96,12 @@ pub const CATALOG: &[CatalogStore] = &[
         Local,
     ),
     store(
+        "gitChangesView",
+        "ghostex.gitCommitModal.changesView.v1",
+        false,
+        Local,
+    ),
+    store(
         "hiddenItems",
         "ghostex.sidebar.hidden-items.v1",
         false,

@@ -1,5 +1,6 @@
 //! Open, command, and diff-delivery plumbing for the native commit review and file diff.
 //! SEE-ALSO: apps/desktop/src/app/window/git_commit_modal/window.rs (the window entity and its decision record), apps/desktop/src/app/native_app_modal_lifecycle.rs (the shared window path), apps/desktop/src/app/gx_store/git/review.rs and merge.rs (what each command does), apps/desktop/src/app/remote_conn/app_modal_bridge.rs (a `gitFileDiff` for an open review is delivered into it).
+use crate::app::gx_store::git::GitReviewStagingAction;
 use crate::app::gx_store::git::review::GitReviewConfirm;
 use crate::app::gx_store::{read_preference_value, write_client_document_value};
 use crate::app::helpers::*;
@@ -30,6 +31,9 @@ fn default_prompt_agent_of(sidebar_state: Option<&serde_json::Value>) -> Option<
 
 /// `GIT_COMMIT_DIFF_PREFERENCES_STORAGE_KEY` (client-storage store `gitDiff`).
 const DIFF_PREFERENCES_STORAGE_KEY: &str = "ghostex.gitCommitModal.diffPreferences.v1";
+
+/// The commit review's List / Tree choice (client-storage store `gitChangesView`).
+const CHANGES_VIEW_STORAGE_KEY: &str = "ghostex.gitCommitModal.changesView.v1";
 
 /// The `hud.agents` rows with a launch command, the filter the React dialog applies.
 fn git_commit_prompt_agents(hud: Option<&serde_json::Value>) -> Vec<GitCommitAgent> {
@@ -76,7 +80,7 @@ fn review_confirm(confirm: GitCommitConfirm) -> GitReviewConfirm {
         request_id: confirm.request_id,
         message: confirm.message,
         agent_id: confirm.agent_id,
-        file_paths: confirm.file_paths,
+        file_paths: None,
         commit_on_new_ref: confirm.commit_on_new_ref,
         delete_worktree_after: confirm.delete_worktree_after,
     }
@@ -126,11 +130,18 @@ impl GhostexGpuiApp {
                 .flatten()
                 .as_deref(),
         );
+        let changes_view = GitChangesView::from_storage(
+            read_preference_value(CHANGES_VIEW_STORAGE_KEY)
+                .ok()
+                .flatten()
+                .as_deref(),
+        );
         let config = GitCommitModalConfig {
             draft,
             agents,
             prompt_agent_id,
             diff_prefs,
+            changes_view,
             palette: self.gpui_native_modal_palette(),
         };
         let host = self.native_app_modal_host(cx, |app, command, cx| {
@@ -200,7 +211,37 @@ impl GhostexGpuiApp {
             GitCommitModalCommand::OpenFileDiff {
                 request_id,
                 file_path,
-            } => self.git_open_changed_file_diff(&request_id, &file_path, cx),
+                staged,
+            } => self.git_open_changed_file_diff(
+                &request_id,
+                &file_path,
+                Some(match staged {
+                    true => ghostex_gx_core::git_menu::GitReviewSide::Staged,
+                    false => ghostex_gx_core::git_menu::GitReviewSide::Unstaged,
+                }),
+                cx,
+            ),
+            GitCommitModalCommand::Staging {
+                request_id,
+                action,
+                file_paths,
+            } => self.git_review_staging(
+                &request_id,
+                match action {
+                    GitCommitStagingAction::Stage => GitReviewStagingAction::Stage,
+                    GitCommitStagingAction::Unstage => GitReviewStagingAction::Unstage,
+                    GitCommitStagingAction::Discard => GitReviewStagingAction::Discard,
+                },
+                file_paths,
+                cx,
+            ),
+            GitCommitModalCommand::ChangesViewChanged(view) => {
+                write_git_commit_preference(
+                    CHANGES_VIEW_STORAGE_KEY,
+                    Some(view.to_storage().to_string()),
+                    cx,
+                );
+            }
             GitCommitModalCommand::OpenFileLocation {
                 request_id,
                 file_path,
@@ -222,6 +263,30 @@ impl GhostexGpuiApp {
             }
             GitCommitModalCommand::PathCopied => gpui_copy_feedback(cx),
         }
+    }
+
+    /// The review's file list after a Stage, Unstage or Discard (`changedFiles`, `requestId`), for
+    /// the open commit review of that request.
+    pub(crate) fn deliver_git_review_files(
+        &mut self,
+        message: serde_json::Value,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let request_id = message
+            .get("requestId")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let files = changed_files_from_json(message.get("changedFiles"));
+        self.update_native_app_modal(
+            GpuiAppModalKind::GitCommit,
+            cx,
+            |modal: &mut GpuiGitCommitModalWindow, _window, cx| {
+                if modal.request_id() == request_id {
+                    modal.receive_changes(files, cx);
+                }
+            },
+        );
     }
 
     /// Delivers a `gitFileDiff` open message into the open commit review as its right pane's

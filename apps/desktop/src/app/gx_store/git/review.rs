@@ -10,9 +10,9 @@
 //! authority for side effects.
 
 use ghostex_gx_core::git_menu::{
-    GIT_MULTIPLE_COMMITS_PROMPT, GitRemoteProject, GitReviewAction, GitState, GitToastLevel,
-    PendingGitReview, ReviewDraftInput, finished_title, normalize_relative_git_file_path,
-    resolve_trusted_file_selection, review_modal_draft, started_title,
+    GitRemoteProject, GitReviewAction, GitReviewSide, GitState, GitToastLevel, PendingGitReview,
+    ReviewDraftInput, finished_title, multiple_commits_prompt, normalize_relative_git_file_path,
+    review_commit_selection, review_modal_draft, staged_review_paths, started_title,
 };
 use serde_json::{Value, json};
 
@@ -109,7 +109,12 @@ impl GhostexGpuiApp {
             }
             Some("openSidebarGitChangedFileDiff") => {
                 if let Some(file_path) = text("filePath", 1024) {
-                    self.git_open_changed_file_diff(&request_id, &file_path, cx);
+                    let side = match command.get("staged").and_then(Value::as_bool) {
+                        Some(true) => Some(GitReviewSide::Staged),
+                        Some(false) => Some(GitReviewSide::Unstaged),
+                        None => None,
+                    };
+                    self.git_open_changed_file_diff(&request_id, &file_path, side, cx);
                 }
             }
             Some("openSidebarGitChangedFile") => {
@@ -296,7 +301,7 @@ impl GhostexGpuiApp {
         }
         let trusted = match review.has_commit {
             false => None,
-            true => match resolve_trusted_file_selection(&review, confirm.file_paths.as_deref()) {
+            true => match review_commit_selection(&review, confirm.file_paths.as_deref()) {
                 Ok(selection) => Some(selection),
                 Err(_) => {
                     let description = match (review.action, remote) {
@@ -332,10 +337,11 @@ impl GhostexGpuiApp {
                     agent_id: confirm.agent_id.clone(),
                     file_paths: trusted
                         .as_ref()
-                        .map(|selection| selection.file_paths.clone()),
+                        .map(|commit| commit.selection.file_paths.clone()),
                     has_explicit_file_selection: trusted
                         .as_ref()
-                        .is_some_and(|selection| selection.explicit),
+                        .is_some_and(|commit| commit.selection.explicit),
+                    staged_only: trusted.as_ref().is_some_and(|commit| commit.staged_only),
                     has_commit: review.has_commit,
                     message: confirm.message.clone(),
                 },
@@ -347,8 +353,9 @@ impl GhostexGpuiApp {
             params["commit"] = json!({
                 "agentId": self.git_default_prompt_agent_id(confirm.agent_id.as_deref()),
                 "commitOnNewRef": confirm.commit_on_new_ref,
-                "filePaths": trusted.as_ref().map(|selection| selection.file_paths.clone()),
+                "filePaths": trusted.as_ref().map(|commit| commit.selection.file_paths.clone()),
                 "message": confirm.message,
+                "stagedOnly": trusted.as_ref().is_some_and(|commit| commit.staged_only),
             });
         }
         match review.action {
@@ -403,6 +410,10 @@ impl GhostexGpuiApp {
         cx: &mut gpui::Context<Self>,
     ) {
         let review = self.gx_store.git.reviews.remove(request_id);
+        let staged = review
+            .as_ref()
+            .map(|review| staged_review_paths(&review.files))
+            .unwrap_or_default();
         let scoped = match &review {
             Some(review) => Some(review.project_id.clone()),
             None => self.git_active_scoped_project_id(),
@@ -438,19 +449,21 @@ impl GhostexGpuiApp {
         self.git_run_prompt_workflow(
             scope,
             "Multiple Commits",
-            GIT_MULTIPLE_COMMITS_PROMPT.to_string(),
+            multiple_commits_prompt(&staged),
             agent_id,
             None,
             cx,
         );
     }
 
-    /// A changed file's diff in the review dialog (`openSidebarGitChangedFileDiff`). Only paths the
-    /// review listed are read.
+    /// A changed file's diff in the review dialog (`openSidebarGitChangedFileDiff`): its staged side
+    /// (HEAD to the index), its unstaged side (the index to the working tree, or an untracked file
+    /// against nothing), or both when `side` is `None`. Only paths the review listed are read.
     pub(crate) fn git_open_changed_file_diff(
         &mut self,
         request_id: &str,
         file_path: &str,
+        side: Option<GitReviewSide>,
         cx: &mut gpui::Context<Self>,
     ) {
         let Some(review) = self.gx_store.git.reviews.get(request_id).cloned() else {
@@ -465,11 +478,22 @@ impl GhostexGpuiApp {
         let Some(file) = review.file(&path).cloned() else {
             return;
         };
+        let (additions, deletions) = match side {
+            Some(GitReviewSide::Staged) => file
+                .staged
+                .as_ref()
+                .map_or((0, 0), |change| (change.additions, change.deletions)),
+            Some(GitReviewSide::Unstaged) => file
+                .unstaged
+                .as_ref()
+                .map_or((0, 0), |change| (change.additions, change.deletions)),
+            None => (file.additions, file.deletions),
+        };
         let remote = scope.remote.clone();
         let project_id = scope.project_id();
         let request_id = request_id.to_string();
         cx.spawn(async move |this, cx| {
-            let patch = read_file_patch(remote, project_id, &path).await;
+            let patch = read_file_patch(remote, project_id, &path, side).await;
             let patch = patch
                 .filter(|patch| !patch.trim().is_empty())
                 .map(|patch| patch.trim().to_string())
@@ -478,10 +502,11 @@ impl GhostexGpuiApp {
                 this.open_app_modal_from_bridge(
                     json!({
                         "gitFileDiff": {
-                            "additions": file.additions,
-                            "deletions": file.deletions,
+                            "additions": additions,
+                            "deletions": deletions,
                             "filePath": path,
                             "patch": patch,
+                            "staged": side.map(|side| side == GitReviewSide::Staged),
                         },
                         "modal": "gitFileDiff",
                         "requestId": request_id,
@@ -591,26 +616,38 @@ impl GhostexGpuiApp {
     }
 }
 
-/// The staged and unstaged diff of one file, or for an untracked file its diff against nothing.
-async fn read_file_patch(remote: calls::Remote, project_id: String, path: &str) -> Option<String> {
+/// One file's staged diff, its unstaged diff, or both (`side` `None`); an untracked file's unstaged
+/// diff is its diff against nothing.
+async fn read_file_patch(
+    remote: calls::Remote,
+    project_id: String,
+    path: &str,
+    side: Option<GitReviewSide>,
+) -> Option<String> {
     let file = json!({ "filePath": path });
+    let read = |action: &'static str, wanted: bool| {
+        let (remote, project_id, file) = (remote.clone(), project_id.clone(), file.clone());
+        async move {
+            match wanted {
+                true => calls::git_action(remote, project_id, action, file)
+                    .await
+                    .map(Some),
+                false => Ok(None),
+            }
+        }
+    };
     let (staged, unstaged) = futures::join!(
-        calls::git_action(
-            remote.clone(),
-            project_id.clone(),
-            "diffCachedNoExt",
-            file.clone()
-        ),
-        calls::git_action(
-            remote.clone(),
-            project_id.clone(),
-            "diffNoExt",
-            file.clone()
-        ),
+        read("diffCachedNoExt", side != Some(GitReviewSide::Unstaged)),
+        read("diffNoExt", side != Some(GitReviewSide::Staged)),
     );
     let (staged, unstaged) = (staged.ok()?, unstaged.ok()?);
-    let parts: Vec<&str> = [calls::stdout(&staged), calls::stdout(&unstaged)]
+    if side == Some(GitReviewSide::Staged) {
+        return Some(calls::stdout(staged.as_ref()?).trim_end().to_string());
+    }
+    let parts: Vec<&str> = [staged.as_ref(), unstaged.as_ref()]
         .into_iter()
+        .flatten()
+        .map(calls::stdout)
         .map(str::trim_end)
         .filter(|part| !part.trim().is_empty())
         .collect();

@@ -9,8 +9,10 @@ use super::diff_view::{
 use super::focus::{
     FocusTarget, RowFocus, focus_ring_border, focus_ring_shadow, focus_visible, ring_color,
 };
-use super::model::{ChangedFilesTreeRow, GitFileStat, summarize_changed_files};
-use super::window::{GpuiGitCommitModalWindow, InlineDiffMode};
+use super::model::{ChangeSide, GitChangesView, GitFileStat, ReviewRow, ReviewRowKind};
+use super::window::{
+    CommitConfirmDialog, GitCommitStagingAction, GpuiGitCommitModalWindow, InlineDiffMode,
+};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, ClickEvent, Context, FontWeight, InteractiveElement as _, IntoElement,
@@ -29,6 +31,22 @@ const ICON_FOLDER_OPEN: &str = "modals/git-commit/folder-open.svg";
 const ICON_FILE: &str = "modals/git-commit/file.svg";
 const ICON_COPY: &str = "modals/git-commit/copy.svg";
 const ICON_TICK: &str = "modals/git-commit/checkbox-tick.svg";
+const ICON_PLUS: &str = "modals/git-commit/plus.svg";
+const ICON_MINUS: &str = "modals/git-commit/minus.svg";
+const ICON_UNDO: &str = "modals/git-commit/undo.svg";
+const ICON_LIST: &str = "modals/git-commit/list.svg";
+const ICON_TREE: &str = "modals/git-commit/list-tree.svg";
+
+/// The status letter's colour (MonoCode's `statusColor`): untracked sky, added and renamed green,
+/// deleted and conflicted red, modified amber.
+fn status_color(status: &str, dp: &super::diff_view::GitDiffPalette) -> Rgba {
+    match status {
+        "U" => rgb(0x38bdf8),
+        "A" | "R" => dp.stat_addition,
+        "D" | "!" => dp.stat_deletion,
+        _ => rgb(0xfbbf24),
+    }
+}
 
 /// `.git-commit-modal-body { padding: 20px 19px 24px 20px; gap: 16px }` and its
 /// `minmax(360px, 0.72fr) minmax(600px, 1.28fr)` columns.
@@ -128,6 +146,145 @@ impl GpuiGitCommitModalWindow {
             .into_any_element()
     }
 
+    /// A 20px icon button on a row or section header (MonoCode's `IconAction`): muted until hovered,
+    /// and dimmed while a Stage, Unstage or Discard runs.
+    fn row_action(
+        &self,
+        id: SharedString,
+        label: &'static str,
+        icon: &'static str,
+        on_click: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let p = self.palette;
+        let hover = rgba_of(p.foreground, 0.10);
+        let busy = self.busy;
+        div()
+            .id(id)
+            .role(gpui::Role::Button)
+            .aria_label(label)
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .size(px(20.0))
+            .rounded(px(4.0))
+            .when(busy, |this| this.opacity(0.4))
+            .when(!busy, |this| {
+                this.cursor_pointer()
+                    .hover(move |this| this.bg(hsla(hover)))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        cx.stop_propagation();
+                        on_click(this, window, cx);
+                    }))
+            })
+            .child(modal_icon(icon, 14.0, self.tree_icon_color()))
+            .into_any_element()
+    }
+
+    fn render_section_row(
+        &mut self,
+        row: ReviewRow,
+        count: usize,
+        expanded: bool,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let p = self.palette;
+        let side = row.side;
+        let icon_color = self.tree_icon_color();
+        let hover = rgba_of(p.foreground, 0.06);
+        let handle = self.focus.row(RowFocus::Section(side), cx);
+        let chevron = modal_icon(ICON_CHEVRON_RIGHT, 14.0, icon_color).flex_shrink_0();
+        let actions: Vec<AnyElement> = match side {
+            ChangeSide::Staged => vec![self.row_action(
+                "git-commit-unstage-all".into(),
+                "Unstage All Changes",
+                ICON_MINUS,
+                |this, _window, cx| this.run_staging(GitCommitStagingAction::Unstage, None, cx),
+                cx,
+            )],
+            ChangeSide::Unstaged => vec![
+                self.row_action(
+                    "git-commit-discard-all".into(),
+                    "Discard All Changes",
+                    ICON_UNDO,
+                    |this, window, cx| this.request_discard(None, window, cx),
+                    cx,
+                ),
+                self.row_action(
+                    "git-commit-stage-all".into(),
+                    "Stage All Changes",
+                    ICON_PLUS,
+                    |this, _window, cx| this.run_staging(GitCommitStagingAction::Stage, None, cx),
+                    cx,
+                ),
+            ],
+        };
+        div()
+            .w_full()
+            .when(row.section_gap, |this| this.pt(px(8.0)))
+            .child(
+                h_flex()
+                    .id(SharedString::from(format!("git-commit-section:{side:?}")))
+                    .track_focus(&handle)
+                    .w_full()
+                    .h(px(28.0))
+                    .items_center()
+                    .gap(px(6.0))
+                    .pl(px(6.0))
+                    .pr(px(7.0 * DENSITY))
+                    .rounded(px(6.0))
+                    .cursor_pointer()
+                    .when(focus_visible(&handle, window), |this| this.bg(hsla(hover)))
+                    .hover(move |this| this.bg(hsla(hover)))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                        this.toggle_section(side, cx)
+                    }))
+                    .child(if expanded {
+                        chevron
+                            .with_transformation(Transformation::rotate(radians(
+                                std::f32::consts::FRAC_PI_2,
+                            )))
+                            .into_any_element()
+                    } else {
+                        chevron.into_any_element()
+                    })
+                    .child(
+                        div()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_size(px(10.5))
+                            .line_height(px(14.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(hsla(p.muted))
+                            .child(row.name.to_uppercase()),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .min_w(px(16.0))
+                            .h(px(16.0))
+                            .px(px(5.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(8.0))
+                            .bg(hsla(rgba_of(p.foreground, 0.14)))
+                            .text_size(px(10.0))
+                            .line_height(px(14.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(hsla(p.foreground))
+                            .child(count.to_string()),
+                    )
+                    .child(div().flex_1())
+                    .children(actions),
+            )
+            .into_any_element()
+    }
+
     fn render_tree_row(
         &mut self,
         index: usize,
@@ -142,30 +299,56 @@ impl GpuiGitCommitModalWindow {
         let icon_color = self.tree_icon_color();
         let row_color = css_mix(p.foreground, 0.86, p.muted);
         let hover = rgba_of(p.foreground, 0.06);
-        let ChangedFilesTreeRow {
+        let key = row.key();
+        let side = row.side;
+        let ReviewRow {
             depth,
             name,
             path,
             stat,
-            directory,
-            top_level_gap,
-        } = row;
-        let name_label = div()
-            .flex_1()
-            .min_w_0()
-            .overflow_hidden()
-            .whitespace_nowrap()
-            .text_ellipsis()
-            .font_family(MODAL_MONO_FONT)
-            .text_size(px(11.0))
-            .line_height(px(15.714))
-            .font_weight(FontWeight::MEDIUM)
-            .child(name);
+            kind,
+            ..
+        } = row.clone();
+        let name_label = |name: String, folder: Option<String>| {
+            h_flex()
+                .flex_1()
+                .min_w_0()
+                .overflow_hidden()
+                .items_baseline()
+                .gap(px(6.0))
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .max_w_full()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .font_family(MODAL_MONO_FONT)
+                        .text_size(px(11.0))
+                        .line_height(px(15.714))
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(name),
+                )
+                .when_some(folder, |this, folder| {
+                    this.child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_size(px(10.5))
+                            .line_height(px(15.714))
+                            .text_color(hsla(dp.stat_divider))
+                            .child(folder),
+                    )
+                })
+        };
         let tree_stat = |stat: GitFileStat| {
             render_diff_stat(&dp, stat, 10.0, 14.286, FontWeight::MEDIUM, 2.0 * DENSITY)
         };
         let mut element = h_flex()
-            .id(SharedString::from(format!("git-commit-tree-row:{path}")))
+            .id(SharedString::from(format!("git-commit-tree-row:{key}")))
             .w_full()
             .min_h(px(28.0))
             .items_center()
@@ -174,18 +357,21 @@ impl GpuiGitCommitModalWindow {
             .pl(px(8.0 + depth as f32 * 14.0))
             .pr(px(7.0 * DENSITY))
             .text_color(hsla(row_color));
-        match directory {
-            Some(expanded) => {
+        match kind {
+            ReviewRowKind::Section { count, expanded } => {
+                return self.render_section_row(row, count, expanded, window, cx);
+            }
+            ReviewRowKind::Directory { expanded } => {
                 let chevron = modal_icon(ICON_CHEVRON_RIGHT, 14.0, icon_color).flex_shrink_0();
-                let handle = self.focus.row(RowFocus::Directory(path.clone()), cx);
+                let handle = self.focus.row(RowFocus::Directory(key.clone()), cx);
                 element = element
                     .track_focus(&handle)
                     .when(focus_visible(&handle, window), |this| this.bg(hsla(hover)))
                     .cursor_pointer()
                     .hover(move |this| this.bg(hsla(hover)))
                     .on_click(cx.listener({
-                        let path = path.clone();
-                        move |this, _: &ClickEvent, _window, cx| this.toggle_directory(&path, cx)
+                        let key = key.clone();
+                        move |this, _: &ClickEvent, _window, cx| this.toggle_directory(&key, cx)
                     }))
                     .child(if expanded {
                         chevron
@@ -208,24 +394,75 @@ impl GpuiGitCommitModalWindow {
                         )
                         .flex_shrink_0(),
                     )
-                    .child(name_label)
+                    .child(name_label(name, None))
                     .when(!stat.is_zero(), |this| this.child(tree_stat(stat)));
+                div().w_full().child(element).into_any_element()
             }
-            None => {
-                let excluded = self.excluded.contains(&path);
+            ReviewRowKind::File { status, folder } => {
                 let selected = self.inline_mode == InlineDiffMode::File
-                    && self.selected_diff_path.as_deref() == Some(path.as_str());
-                let include_handle = self
-                    .editing_files
-                    .then(|| self.focus.row(RowFocus::Include(path.clone()), cx));
-                let open_handle = self.focus.row(RowFocus::Open(path.clone()), cx);
-                let include_visible = include_handle
-                    .as_ref()
-                    .is_some_and(|handle| focus_visible(handle, window));
-                // `.changed-files-tree-file:focus-within` takes the hover fill.
-                let focus_within = include_visible || focus_visible(&open_handle, window);
+                    && self
+                        .selected_diff
+                        .as_ref()
+                        .is_some_and(|(s, p)| *s == side && *p == path);
+                let open_handle = self.focus.row(RowFocus::Open(side, path.clone()), cx);
+                let focused = focus_visible(&open_handle, window);
+                // MonoCode keeps a row's buttons up while it is hovered, focused or selected.
+                let show_actions =
+                    selected || focused || self.hovered_row.as_deref() == Some(key.as_str());
+                let actions: Vec<AnyElement> = if !show_actions {
+                    Vec::new()
+                } else {
+                    match side {
+                        ChangeSide::Staged => vec![self.row_action(
+                            format!("git-commit-unstage:{path}").into(),
+                            "Unstage Changes",
+                            ICON_MINUS,
+                            {
+                                let path = path.clone();
+                                move |this, _window, cx| {
+                                    this.run_staging(
+                                        GitCommitStagingAction::Unstage,
+                                        Some(vec![path.clone()]),
+                                        cx,
+                                    )
+                                }
+                            },
+                            cx,
+                        )],
+                        ChangeSide::Unstaged => vec![
+                            self.row_action(
+                                format!("git-commit-discard:{path}").into(),
+                                "Discard Changes",
+                                ICON_UNDO,
+                                {
+                                    let path = path.clone();
+                                    move |this, window, cx| {
+                                        this.request_discard(Some(path.clone()), window, cx)
+                                    }
+                                },
+                                cx,
+                            ),
+                            self.row_action(
+                                format!("git-commit-stage:{path}").into(),
+                                "Stage Changes",
+                                ICON_PLUS,
+                                {
+                                    let path = path.clone();
+                                    move |this, _window, cx| {
+                                        this.run_staging(
+                                            GitCommitStagingAction::Stage,
+                                            Some(vec![path.clone()]),
+                                            cx,
+                                        )
+                                    }
+                                },
+                                cx,
+                            ),
+                        ],
+                    }
+                };
                 element = element
-                    .when(focus_within && !selected, |this| this.bg(hsla(hover)))
+                    .when(focused && !selected, |this| this.bg(hsla(hover)))
                     .when(selected, |this| {
                         this.bg(hsla(rgba_of(p.foreground, 0.10)))
                             .text_color(hsla(p.foreground))
@@ -233,29 +470,23 @@ impl GpuiGitCommitModalWindow {
                     .when(!selected, |this| {
                         this.hover(move |this| this.bg(hsla(hover)))
                     })
-                    .when(excluded, |this| this.opacity(0.58))
-                    .map(|this| match &include_handle {
-                        Some(handle) => this.child(
-                            div()
-                                .id(SharedString::from(format!("git-commit-include:{path}")))
-                                .track_focus(handle)
-                                .flex_shrink_0()
-                                .cursor_pointer()
-                                .on_click(cx.listener({
-                                    let path = path.clone();
-                                    move |this, _: &ClickEvent, _window, cx| {
-                                        cx.stop_propagation();
-                                        this.toggle_file(&path, cx);
-                                    }
-                                }))
-                                .child(git_checkbox(&p, !excluded, include_visible)),
-                        ),
-                        None => this.child(div().flex_shrink_0().w(px(14.0))),
+                    .on_hover(cx.listener({
+                        let key = key.clone();
+                        move |this, hovered: &bool, _window, cx| {
+                            if *hovered {
+                                this.set_hovered_row(Some(key.clone()), cx);
+                            } else if this.hovered_row.as_deref() == Some(key.as_str()) {
+                                this.set_hovered_row(None, cx);
+                            }
+                        }
+                    }))
+                    .when(self.view == GitChangesView::Tree, |this| {
+                        this.child(div().flex_shrink_0().w(px(14.0)))
                     })
                     .child(modal_icon(ICON_FILE, 14.0, icon_color).flex_shrink_0())
                     .child(
                         div()
-                            .id(SharedString::from(format!("git-commit-open:{path}")))
+                            .id(SharedString::from(format!("git-commit-open:{key}")))
                             .track_focus(&open_handle)
                             .flex_1()
                             .min_w_0()
@@ -264,39 +495,32 @@ impl GpuiGitCommitModalWindow {
                             .on_click(cx.listener({
                                 let path = path.clone();
                                 move |this, _: &ClickEvent, _window, cx| {
-                                    this.open_inline_file_diff(path.clone(), cx)
+                                    this.open_inline_file_diff((side, path.clone()), cx)
                                 }
                             }))
-                            .child(name_label),
+                            .child(name_label(name, folder)),
                     )
-                    .map(|this| {
-                        if excluded {
-                            this.child(
-                                div()
-                                    .flex_shrink_0()
-                                    .font_family(MODAL_MONO_FONT)
-                                    .text_size(px(10.0))
-                                    .line_height(px(14.286))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(hsla(dp.stat_divider))
-                                    .child("Excluded"),
-                            )
-                        } else {
-                            this.child(tree_stat(stat))
-                        }
-                    });
-                return div()
+                    .children(actions)
+                    .child(tree_stat(stat))
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .w(px(12.0))
+                            .flex()
+                            .justify_end()
+                            .font_family(MODAL_MONO_FONT)
+                            .text_size(px(11.0))
+                            .line_height(px(15.714))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(hsla(status_color(&status, &dp)))
+                            .child(status),
+                    );
+                div()
                     .w_full()
-                    .when(top_level_gap, |this| this.pt(px(2.0 * DENSITY)))
                     .child(element.context_menu(self.file_menu(path, cx)))
-                    .into_any_element();
+                    .into_any_element()
             }
         }
-        div()
-            .w_full()
-            .when(top_level_gap, |this| this.pt(px(2.0 * DENSITY)))
-            .child(element)
-            .into_any_element()
     }
 
     /// The file row's right-click menu (`SidebarContextMenuPortal` + `AppMenuPanel`): Copy Path and
@@ -368,33 +592,24 @@ impl GpuiGitCommitModalWindow {
         let dp = self.diff_palette;
         let files = &self.draft.changed_files;
         let total = files.len();
-        let heading = v_flex()
-            .min_w_0()
-            .gap(px(5.0))
-            .when_some(self.draft.branch.clone(), |this, branch| {
-                this.child(
-                    div()
-                        .min_w_0()
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .text_size(px(14.0))
-                        .line_height(px(20.0))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(hsla(p.foreground))
-                        .child(branch.unwrap_or_else(|| "(detached HEAD)".to_string())),
-                )
-            })
-            .when(self.editing_files && total > 0, |this| {
-                this.child(
-                    div()
-                        .mt(px(4.0))
-                        .text_size(px(12.0))
-                        .line_height(px(17.14))
-                        .text_color(hsla(p.muted))
-                        .child(format!("{} of {} selected", self.selected_count(), total)),
-                )
-            });
+        let heading =
+            v_flex()
+                .min_w_0()
+                .gap(px(5.0))
+                .when_some(self.draft.branch.clone(), |this, branch| {
+                    this.child(
+                        div()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_size(px(14.0))
+                            .line_height(px(20.0))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(hsla(p.foreground))
+                            .child(branch.unwrap_or_else(|| "(detached HEAD)".to_string())),
+                    )
+                });
         let header = h_flex()
             .w_full()
             .min_w_0()
@@ -403,7 +618,7 @@ impl GpuiGitCommitModalWindow {
             .justify_between()
             .gap(px(12.0))
             .child(heading);
-        let mut panel = v_flex()
+        let panel = v_flex()
             .flex_1()
             .min_h_0()
             .min_w_0()
@@ -426,29 +641,17 @@ impl GpuiGitCommitModalWindow {
                 )
                 .into_any_element();
         }
-        if self.editing_files {
-            panel = panel.child(
-                h_flex()
-                    .id("git-commit-include-all")
-                    .items_center()
-                    .gap(px(10.0))
-                    .text_size(px(13.0))
-                    .line_height(px(18.57))
-                    .text_color(hsla(p.foreground))
-                    .track_focus(self.focus.target(FocusTarget::IncludeAll))
-                    .cursor_pointer()
-                    .on_click(
-                        cx.listener(|this, _: &ClickEvent, _window, cx| this.toggle_all_files(cx)),
-                    )
-                    .child(git_checkbox(
-                        &p,
-                        self.all_selected(),
-                        self.focus.visible(FocusTarget::IncludeAll, window),
-                    ))
-                    .child("Include all files"),
-            );
-        }
-        let selected_stat = summarize_changed_files(self.selected_files());
+        let commit_stat = self.commit_stat();
+        let views = [
+            ModalSegmentedItem {
+                icon: Some(ICON_LIST),
+                label: "List",
+            },
+            ModalSegmentedItem {
+                icon: Some(ICON_TREE),
+                label: "Tree",
+            },
+        ];
         panel
             .child(
                 div()
@@ -480,14 +683,27 @@ impl GpuiGitCommitModalWindow {
                             .flex_shrink_0()
                             .items_center()
                             .gap(px(6.0))
-                            .child(self.rail_button(
-                                "git-commit-select-files",
-                                if self.editing_files { "Done" } else { "Select" },
-                                false,
-                                FocusTarget::SelectFiles,
-                                window,
-                                |this, _window, cx| this.toggle_editing_files(cx),
-                                cx,
+                            .child(div().w(px(150.0)).flex_shrink_0().child(
+                                modal_segmented_control(
+                                    &p,
+                                    "git-commit-changes-view",
+                                    &views,
+                                    match self.view {
+                                        GitChangesView::List => 0,
+                                        GitChangesView::Tree => 1,
+                                    },
+                                    |this: &mut Self, index, _window, cx| {
+                                        this.set_changes_view(
+                                            if index == 1 {
+                                                GitChangesView::Tree
+                                            } else {
+                                                GitChangesView::List
+                                            },
+                                            cx,
+                                        )
+                                    },
+                                    cx,
+                                ),
                             ))
                             .child(self.rail_button(
                                 "git-commit-show-all",
@@ -501,7 +717,7 @@ impl GpuiGitCommitModalWindow {
                     )
                     .child(render_diff_stat(
                         &dp,
-                        selected_stat,
+                        commit_stat,
                         12.0,
                         17.14,
                         FontWeight::MEDIUM,
@@ -877,17 +1093,27 @@ impl GpuiGitCommitModalWindow {
     /// `ConfirmationModal` for Merge to main: a centered app-modal card over a 50% black backdrop,
     /// trapping Tab between its two buttons the way Radix does.
     fn render_merge_confirm(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !self.merge_confirm_open {
-            return None;
-        }
+        let dialog = self.confirm_dialog.clone()?;
         let p = self.palette;
-        let description = format!(
-            "This will merge {} directly into main without creating a PR.",
-            self.draft
-                .worktree_name
-                .as_deref()
-                .unwrap_or("this worktree")
-        );
+        let (title, description, label): (String, String, &'static str) = match dialog {
+            CommitConfirmDialog::Merge => (
+                MERGE_CONFIRM_TITLE.to_string(),
+                format!(
+                    "This will merge {} directly into main without creating a PR.",
+                    self.draft
+                        .worktree_name
+                        .as_deref()
+                        .unwrap_or("this worktree")
+                ),
+                "Merge to main",
+            ),
+            CommitConfirmDialog::Discard {
+                title,
+                description,
+                label,
+                ..
+            } => (title, description, label),
+        };
         let focus_ring = |button: AnyElement, handle: &gpui::FocusHandle| {
             let focused = focus_visible(handle, window);
             h_flex()
@@ -917,11 +1143,11 @@ impl GpuiGitCommitModalWindow {
         let confirm = modal_action_button(
             &p,
             "git-commit-merge-confirm",
-            "Merge to main",
+            label,
             None,
             ModalButtonTone::Neutral,
             false,
-            |this: &mut Self, window, cx| this.confirm_direct_merge(window, cx),
+            |this: &mut Self, window, cx| this.accept_confirm_dialog(window, cx),
             cx,
         );
         Some(
@@ -952,7 +1178,7 @@ impl GpuiGitCommitModalWindow {
                         .bg(hsla(p.solid_surface))
                         .shadow_xl()
                         .on_click(|_, _, cx| cx.stop_propagation())
-                        .child(modal_header(&p, MERGE_CONFIRM_TITLE, Some(description)))
+                        .child(modal_header(&p, title, Some(description)))
                         .child(modal_footer(vec![
                             focus_ring(cancel, &self.merge_cancel_focus),
                             focus_ring(confirm, &self.merge_confirm_focus),

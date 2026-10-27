@@ -23,6 +23,20 @@ const GIT_RELEASE_STEPS_PROMPT: &str = "1. Push any local commits to remote.
 3. Update CHANGELOG.md to mention the new changes.
 4. Publish the next minor version to the usual places we publish this app.";
 
+/// The Multiple Commits prompt from the commit review: with files staged there, the commits cover only what is staged.
+pub fn multiple_commits_prompt(staged_paths: &[String]) -> String {
+    if staged_paths.is_empty() {
+        return GIT_MULTIPLE_COMMITS_PROMPT.to_string();
+    }
+    let mut lines = vec![
+        GIT_MULTIPLE_COMMITS_PROMPT.to_string(),
+        String::new(),
+        "Scope: commit only the changes that are already staged, in the files below. Leave every unstaged change and untracked file out of these commits, and do not stage anything else.".to_string(),
+    ];
+    lines.extend(staged_paths.iter().map(|path| format!("- {path}")));
+    lines.join("\n")
+}
+
 /// `GPUI_GIT_MULTICOMMIT_RELEASE_PROMPT`.
 pub fn multicommit_release_prompt() -> String {
     format!(
@@ -111,6 +125,7 @@ pub fn sync_with_main_prompt() -> String {
 /// `buildGpuiGitPullRequestAgentPrompt`.
 pub fn pull_request_agent_prompt(
     has_explicit_file_selection: bool,
+    staged_only: bool,
     has_commit: bool,
     message: &str,
     selected_files: &[String],
@@ -120,7 +135,9 @@ pub fn pull_request_agent_prompt(
         .filter(|path| !path.trim().is_empty())
         .collect();
     let commit_step = if has_commit {
-        if has_explicit_file_selection {
+        if staged_only {
+            "- Commit only the changes already staged in the files listed below. Do not stage anything else; leave unstaged changes and untracked files out of the commit."
+        } else if has_explicit_file_selection {
             "- Stage and commit only the selected files listed below. Do not stage excluded files."
         } else {
             "- Stage and commit all new/modified files."

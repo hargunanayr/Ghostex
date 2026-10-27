@@ -108,35 +108,12 @@ pub(crate) async fn generate_commit_message_for_project(
         (project, project_path, projects, settings)
     };
 
-    let status =
-        run_commit_message_generation_git_action(&projects, &project_id, "statusPorcelainZ", None)
-            .await?;
-    ensure_commit_message_generation_git_success(&status, "Could not inspect selected changes.")?;
-    let mut file_paths = retain_current_commit_message_generation_paths(
-        &requested_file_paths,
-        typed_result_stdout_raw(&status),
-    )?;
-
-    let mut add = run_commit_message_generation_git_action(
-        &projects,
-        &project_id,
-        "addAll",
-        Some(&file_paths),
-    )
-    .await?;
-    for retry_delay_ms in [40_u64, 120] {
-        if commit_message_generation_git_succeeded(&add) {
-            break;
-        }
-        let stderr = add
-            .get("stderr")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if !commit_message_generation_stage_failure_is_transient(stderr) {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(retry_delay_ms)).await;
-        let refreshed_status = run_commit_message_generation_git_action(
+    // A staged-only commit describes the index as it is; staging the paths again would add their unstaged hunks too.
+    let staged_only = params.get("stagedOnly").and_then(Value::as_bool) == Some(true);
+    let file_paths = if staged_only {
+        requested_file_paths.clone()
+    } else {
+        let status = run_commit_message_generation_git_action(
             &projects,
             &project_id,
             "statusPorcelainZ",
@@ -144,25 +121,62 @@ pub(crate) async fn generate_commit_message_for_project(
         )
         .await?;
         ensure_commit_message_generation_git_success(
-            &refreshed_status,
-            "Could not refresh selected changes before staging.",
+            &status,
+            "Could not inspect selected changes.",
         )?;
-        file_paths = retain_current_commit_message_generation_paths(
-            &file_paths,
-            typed_result_stdout_raw(&refreshed_status),
+        let mut file_paths = retain_current_commit_message_generation_paths(
+            &requested_file_paths,
+            typed_result_stdout_raw(&status),
         )?;
-        add = run_commit_message_generation_git_action(
+
+        let mut add = run_commit_message_generation_git_action(
             &projects,
             &project_id,
             "addAll",
             Some(&file_paths),
         )
         .await?;
-    }
-    ensure_commit_message_generation_git_success(
-        &add,
-        commit_message_generation_stage_failure_message(&add),
-    )?;
+        for retry_delay_ms in [40_u64, 120] {
+            if commit_message_generation_git_succeeded(&add) {
+                break;
+            }
+            let stderr = add
+                .get("stderr")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if !commit_message_generation_stage_failure_is_transient(stderr) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(retry_delay_ms)).await;
+            let refreshed_status = run_commit_message_generation_git_action(
+                &projects,
+                &project_id,
+                "statusPorcelainZ",
+                None,
+            )
+            .await?;
+            ensure_commit_message_generation_git_success(
+                &refreshed_status,
+                "Could not refresh selected changes before staging.",
+            )?;
+            file_paths = retain_current_commit_message_generation_paths(
+                &file_paths,
+                typed_result_stdout_raw(&refreshed_status),
+            )?;
+            add = run_commit_message_generation_git_action(
+                &projects,
+                &project_id,
+                "addAll",
+                Some(&file_paths),
+            )
+            .await?;
+        }
+        ensure_commit_message_generation_git_success(
+            &add,
+            commit_message_generation_stage_failure_message(&add),
+        )?;
+        file_paths
+    };
 
     let (summary, patch, branch) = tokio::try_join!(
         run_commit_message_generation_git_action(

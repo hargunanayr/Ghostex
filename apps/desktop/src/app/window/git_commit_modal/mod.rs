@@ -17,15 +17,20 @@ mod window;
 
 pub(crate) use diff::GitDiffPrefs;
 pub(crate) use file_diff_window::*;
-pub(crate) use model::{GitCommitDraft, GitFileDiffDraft};
+pub(crate) use model::{GitChangesView, GitCommitDraft, GitFileDiffDraft};
 pub(crate) use window::{
     GIT_COMMIT_MODAL_HEIGHT, GIT_COMMIT_MODAL_WIDTH, GitCommitAgent, GitCommitConfirm,
     GitCommitModalCommand, GitCommitModalConfig, GpuiGitCommitModalWindow,
 };
+// Named only by the app's host (git_commit_modal_lifecycle.rs), not by the preview binary.
+#[allow(unused_imports)]
+pub(crate) use model::changed_files_from_json;
+#[allow(unused_imports)]
+pub(crate) use window::GitCommitStagingAction;
 // Named only by the preview binary (src/bin/native_modal_demo/git_commit.rs).
 #[allow(unused_imports)]
 pub(crate) use diff::GitDiffViewMode;
 #[allow(unused_imports)]
-pub(crate) use model::GitChangedFile;
+pub(crate) use model::{GitChangedFile, GitFileSide};
 #[allow(unused_imports)]
 pub(crate) use window::GitCommitModalHost;

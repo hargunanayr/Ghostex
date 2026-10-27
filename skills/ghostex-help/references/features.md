@@ -3357,7 +3357,17 @@ Git's progress and a Cancel clone link.
 
 Project headers show the branch and diff stats; the header’s Commit (Git) menu offers
 commit, sync with main, PR review by a prompt agent, and related actions with
-persistent running toasts. Add Worktree on a project header creates a git
+persistent running toasts. The Commit dialog lists Staged Changes and Changes
+(unstaged and untracked files) with a count each and a status letter per file
+(M modified, A added, D deleted, R renamed, U untracked); hover a file to Stage
+(+), Unstage (−) or Discard (↺) it, or use Stage All, Unstage All and Discard All
+on the section headings. A file staged only in part is listed in both, each with
+its own diff. Discard asks first: an untracked file is deleted, and a tracked
+file goes back to its staged version, so staged changes are never discarded.
+When anything is staged, Commit, Commit on new branch, Merge to main and Multiple
+Commits take only the staged changes; with nothing staged they take every
+change. List and Tree below the files switch between file names with their
+folder and a folder tree, and the choice is remembered. Add Worktree on a project header creates a git
 worktree as its own project so a second agent works on a branch without
 touching the main checkout; worktrees can be renamed, merged back, and
 deleted from the sidebar. When a worktree's folder is deleted, the sessions that

@@ -74,6 +74,13 @@ export const storageCatalog = Object.freeze({
     'ghostex.gitCommitModal.diffPreferences.v1',
     objectCodec
   ),
+  gitChangesView: define(
+    'gitChangesView',
+    'Git commit review list or tree',
+    desktop + 'src/app/git_commit_modal_lifecycle.rs',
+    'ghostex.gitCommitModal.changesView.v1',
+    enumCodec(['list', 'tree'])
+  ),
   hiddenItems: define(
     'hiddenItems',
     'Sidebar visibility',

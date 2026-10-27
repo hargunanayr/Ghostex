@@ -11,7 +11,7 @@
 use ghostex_gx_core::ProjectKey;
 use ghostex_gx_core::git_menu::{
     GitState, GitToastLevel, REMOTE_MERGE_CONFLICT_PROMPT, agent_workflow_title,
-    merge_conflict_prompt, resolve_trusted_file_selection, user_visible_git_error,
+    merge_conflict_prompt, review_commit_selection, user_visible_git_error,
 };
 use serde_json::{Value, json};
 
@@ -111,7 +111,7 @@ impl GhostexGpuiApp {
                 }
                 let trusted = match review.has_commit {
                     false => None,
-                    true => match resolve_trusted_file_selection(
+                    true => match review_commit_selection(
                         &review,
                         confirm.file_paths.as_deref(),
                     ) {
@@ -134,11 +134,12 @@ impl GhostexGpuiApp {
                         }
                     },
                 };
-                let commit = trusted.map(|selection| {
+                let commit = trusted.map(|commit| {
                     json!({
                         "agentId": this.git_default_prompt_agent_id(confirm.agent_id.as_deref()),
-                        "filePaths": selection.file_paths,
+                        "filePaths": commit.selection.file_paths,
                         "message": confirm.message,
+                        "stagedOnly": commit.staged_only,
                     })
                 });
                 let branch = state.branch.clone().or_else(|| worktree.branch.clone());

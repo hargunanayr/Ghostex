@@ -1,6 +1,6 @@
 //! The patch model the diff panel draws (`packages/core-ui/git-file-diff-modal.tsx` (deleted 2026-10-01)): patch lines
 //! classified by kind, the display options, and the token kinds of the per-row syntax colouring.
-use super::model::{GitChangedFile, GitFileDiffDraft, summarize_changed_files};
+use super::model::{ChangeEntry, ChangeSide, GitFileDiffDraft, sum_stats};
 use std::collections::HashMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -154,23 +154,23 @@ fn loading_file_patch(file_path: &str) -> String {
     )
 }
 
-/// `buildAllFilesDiffDraft`: every changed file's patch, one after another.
+/// `buildAllFilesDiffDraft`: every row's patch, one after another (the staged ones first).
 pub(crate) fn all_files_diff_draft(
-    files: &[GitChangedFile],
-    cache: &HashMap<String, GitFileDiffDraft>,
+    entries: &[ChangeEntry],
+    cache: &HashMap<(ChangeSide, String), GitFileDiffDraft>,
 ) -> Option<GitFileDiffDraft> {
-    if files.is_empty() {
+    if entries.is_empty() {
         return None;
     }
-    let stats = summarize_changed_files(files);
-    let patch = files
+    let stats = sum_stats(entries.iter().map(|entry| entry.stat));
+    let patch = entries
         .iter()
-        .map(|file| {
+        .map(|entry| {
             cache
-                .get(&file.path)
+                .get(&(entry.side, entry.path.clone()))
                 .map(|draft| draft.patch.trim_end().to_string())
                 .filter(|patch| !patch.is_empty())
-                .unwrap_or_else(|| loading_file_patch(&file.path))
+                .unwrap_or_else(|| loading_file_patch(&entry.path))
         })
         .collect::<Vec<_>>()
         .join("\n\n");
@@ -179,6 +179,7 @@ pub(crate) fn all_files_diff_draft(
         patch,
         additions: Some(stats.additions),
         deletions: Some(stats.deletions),
+        staged: None,
     })
 }
 

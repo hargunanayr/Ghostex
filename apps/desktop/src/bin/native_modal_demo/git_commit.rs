@@ -4,7 +4,7 @@
 //! whose first file's diff answers after half a second; `loading` never answers; `nodiff` answers
 //! with the "No diff is available" text; `empty` has no changed files; `long` has sixty files in
 //! nested folders; `nomessage` is a push review (no message editor, not a worktree). After the
-//! first diff, `select`, `all`, `confirm`, `agents`, `menu`, `split`, `wrap` and `collapsed` put the
+//! first diff, `tree`, `hover`, `discard`, `all`, `confirm`, `agents`, `menu`, `split`, `wrap` and `collapsed` put the
 //! dialog in that state. `keyescape` presses Escape; `keymerge` opens the confirmation and presses
 //! Tab then Enter; `tabN` presses Tab N times from the message editor.
 //! `git-file-diff` states: the default is the Storybook diff; `split`, `wrap` and `long`.
@@ -22,18 +22,42 @@ use std::time::Duration;
 
 type Slot = Rc<RefCell<Option<(WindowHandle<Root>, Entity<GpuiGitCommitModalWindow>)>>>;
 
+fn side(status: &str, additions: u64, deletions: u64) -> Option<GitFileSide> {
+    Some(GitFileSide {
+        status: status.to_string(),
+        additions,
+        deletions,
+    })
+}
+
+/// A staged addition, a partly staged file (in both sections), an unstaged edit, an untracked
+/// file and an unstaged deletion.
 fn story_files() -> Vec<GitChangedFile> {
+    let file = |path: &str, staged, unstaged| GitChangedFile {
+        path: path.to_string(),
+        additions: 0,
+        deletions: 0,
+        staged,
+        unstaged,
+    };
     vec![
-        GitChangedFile {
-            path: "packages/core-ui/modal-gallery/app-host-prompts.stories.tsx".to_string(),
-            additions: 182,
-            deletions: 0,
-        },
-        GitChangedFile {
-            path: "packages/core-ui/modal-gallery/overview.stories.tsx".to_string(),
-            additions: 96,
-            deletions: 2,
-        },
+        file(
+            "packages/core-ui/modal-gallery/app-host-prompts.stories.tsx",
+            side("A", 182, 0),
+            None,
+        ),
+        file(
+            "packages/core-ui/modal-gallery/overview.stories.tsx",
+            side("M", 60, 2),
+            side("M", 36, 0),
+        ),
+        file(
+            "apps/desktop/src/app/window/git_commit_modal/render.rs",
+            None,
+            side("M", 214, 88),
+        ),
+        file("docs/notes/staging.md", None, side("U", 0, 0)),
+        file("packages/shared/legacy-select.ts", None, side("D", 0, 41)),
     ]
 }
 
@@ -47,14 +71,23 @@ fn long_files() -> Vec<GitChangedFile> {
         "docs",
     ];
     (0..60)
-        .map(|index| GitChangedFile {
-            path: format!(
-                "{}/file-{index}.{}",
-                folders[index % folders.len()],
-                if index % 3 == 0 { "rs" } else { "ts" }
-            ),
-            additions: (index * 7 % 50) as u64,
-            deletions: (index * 3 % 11) as u64,
+        .map(|index| {
+            let change = side(
+                if index % 5 == 0 { "A" } else { "M" },
+                (index * 7 % 50) as u64,
+                (index * 3 % 11) as u64,
+            );
+            GitChangedFile {
+                path: format!(
+                    "{}/file-{index}.{}",
+                    folders[index % folders.len()],
+                    if index % 3 == 0 { "rs" } else { "ts" }
+                ),
+                additions: (index * 7 % 50) as u64,
+                deletions: (index * 3 % 11) as u64,
+                staged: if index % 4 == 0 { change.clone() } else { None },
+                unstaged: if index % 4 == 0 { None } else { change },
+            }
         })
         .collect()
 }
@@ -122,7 +155,7 @@ fn long_patch() -> String {
     lines.join("\n")
 }
 
-fn deliver_diff(slot: &Slot, path: String, state: &str, cx: &mut App) {
+fn deliver_diff(slot: &Slot, path: String, staged: bool, state: &str, cx: &mut App) {
     let target = slot.borrow().clone();
     let Some((window, view)) = target else {
         return;
@@ -137,6 +170,7 @@ fn deliver_diff(slot: &Slot, path: String, state: &str, cx: &mut App) {
         patch,
         additions: Some(12),
         deletions: Some(5),
+        staged: Some(staged),
     };
     let _ = window.update(cx, |_root, _window, cx| {
         view.update(cx, |modal, cx| modal.receive_file_diff(draft, cx));
@@ -432,8 +466,9 @@ pub(super) fn open(demo: &super::DemoEnv, cx: &mut App) {
         GitCommitModalCommand::OpenFileDiff {
             request_id,
             file_path,
+            staged,
         } => {
-            eprintln!("open file diff {request_id} {file_path}");
+            eprintln!("open file diff {request_id} {file_path} staged={staged}");
             if base == "loading" {
                 return;
             }
@@ -446,7 +481,7 @@ pub(super) fn open(demo: &super::DemoEnv, cx: &mut App) {
                     .timer(Duration::from_millis(500))
                     .await;
                 cx.update(|cx| {
-                    deliver_diff(&slot, file_path, &base, cx);
+                    deliver_diff(&slot, file_path, staged, &base, cx);
                     if first {
                         apply_state(&slot, &state, cx);
                     }
@@ -482,6 +517,12 @@ pub(super) fn open(demo: &super::DemoEnv, cx: &mut App) {
         }
         GitCommitModalCommand::DiffPrefsChanged(prefs) => eprintln!("diff prefs {prefs:?}"),
         GitCommitModalCommand::PathCopied => eprintln!("path copied"),
+        GitCommitModalCommand::Staging {
+            request_id,
+            action,
+            file_paths,
+        } => eprintln!("staging {request_id} {action:?} {file_paths:?}"),
+        GitCommitModalCommand::ChangesViewChanged(view) => eprintln!("changes view {view:?}"),
     });
     let config = GitCommitModalConfig {
         draft: story_draft(
@@ -493,6 +534,7 @@ pub(super) fn open(demo: &super::DemoEnv, cx: &mut App) {
         agents,
         prompt_agent_id: Some("codex".to_string()),
         diff_prefs: GitDiffPrefs::default(),
+        changes_view: GitChangesView::default(),
         palette,
     };
     let (window, view) = super::open_large_modal_window(
@@ -531,6 +573,7 @@ pub(super) fn open_file_diff(demo: &super::DemoEnv, cx: &mut App) {
         patch,
         additions: Some(12),
         deletions: Some(5),
+        staged: None,
     };
     let host: GitFileDiffModalHost = Rc::new(|command, cx: &mut App| match command {
         GitFileDiffModalCommand::Close => {

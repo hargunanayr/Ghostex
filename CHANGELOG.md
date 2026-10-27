@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### 🌿 Git
+
+- **The Commit dialog stages like VS Code:** files are listed under Staged Changes and Changes with a status letter each; hover a file to stage, unstage or discard it (or use Stage All, Unstage All and Discard All), and when anything is staged, Commit takes only the staged changes. Discard asks first and never touches staged changes. A List / Tree switch replaces Select and is remembered.
+
 ## 10.34.0 - 2026-10-25
 
 **Ghostex 10.34.0 is out.** Updating no longer stalls when every session has to restart, Files searches the whole project with Cmd+Shift+F and finds text in any file with Cmd+F, session links stay within the project's own repositories, OpenCode chats follow the terminal's model, and Claude sessions get a Session details panel in beta.

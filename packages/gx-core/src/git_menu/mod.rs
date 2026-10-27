@@ -41,17 +41,20 @@ pub use read::{
 };
 pub use review::{
     normalize_relative_git_file_path, parse_commit_message, resolve_trusted_file_selection,
-    review_modal_draft, GitRemoteProject, PendingGitReview, ReviewDraftInput, TrustedFileSelection,
+    review_commit_selection, review_modal_draft, review_side_all_paths, review_side_paths,
+    staged_review_paths, GitRemoteProject, GitReviewSide, PendingGitReview, ReviewCommitSelection,
+    ReviewDraftInput, TrustedFileSelection,
 };
 pub use state::{
-    GitAction, GitChangedFile, GitHubState, GitPreferences, GitPullRequest, GitPullRequestState,
-    GitReviewAction, GitState,
+    GitAction, GitChangedFile, GitFileChange, GitHubState, GitPreferences, GitPullRequest,
+    GitPullRequestState, GitReviewAction, GitState,
 };
 pub use text::{
     agent_workflow_title, confirm_label, finished_title, merge_conflict_prompt,
-    multicommit_release_prompt, prompt_description, pull_request_agent_prompt, release_only_prompt,
-    started_title, sync_with_main_prompt, user_visible_git_error, DEFAULT_PROMPT_AGENT_ID,
-    GIT_MULTIPLE_COMMITS_PROMPT, REMOTE_MERGE_CONFLICT_PROMPT,
+    multicommit_release_prompt, multiple_commits_prompt, prompt_description,
+    pull_request_agent_prompt, release_only_prompt, started_title, sync_with_main_prompt,
+    user_visible_git_error, DEFAULT_PROMPT_AGENT_ID, GIT_MULTIPLE_COMMITS_PROMPT,
+    REMOTE_MERGE_CONFLICT_PROMPT,
 };
 pub use worktree::{
     is_managed_worktree_branch, normalize_existing_worktree_options, normalize_project_path,

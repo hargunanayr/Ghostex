@@ -72,6 +72,8 @@ struct CommitRequest {
     file_paths: Option<Vec<String>>,
     agent_id: Option<String>,
     commit_on_new_ref: bool,
+    /// Commit the index as it is; `file_paths` are the staged paths the review showed.
+    staged_only: bool,
 }
 
 fn read_commit_request(value: Option<&Value>) -> Result<Option<CommitRequest>, DomainStateError> {
@@ -112,6 +114,7 @@ fn read_commit_request(value: Option<&Value>) -> Result<Option<CommitRequest>, D
             .filter(|id| !id.is_empty())
             .map(str::to_string),
         commit_on_new_ref: object.get("commitOnNewRef").and_then(Value::as_bool) == Some(true),
+        staged_only: object.get("stagedOnly").and_then(Value::as_bool) == Some(true),
     }))
 }
 
@@ -176,7 +179,11 @@ async fn commit_changes(
     request: &CommitRequest,
 ) -> Result<(), DomainStateError> {
     let (mut subject, mut body) = parse_commit_message(&request.message);
-    if !subject.is_empty() {
+    if request.staged_only {
+        // The index is the commit: nothing more is staged.
+        ensure_staged_matches_review(projects, project_id, request.file_paths.as_deref()).await?;
+    }
+    if !subject.is_empty() && !request.staged_only {
         let mut extra = Map::new();
         if let Some(paths) = &request.file_paths {
             extra.insert("filePaths".to_string(), json!(paths));
@@ -187,7 +194,7 @@ async fn commit_changes(
         if exit_code(&add) != 0 {
             return Err(failure("Could not stage changes."));
         }
-    } else {
+    } else if subject.is_empty() {
         let paths = request
             .file_paths
             .as_ref()
@@ -198,6 +205,9 @@ async fn commit_changes(
         let mut generate = Map::new();
         generate.insert("projectId".to_string(), json!(project_id));
         generate.insert("filePaths".to_string(), json!(paths));
+        if request.staged_only {
+            generate.insert("stagedOnly".to_string(), json!(true));
+        }
         if let Some(agent_id) = &request.agent_id {
             generate.insert("agentId".to_string(), json!(agent_id));
         }
@@ -232,6 +242,38 @@ async fn commit_changes(
         .map_err(typed)?;
     if exit_code(&commit) != 0 {
         return Err(failure("Could not commit changes."));
+    }
+    Ok(())
+}
+
+/// CDXC:Git 2026-10-26 WHY:
+/// A staged-only commit runs plain `git commit`, so whatever is in the index goes in. The review names the staged paths it showed; when the index holds anything else (something staged in a terminal after the review last read it), the commit is refused instead of carrying files the user never saw, and an empty index is refused rather than producing an empty commit attempt.
+async fn ensure_staged_matches_review(
+    projects: &[Value],
+    project_id: &str,
+    reviewed: Option<&[String]>,
+) -> Result<(), DomainStateError> {
+    let names = git(projects, project_id, "diffCachedNameOnlyZ")
+        .await
+        .map_err(typed)?;
+    if exit_code(&names) != 0 {
+        return Err(failure("Could not read the staged changes."));
+    }
+    let staged: Vec<&str> = stdout(&names)
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .collect();
+    if staged.is_empty() {
+        return Err(failure("Nothing is staged to commit."));
+    }
+    let reviewed = reviewed.unwrap_or_default();
+    if staged
+        .iter()
+        .any(|path| !reviewed.iter().any(|known| known == path))
+    {
+        return Err(failure(
+            "The staged changes changed after the review opened. Reopen the review and try again.",
+        ));
     }
     Ok(())
 }

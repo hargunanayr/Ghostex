@@ -79,6 +79,102 @@ pub fn resolve_trusted_file_selection(
     })
 }
 
+/// A side of the commit review's file list: Staged Changes or Changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GitReviewSide {
+    Staged,
+    Unstaged,
+}
+
+/// What a confirmed review commits, and whether that is the index as it stands.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReviewCommitSelection {
+    pub selection: TrustedFileSelection,
+    pub staged_only: bool,
+}
+
+/// The paths staged in a review, each staged rename followed by the path it came from (a rename is a deletion plus an addition in the index, and both go into the commit or come out of the index together).
+pub fn staged_review_paths(files: &[GitChangedFile]) -> Vec<String> {
+    let mut paths = Vec::new();
+    for change in files.iter().filter_map(|file| {
+        file.staged
+            .as_ref()
+            .map(|staged| (file.path.as_str(), staged))
+    }) {
+        let (path, staged) = change;
+        for candidate in std::iter::once(path).chain(staged.original_path.as_deref()) {
+            if !paths.iter().any(|known: &String| known == candidate) {
+                paths.push(candidate.to_string());
+            }
+        }
+    }
+    paths
+}
+
+/// CDXC:Git 2026-10-26 DECISION:
+/// User: "if anything is staged, Commit (and Commit on new branch / Multiple Commits, where that makes sense) commits only the staged set; if nothing is staged, keep today's commit-all behaviour (VS Code style smart commit)." The staged set comes from the review's own file list (refreshed after every Stage, Unstage or Discard the dialog runs), never from the dialog, and gxserver refuses the commit when the index holds anything that list did not show.
+pub fn review_commit_selection(
+    review: &PendingGitReview,
+    file_paths: Option<&[String]>,
+) -> Result<ReviewCommitSelection, &'static str> {
+    let staged = staged_review_paths(&review.files);
+    if !staged.is_empty() {
+        return Ok(ReviewCommitSelection {
+            selection: TrustedFileSelection {
+                explicit: true,
+                file_paths: staged,
+            },
+            staged_only: true,
+        });
+    }
+    resolve_trusted_file_selection(review, file_paths).map(|selection| ReviewCommitSelection {
+        selection,
+        staged_only: false,
+    })
+}
+
+/// The paths a Stage, Unstage or Discard from the review dialog may act on: each one listed on `side` of the review, and an unstaged rename's origin with it. No path at all is an error.
+pub fn review_side_paths(
+    review: &PendingGitReview,
+    side: GitReviewSide,
+    file_paths: &[String],
+) -> Result<Vec<String>, &'static str> {
+    let mut paths: Vec<String> = Vec::new();
+    for candidate in file_paths {
+        let file = normalize_relative_git_file_path(candidate)
+            .and_then(|path| review.file(&path))
+            .ok_or("The file is not part of the current Git review.")?;
+        let change = match side {
+            GitReviewSide::Staged => file.staged.as_ref(),
+            GitReviewSide::Unstaged => file.unstaged.as_ref(),
+        }
+        .ok_or("The file has no changes on that side of the review.")?;
+        for path in std::iter::once(file.path.as_str()).chain(change.original_path.as_deref()) {
+            if !paths.iter().any(|known| known == path) {
+                paths.push(path.to_string());
+            }
+        }
+    }
+    if paths.is_empty() {
+        return Err("Choose at least one changed file.");
+    }
+    Ok(paths)
+}
+
+/// Every path on `side` of the review, for Stage All, Unstage All and Discard All.
+pub fn review_side_all_paths(review: &PendingGitReview, side: GitReviewSide) -> Vec<String> {
+    let listed: Vec<String> = review
+        .files
+        .iter()
+        .filter(|file| match side {
+            GitReviewSide::Staged => file.staged.is_some(),
+            GitReviewSide::Unstaged => file.unstaged.is_some(),
+        })
+        .map(|file| file.path.clone())
+        .collect();
+    review_side_paths(review, side, &listed).unwrap_or_default()
+}
+
 /// `normalizeGpuiRelativeGitFilePath`: a project-relative path with forward slashes, or `None`
 /// for anything that could leave the project.
 pub fn normalize_relative_git_file_path(file_path: &str) -> Option<String> {

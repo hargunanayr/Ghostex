@@ -1,14 +1,143 @@
 //! The commit review's data: the review draft gxserver's Git menu opens it with, one file's
-//! diff draft, and the changed-files tree (`packages/core-ui/changed-files-tree-utils.ts` (deleted 2026-10-01)).
+//! diff draft, and the rows of its Staged Changes and Changes sections, as a flat list or as the
+//! changed-files tree (`packages/core-ui/changed-files-tree-utils.ts` (deleted 2026-10-01)).
 use serde_json::Value;
 use std::cmp::Ordering;
+use std::collections::HashSet;
 
-/// One `changedFiles[]` row (`SidebarGitChangedFile`).
+/// A section of the file rail: Staged Changes (HEAD to the index) or Changes (the index to the
+/// working tree, untracked files included).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum ChangeSide {
+    Staged,
+    Unstaged,
+}
+
+impl ChangeSide {
+    pub(crate) const ALL: [ChangeSide; 2] = [ChangeSide::Staged, ChangeSide::Unstaged];
+
+    pub(crate) fn title(self) -> &'static str {
+        match self {
+            Self::Staged => "Staged Changes",
+            Self::Unstaged => "Changes",
+        }
+    }
+
+    fn key(self, path: &str) -> String {
+        match self {
+            Self::Staged => format!("staged:{path}"),
+            Self::Unstaged => format!("unstaged:{path}"),
+        }
+    }
+}
+
+/// One side of a changed file (`GitFileChange` in packages/gx-core/src/git_menu/state.rs).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct GitFileSide {
+    /// `M`, `A`, `D`, `R`, `U` (untracked) or `!` (a merge conflict).
+    pub(crate) status: String,
+    pub(crate) additions: u64,
+    pub(crate) deletions: u64,
+}
+
+impl GitFileSide {
+    pub(crate) fn stat(&self) -> GitFileStat {
+        GitFileStat {
+            additions: self.additions,
+            deletions: self.deletions,
+        }
+    }
+}
+
+/// One `changedFiles[]` row (`SidebarGitChangedFile`), split into what is staged and what is not.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct GitChangedFile {
     pub(crate) path: String,
     pub(crate) additions: u64,
     pub(crate) deletions: u64,
+    pub(crate) staged: Option<GitFileSide>,
+    pub(crate) unstaged: Option<GitFileSide>,
+}
+
+impl GitChangedFile {
+    pub(crate) fn side(&self, side: ChangeSide) -> Option<&GitFileSide> {
+        match side {
+            ChangeSide::Staged => self.staged.as_ref(),
+            ChangeSide::Unstaged => self.unstaged.as_ref(),
+        }
+    }
+
+    fn from_json(file: &Value) -> Option<Self> {
+        let side = |key: &str| {
+            let side = file.get(key).filter(|side| side.is_object())?;
+            Some(GitFileSide {
+                status: text(side, "status").unwrap_or_else(|| "M".to_string()),
+                additions: count(side, "additions"),
+                deletions: count(side, "deletions"),
+            })
+        };
+        let additions = count(file, "additions");
+        let deletions = count(file, "deletions");
+        let staged = side("staged");
+        // A gxserver from before the split (a remote computer not yet updated) names no side:
+        // the whole change is listed under Changes.
+        let unstaged = side("unstaged").or_else(|| {
+            staged.is_none().then(|| GitFileSide {
+                status: "M".to_string(),
+                additions,
+                deletions,
+            })
+        });
+        Some(Self {
+            path: text(file, "path")?,
+            additions,
+            deletions,
+            staged,
+            unstaged,
+        })
+    }
+}
+
+/// `changedFiles` of a review draft or of a `gitCommitChanges` refresh.
+pub(crate) fn changed_files_from_json(files: Option<&Value>) -> Vec<GitChangedFile> {
+    files
+        .and_then(Value::as_array)
+        .map(|files| files.iter().filter_map(GitChangedFile::from_json).collect())
+        .unwrap_or_default()
+}
+
+/// One file row of a section: the side it is on and that side's status and counts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ChangeEntry {
+    pub(crate) side: ChangeSide,
+    pub(crate) path: String,
+    pub(crate) status: String,
+    pub(crate) stat: GitFileStat,
+}
+
+/// The files on `side`, in path order.
+pub(crate) fn side_entries(files: &[GitChangedFile], side: ChangeSide) -> Vec<ChangeEntry> {
+    let mut entries: Vec<ChangeEntry> = files
+        .iter()
+        .filter_map(|file| {
+            file.side(side).map(|change| ChangeEntry {
+                side,
+                path: file.path.clone(),
+                status: change.status.clone(),
+                stat: change.stat(),
+            })
+        })
+        .collect();
+    entries.sort_by(|left, right| compare_by_name(&left.path, &right.path));
+    entries
+}
+
+/// Every row's file in drawing order: Staged Changes, then Changes.
+pub(crate) fn all_entries(files: &[GitChangedFile]) -> Vec<ChangeEntry> {
+    ChangeSide::ALL
+        .into_iter()
+        .flat_map(|side| side_entries(files, side))
+        .collect()
 }
 
 /// `ChangedFilesTreeStat`.
@@ -64,22 +193,7 @@ impl GitCommitDraft {
             Some(Value::String(branch)) => Some(Some(branch.clone())),
             Some(_) => Some(None),
         };
-        let changed_files = draft
-            .get("changedFiles")
-            .and_then(Value::as_array)
-            .map(|files| {
-                files
-                    .iter()
-                    .filter_map(|file| {
-                        Some(GitChangedFile {
-                            path: text(file, "path")?,
-                            additions: count(file, "additions"),
-                            deletions: count(file, "deletions"),
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        let changed_files = changed_files_from_json(draft.get("changedFiles"));
         let flag = |key: &str| draft.get(key).and_then(Value::as_bool);
         Some(Self {
             request_id,
@@ -112,6 +226,8 @@ pub(crate) struct GitFileDiffDraft {
     pub(crate) patch: String,
     pub(crate) additions: Option<u64>,
     pub(crate) deletions: Option<u64>,
+    /// The side the patch shows; `None` for both (the standalone File diff dialog).
+    pub(crate) staged: Option<bool>,
 }
 
 impl GitFileDiffDraft {
@@ -127,6 +243,7 @@ impl GitFileDiffDraft {
             patch: text(draft, "patch").unwrap_or_default(),
             additions: optional("additions"),
             deletions: optional("deletions"),
+            staged: draft.get("staged").and_then(Value::as_bool),
         })
     }
 }
@@ -135,11 +252,18 @@ impl GitFileDiffDraft {
 pub(crate) fn summarize_changed_files<'a>(
     files: impl IntoIterator<Item = &'a GitChangedFile>,
 ) -> GitFileStat {
-    files
+    sum_stats(files.into_iter().map(|file| GitFileStat {
+        additions: file.additions,
+        deletions: file.deletions,
+    }))
+}
+
+pub(crate) fn sum_stats(stats: impl IntoIterator<Item = GitFileStat>) -> GitFileStat {
+    stats
         .into_iter()
-        .fold(GitFileStat::default(), |total, file| GitFileStat {
-            additions: total.additions + file.additions,
-            deletions: total.deletions + file.deletions,
+        .fold(GitFileStat::default(), |total, stat| GitFileStat {
+            additions: total.additions + stat.additions,
+            deletions: total.deletions + stat.deletions,
         })
 }
 
@@ -339,32 +463,88 @@ pub(crate) fn build_changed_files_tree(files: &[GitChangedFile]) -> Vec<ChangedF
     to_tree_nodes(root)
 }
 
-/// One drawn row of the tree, flattened for the virtual list.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ChangedFilesTreeRow {
-    pub(crate) depth: usize,
-    pub(crate) name: String,
-    pub(crate) path: String,
-    pub(crate) stat: GitFileStat,
-    /// `Some(expanded)` for a directory.
-    pub(crate) directory: Option<bool>,
-    /// The first row of a top-level node after the first: `.changed-files-tree`'s grid gap sits above it.
-    pub(crate) top_level_gap: bool,
+/// How a section lists its files; remembered in `ghostex.gitCommitModal.changesView.v1`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum GitChangesView {
+    /// One row per file: its name, then its folder dimmed.
+    #[default]
+    List,
+    /// The folder tree.
+    Tree,
 }
 
-/// The rows `ChangedFilesTree` renders: every directory expanded unless the user folded it.
-pub(crate) fn flatten_changed_files_tree(
-    nodes: &[ChangedFilesTreeNode],
-    collapsed: &std::collections::HashSet<String>,
-) -> Vec<ChangedFilesTreeRow> {
+impl GitChangesView {
+    pub(crate) fn from_storage(raw: Option<&str>) -> Self {
+        match raw.map(str::trim) {
+            Some("tree") => Self::Tree,
+            _ => Self::List,
+        }
+    }
+
+    pub(crate) fn to_storage(self) -> &'static str {
+        match self {
+            Self::List => "list",
+            Self::Tree => "tree",
+        }
+    }
+}
+
+/// What a drawn row of the file rail is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ReviewRowKind {
+    /// A section header with its file count.
+    Section {
+        count: usize,
+        expanded: bool,
+    },
+    Directory {
+        expanded: bool,
+    },
+    /// `folder` is the dimmed folder a list row shows after the name.
+    File {
+        status: String,
+        folder: Option<String>,
+    },
+}
+
+/// One drawn row of the file rail, flattened for the virtual list.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ReviewRow {
+    pub(crate) side: ChangeSide,
+    pub(crate) depth: usize,
+    pub(crate) name: String,
+    /// The file or folder path; empty for a section header.
+    pub(crate) path: String,
+    pub(crate) stat: GitFileStat,
+    pub(crate) kind: ReviewRowKind,
+    /// The first row of a section after the first: a gap sits above it.
+    pub(crate) section_gap: bool,
+}
+
+impl ReviewRow {
+    /// The key a folder's collapse state and a row's focus handle are kept under.
+    pub(crate) fn key(&self) -> String {
+        self.side.key(&self.path)
+    }
+}
+
+/// The rows the file rail draws: each section that has files (header, then its files as a list
+/// or a tree), every folder expanded unless the user folded it.
+pub(crate) fn review_rows(
+    files: &[GitChangedFile],
+    view: GitChangesView,
+    collapsed: &HashSet<String>,
+    collapsed_sections: &HashSet<ChangeSide>,
+) -> Vec<ReviewRow> {
     fn walk(
+        side: ChangeSide,
         nodes: &[ChangedFilesTreeNode],
         depth: usize,
-        collapsed: &std::collections::HashSet<String>,
-        rows: &mut Vec<ChangedFilesTreeRow>,
+        entries: &[ChangeEntry],
+        collapsed: &HashSet<String>,
+        rows: &mut Vec<ReviewRow>,
     ) {
         for node in nodes {
-            let top_level_gap = depth == 0 && !rows.is_empty();
             match node {
                 ChangedFilesTreeNode::Directory {
                     name,
@@ -372,33 +552,97 @@ pub(crate) fn flatten_changed_files_tree(
                     stat,
                     children,
                 } => {
-                    let expanded = !collapsed.contains(path);
-                    rows.push(ChangedFilesTreeRow {
+                    let expanded = !collapsed.contains(&side.key(path));
+                    rows.push(ReviewRow {
+                        side,
                         depth,
                         name: name.clone(),
                         path: path.clone(),
                         stat: *stat,
-                        directory: Some(expanded),
-                        top_level_gap,
+                        kind: ReviewRowKind::Directory { expanded },
+                        section_gap: false,
                     });
                     if expanded {
-                        walk(children, depth + 1, collapsed, rows);
+                        walk(side, children, depth + 1, entries, collapsed, rows);
                     }
                 }
-                ChangedFilesTreeNode::File { name, path, stat } => {
-                    rows.push(ChangedFilesTreeRow {
-                        depth,
-                        name: name.clone(),
-                        path: path.clone(),
-                        stat: *stat,
-                        directory: None,
-                        top_level_gap,
-                    });
-                }
+                ChangedFilesTreeNode::File { name, path, stat } => rows.push(ReviewRow {
+                    side,
+                    depth,
+                    name: name.clone(),
+                    path: path.clone(),
+                    stat: *stat,
+                    kind: ReviewRowKind::File {
+                        status: entries
+                            .iter()
+                            .find(|entry| &entry.path == path)
+                            .map(|entry| entry.status.clone())
+                            .unwrap_or_default(),
+                        folder: None,
+                    },
+                    section_gap: false,
+                }),
             }
         }
     }
     let mut rows = Vec::new();
-    walk(nodes, 0, collapsed, &mut rows);
+    for side in ChangeSide::ALL {
+        let entries = side_entries(files, side);
+        if entries.is_empty() {
+            continue;
+        }
+        let expanded = !collapsed_sections.contains(&side);
+        rows.push(ReviewRow {
+            side,
+            depth: 0,
+            name: side.title().to_string(),
+            path: String::new(),
+            stat: sum_stats(entries.iter().map(|entry| entry.stat)),
+            kind: ReviewRowKind::Section {
+                count: entries.len(),
+                expanded,
+            },
+            section_gap: !rows.is_empty(),
+        });
+        if !expanded {
+            continue;
+        }
+        match view {
+            GitChangesView::List => {
+                rows.extend(entries.iter().map(|entry| {
+                    let (folder, name) = match entry.path.rsplit_once('/') {
+                        Some((folder, name)) => (Some(folder.to_string()), name.to_string()),
+                        None => (None, entry.path.clone()),
+                    };
+                    ReviewRow {
+                        side,
+                        depth: 0,
+                        name,
+                        path: entry.path.clone(),
+                        stat: entry.stat,
+                        kind: ReviewRowKind::File {
+                            status: entry.status.clone(),
+                            folder,
+                        },
+                        section_gap: false,
+                    }
+                }));
+            }
+            GitChangesView::Tree => {
+                let side_files: Vec<GitChangedFile> = entries
+                    .iter()
+                    .map(|entry| GitChangedFile {
+                        path: entry.path.clone(),
+                        additions: entry.stat.additions,
+                        deletions: entry.stat.deletions,
+                        staged: None,
+                        unstaged: None,
+                    })
+                    .collect();
+                let tree = build_changed_files_tree(&side_files);
+                walk(side, &tree, 0, &entries, collapsed, &mut rows);
+            }
+        }
+    }
     rows
 }

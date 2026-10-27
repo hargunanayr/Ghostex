@@ -85,6 +85,27 @@ pub struct GitChangedFile {
     pub additions: i64,
     pub deletions: i64,
     pub path: String,
+    /// What is staged (the index against HEAD), when anything is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staged: Option<GitFileChange>,
+    /// What is not staged (the working tree against the index, or an untracked file), when anything is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unstaged: Option<GitFileChange>,
+}
+
+/// One side of a changed file, as gxserver's Git state read splits it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitFileChange {
+    /// `M`, `A`, `D`, `R`, `U` (untracked) or `!` (a merge conflict).
+    pub status: String,
+    #[serde(default)]
+    pub additions: i64,
+    #[serde(default)]
+    pub deletions: i64,
+    /// The path a staged rename came from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_path: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

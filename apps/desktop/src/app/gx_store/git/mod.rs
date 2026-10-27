@@ -5,7 +5,7 @@
 //! menu and the Commit button from it; `poll.rs` is the background poll behind the project
 //! headers' +/- numbers; `toasts.rs` the toasts every flow shows; `actions.rs` what a Git menu row,
 //! the header's Git button or a Git hotkey does; `review.rs` the commit review dialog and its
-//! confirm; `merge.rs` the review's direct merge into main; `prompt_agent.rs` starts the agent a
+//! confirm; `staging.rs` its Stage, Unstage and Discard; `merge.rs` the review's direct merge into main; `prompt_agent.rs` starts the agent a
 //! Git workflow hands its work to; the `worktree_*.rs` files are the Add, Delete and Rename
 //! Worktree dialogs; `export_transcript.rs` is Handoff / Export.
 //!
@@ -27,6 +27,7 @@ mod poll;
 mod prompt_agent;
 pub(crate) mod review;
 mod scope;
+mod staging;
 mod toasts;
 mod worktree_create;
 mod worktree_delete;
@@ -41,6 +42,7 @@ use ghostex_gx_core::git_menu::{
 };
 
 pub(crate) use export_transcript::{ExportTranscriptHost, HandoffTarget};
+pub(crate) use staging::GitReviewStagingAction;
 pub(crate) use worktree_list::TrustedWorktreeList;
 
 /// Everything this family keeps between calls.

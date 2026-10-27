@@ -37,6 +37,9 @@ fn opens_in_browser(kind: GpuiAppModalKind) -> bool {
 }
 
 impl GhostexGpuiApp {
+    /// The desktop hands a commit review's refreshed file list to its open dialog; the commit review does not open in the page (`opens_in_browser`), so there is none to update.
+    pub(crate) fn deliver_git_review_files(&mut self, _message: Value, _cx: &mut Context<Self>) {}
+
     /// The desktop's door into every app modal, for the dialogs the page can show.
     pub(crate) fn open_app_modal_from_bridge(&mut self, message: Value, cx: &mut Context<Self>) {
         let Some(kind) = message

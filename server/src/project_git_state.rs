@@ -174,29 +174,30 @@ pub(crate) async fn read_git_state(
     if exit_code(&repo) != 0 || stdout(&repo).trim() != "true" {
         return Ok(None);
     }
-    let (branch, status, diff, untracked, upstream, remotes, origin) = tokio::try_join!(
+    let (branch, status, diff, staged_diff, unstaged_diff, upstream, remotes, origin) = tokio::try_join!(
         git(projects, project_id, "branch"),
-        git(projects, project_id, "statusPorcelain"),
+        git(projects, project_id, "statusPorcelainZAll"),
         git(projects, project_id, "diffNumstat"),
-        git(projects, project_id, "listUntracked"),
+        git(projects, project_id, "diffCachedNumstatZ"),
+        git(projects, project_id, "diffNumstatZ"),
         git(projects, project_id, "upstreamCounts"),
         git(projects, project_id, "listRemotes"),
         git(projects, project_id, "getOriginRemoteUrl"),
     )?;
+    let entries = parse_status_porcelain_z(stdout(&status));
     let mut files = parse_numstat_files(stdout(&diff));
-    files.extend(parse_status_porcelain_files(stdout(&status)));
-    files.extend(
-        stdout(&untracked)
-            .split('\0')
-            .filter(|path| !path.is_empty())
-            .filter_map(normalize_relative_git_file_path)
-            .map(|path| ChangedFile {
-                additions: 0,
-                deletions: 0,
-                path,
-            }),
-    );
-    let files = merge_changed_files(files);
+    files.extend(entries.iter().map(|entry| ChangedFile {
+        additions: 0,
+        deletions: 0,
+        path: entry.path.clone(),
+    }));
+    // CDXC:Git 2026-10-26 WHY: `git diff --numstat HEAD` prints a rename as `old => new` (or `{a => b}/c`), which names no file; every real change has a status entry, so a numstat row without one is dropped instead of reaching the commit review as a file nobody can stage or open.
+    let files: Vec<ChangedFile> = merge_changed_files(files)
+        .into_iter()
+        .filter(|file| entries.iter().any(|entry| entry.path == file.path))
+        .collect();
+    let staged_counts = parse_numstat_z(stdout(&staged_diff));
+    let unstaged_counts = parse_numstat_z(stdout(&unstaged_diff));
     let additions: i64 = files.iter().map(|file| file.additions).sum();
     let deletions: i64 = files.iter().map(|file| file.deletions).sum();
     let upstream_parts: Vec<&str> = if exit_code(&upstream) == 0 {
@@ -221,7 +222,16 @@ pub(crate) async fn read_git_state(
         "deletions": deletions,
         "files": files
             .iter()
-            .map(|file| json!({ "additions": file.additions, "deletions": file.deletions, "path": file.path }))
+            .map(|file| {
+                let entry = entries.iter().find(|entry| entry.path == file.path);
+                json!({
+                    "additions": file.additions,
+                    "deletions": file.deletions,
+                    "path": file.path,
+                    "staged": entry.and_then(|entry| side_json(entry.staged.as_ref(), &staged_counts, &file.path)),
+                    "unstaged": entry.and_then(|entry| side_json(entry.unstaged.as_ref(), &unstaged_counts, &file.path)),
+                })
+            })
             .collect::<Vec<_>>(),
         "hasGitHubRemote": exit_code(&origin) == 0
             && normalize_git_hub_remote_url(stdout(&origin)).is_some(),
@@ -390,27 +400,144 @@ fn parse_numstat_files(stdout: &str) -> Vec<ChangedFile> {
         .collect()
 }
 
-/// `parseGpuiGitStatusPorcelainFiles`.
-fn parse_status_porcelain_files(stdout: &str) -> Vec<ChangedFile> {
-    stdout
-        .split('\n')
-        .map(|line| line.strip_suffix('\r').unwrap_or(line))
-        .filter(|line| line.chars().count() >= 4)
-        .filter_map(|line| {
-            let raw: String = line.chars().skip(3).collect();
-            let raw = raw.trim();
-            let candidate = if raw.contains(" -> ") {
-                raw.rsplit(" -> ").next().unwrap_or("")
-            } else {
-                raw
-            };
-            normalize_relative_git_file_path(candidate).map(|path| ChangedFile {
-                additions: 0,
-                deletions: 0,
+/// One side of a changed file: its status letter in the commit review (`M`, `A`, `D`, `R`, `U` for untracked, `!` for a merge conflict) and, for a staged rename, the path it came from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ChangeSide {
+    status: &'static str,
+    original_path: Option<String>,
+}
+
+/// One `git status --porcelain=v1 -z` entry, split into what is staged (index against HEAD) and what is not (working tree against the index, untracked files included).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct StatusEntry {
+    path: String,
+    staged: Option<ChangeSide>,
+    unstaged: Option<ChangeSide>,
+}
+
+fn side_letter(code: u8) -> Option<&'static str> {
+    match code {
+        b'M' | b'T' => Some("M"),
+        b'A' | b'C' => Some("A"),
+        b'D' => Some("D"),
+        b'R' => Some("R"),
+        _ => None,
+    }
+}
+
+/// CDXC:Git 2026-10-26 WHY:
+/// The commit review shows Staged Changes and Changes as two lists, so gxserver splits each `git status --porcelain=v1 -z` entry into its index side (X) and its working-tree side (Y). A file partly staged has both sides and appears in both lists. `-z` keeps paths with spaces or quotes literal, and a rename (`R`) is followed by the path it came from, which unstaging needs too. Untracked files (`??`) are unstaged only; an unmerged entry is one unstaged `!` row, since staging it is how Git marks the conflict resolved.
+fn parse_status_porcelain_z(stdout: &str) -> Vec<StatusEntry> {
+    let mut entries = Vec::new();
+    let mut fields = stdout.split('\0');
+    while let Some(field) = fields.next() {
+        let bytes = field.as_bytes();
+        if bytes.len() < 4 || bytes[2] != b' ' {
+            continue;
+        }
+        let (x, y) = (bytes[0], bytes[1]);
+        let original = if matches!(x, b'R' | b'C') || matches!(y, b'R' | b'C') {
+            fields.next().and_then(normalize_relative_git_file_path)
+        } else {
+            None
+        };
+        let Some(path) = normalize_relative_git_file_path(&field[3..]) else {
+            continue;
+        };
+        let unmerged = matches!(
+            (x, y),
+            (b'D', b'D')
+                | (b'A', b'U')
+                | (b'U', b'D')
+                | (b'U', b'A')
+                | (b'D', b'U')
+                | (b'A', b'A')
+                | (b'U', b'U')
+        );
+        let (staged, unstaged) = if x == b'?' {
+            (
+                None,
+                Some(ChangeSide {
+                    status: "U",
+                    original_path: None,
+                }),
+            )
+        } else if unmerged {
+            (
+                None,
+                Some(ChangeSide {
+                    status: "!",
+                    original_path: None,
+                }),
+            )
+        } else {
+            (
+                side_letter(x).map(|status| ChangeSide {
+                    status,
+                    original_path: if x == b'R' { original.clone() } else { None },
+                }),
+                side_letter(y).map(|status| ChangeSide {
+                    status,
+                    original_path: None,
+                }),
+            )
+        };
+        if staged.is_none() && unstaged.is_none() {
+            continue;
+        }
+        entries.push(StatusEntry {
+            path,
+            staged,
+            unstaged,
+        });
+    }
+    entries
+}
+
+/// `git diff --numstat -z`: `add TAB del TAB path NUL`, or for a rename `add TAB del TAB NUL old NUL new NUL`; binary files count `-` (nothing).
+fn parse_numstat_z(stdout: &str) -> std::collections::HashMap<String, (i64, i64)> {
+    let mut counts = std::collections::HashMap::new();
+    let mut fields = stdout.split('\0');
+    while let Some(record) = fields.next() {
+        let mut parts = record.splitn(3, '\t');
+        let (Some(additions), Some(deletions), Some(path)) =
+            (parts.next(), parts.next(), parts.next())
+        else {
+            continue;
+        };
+        let path = if path.is_empty() {
+            let _from = fields.next();
+            fields.next().unwrap_or_default()
+        } else {
+            path
+        };
+        if let Some(path) = normalize_relative_git_file_path(path) {
+            counts.insert(
                 path,
-            })
-        })
-        .collect()
+                (
+                    numstat_number(Some(additions.trim())),
+                    numstat_number(Some(deletions.trim())),
+                ),
+            );
+        }
+    }
+    counts
+}
+
+/// A file's `staged` or `unstaged` object in the read's answer, or `null` when it has nothing on that side.
+fn side_json(
+    side: Option<&ChangeSide>,
+    counts: &std::collections::HashMap<String, (i64, i64)>,
+    path: &str,
+) -> Option<Value> {
+    let side = side?;
+    let (additions, deletions) = counts.get(path).copied().unwrap_or((0, 0));
+    let mut value =
+        json!({ "additions": additions, "deletions": deletions, "status": side.status });
+    if let Some(original) = &side.original_path {
+        value["originalPath"] = json!(original);
+    }
+    Some(value)
 }
 
 /// `mergeGpuiGitChangedFiles`: one row per path, in first-seen order, with the larger counts.

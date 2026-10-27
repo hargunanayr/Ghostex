@@ -3,14 +3,13 @@
 //! control the way they act on a focused button or checkbox, and rings show only after keyboard
 //! input (`:focus-visible`, gpui's `last_input_was_keyboard`).
 use super::super::native_modal_kit::*;
+use super::model::ChangeSide;
 use gpui::{App, BoxShadow, Div, FocusHandle, Styled as _, Window, div, point, px, rgb};
 use std::collections::HashMap;
 
 /// The dialog's fixed controls, in tab order after the file tree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum FocusTarget {
-    IncludeAll,
-    SelectFiles,
     ShowAll,
     DeleteAfter,
     ViewMode,
@@ -24,9 +23,7 @@ pub(crate) enum FocusTarget {
     Confirm,
 }
 
-const TARGETS: [FocusTarget; 13] = [
-    FocusTarget::IncludeAll,
-    FocusTarget::SelectFiles,
+const TARGETS: [FocusTarget; 11] = [
     FocusTarget::ShowAll,
     FocusTarget::DeleteAfter,
     FocusTarget::ViewMode,
@@ -40,12 +37,13 @@ const TARGETS: [FocusTarget; 13] = [
     FocusTarget::Confirm,
 ];
 
-/// A focusable part of a tree row: the directory button, a file's checkbox, a file's name button.
+/// A focusable row of the file rail: a section header, a folder (by `ReviewRow::key`), or one
+/// side of a file.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum RowFocus {
+    Section(ChangeSide),
     Directory(String),
-    Include(String),
-    Open(String),
+    Open(ChangeSide, String),
 }
 
 pub(crate) struct CommitFocus {

@@ -39,6 +39,8 @@ pub(crate) struct PullRequestWorkflow {
     pub(crate) agent_id: Option<String>,
     pub(crate) file_paths: Option<Vec<String>>,
     pub(crate) has_explicit_file_selection: bool,
+    /// The files are the staged set, and the commit is the index as it stands.
+    pub(crate) staged_only: bool,
     pub(crate) has_commit: bool,
     pub(crate) message: String,
 }
@@ -418,6 +420,7 @@ impl GhostexGpuiApp {
         };
         let prompt = pull_request_agent_prompt(
             workflow.has_explicit_file_selection,
+            workflow.staged_only,
             workflow.has_commit,
             workflow.message.trim(),
             &selected,

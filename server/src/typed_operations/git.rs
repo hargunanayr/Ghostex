@@ -24,6 +24,10 @@ pub(crate) async fn run_git_action(
             "stdout": line_count.to_string(),
         }));
     }
+    if action == "discardFiles" {
+        let file_paths = required_relative_file_paths(params.get("filePaths"))?;
+        return discard_file_paths(&action, file_paths, context).await;
+    }
     let mut params = params.clone();
     if action == "addAll" {
         let file_paths = optional_relative_file_paths(params.get("filePaths"))?;
@@ -97,6 +101,83 @@ async fn retain_stageable_file_paths(
                 })
         })
         .collect())
+}
+
+/// The listed paths `git ls-files` prints back from `extra_args` (`--others --exclude-standard` for the untracked ones, nothing for the ones in the index), exactly as requested: a listed directory never widens the set to the files under it.
+async fn ls_files_matching(
+    extra_args: &[&str],
+    file_paths: &[String],
+    context: &TypedOperationContext,
+) -> Result<Vec<String>, TypedOperationError> {
+    let mut args = vec!["ls-files".to_string(), "-z".to_string()];
+    args.extend(extra_args.iter().map(|arg| arg.to_string()));
+    args.push("--".to_string());
+    args.extend(file_paths.iter().cloned());
+    let command = ProcessCommand::new("git", args, context.cwd.as_str())
+        .with_env("GIT_LITERAL_PATHSPECS", "1")
+        .with_preserved_stdout_whitespace();
+    let output = run_process_command(&command, context).await?;
+    if output.exit_code != 0 {
+        return Err(TypedOperationError::bad_request(format!(
+            "Could not list the files to discard: {}",
+            output.stderr.trim()
+        )));
+    }
+    let listed: Vec<&str> = output.stdout.split('\0').collect();
+    Ok(file_paths
+        .iter()
+        .filter(|path| listed.contains(&path.as_str()))
+        .cloned()
+        .collect())
+}
+
+/// CDXC:Git 2026-10-26 WHY: Discard means "throw away what is not staged": an untracked file is deleted (`git clean -f`) and a tracked file's working copy is restored from the index (`git restore --worktree`), so its staged hunks survive. gxserver sorts the paths itself from `git ls-files` instead of trusting a client's idea of which are untracked, and a path that is neither (already discarded) is skipped rather than failing the batch.
+async fn discard_file_paths(
+    action: &str,
+    file_paths: Vec<String>,
+    context: &TypedOperationContext,
+) -> Result<Value, TypedOperationError> {
+    let untracked =
+        ls_files_matching(&["--others", "--exclude-standard"], &file_paths, context).await?;
+    let tracked = ls_files_matching(&[], &file_paths, context).await?;
+    let mut stderr = String::new();
+    let mut exit_code = 0;
+    for (verb, paths) in [
+        (vec!["clean", "-f", "-q"], &untracked),
+        (vec!["restore", "--worktree"], &tracked),
+    ] {
+        if paths.is_empty() {
+            continue;
+        }
+        let summary_args: Vec<String> = verb
+            .iter()
+            .map(|arg| arg.to_string())
+            .chain(["--".to_string(), format!("<{} files>", paths.len())])
+            .collect();
+        let mut args: Vec<String> = verb.iter().map(|arg| arg.to_string()).collect();
+        args.push("--".to_string());
+        args.extend(paths.iter().cloned());
+        let command = ProcessCommand::new("git", args, context.cwd.as_str())
+            .with_env("GIT_LITERAL_PATHSPECS", "1")
+            .with_result_command(Some(CommandSummary {
+                args: summary_args,
+                cwd: context.cwd.clone(),
+                executable: "git".to_string(),
+            }));
+        let output = run_process_command(&command, context).await?;
+        if output.exit_code != 0 {
+            exit_code = output.exit_code;
+            stderr.push_str(output.stderr.trim());
+            stderr.push('\n');
+        }
+    }
+    Ok(json!({
+        "action": action,
+        "discarded": untracked.len() + tracked.len(),
+        "exitCode": exit_code,
+        "stderr": stderr.trim_end(),
+        "stdout": "",
+    }))
 }
 
 pub(crate) fn build_git_command(
@@ -242,6 +323,18 @@ pub(crate) fn build_git_command(
             ],
             cwd,
         ),
+        "diffCachedNameOnlyZ" => ProcessCommand::new(
+            "git",
+            vec!["diff", "--cached", "--name-only", "--no-renames", "-z"],
+            cwd,
+        )
+        .with_preserved_stdout_whitespace(),
+        "diffCachedNumstatZ" => ProcessCommand::new(
+            "git",
+            vec!["diff", "--cached", "--no-ext-diff", "--numstat", "-z"],
+            cwd,
+        )
+        .with_preserved_stdout_whitespace(),
         "diffCachedStat" => ProcessCommand::new("git", vec!["diff", "--cached", "--stat"], cwd),
         "diffCachedStatFiles" => {
             let files = required_relative_file_paths(params.get("filePaths"))?;
@@ -289,6 +382,10 @@ pub(crate) fn build_git_command(
             cwd,
         ),
         "diffNumstat" => ProcessCommand::new("git", vec!["diff", "--numstat", "HEAD"], cwd),
+        "diffNumstatZ" => {
+            ProcessCommand::new("git", vec!["diff", "--no-ext-diff", "--numstat", "-z"], cwd)
+                .with_preserved_stdout_whitespace()
+        }
         "getOriginRemoteUrl" => {
             ProcessCommand::new("git", vec!["remote", "get-url", "origin"], cwd)
         }
@@ -347,6 +444,33 @@ pub(crate) fn build_git_command(
             .with_preserved_stdout_whitespace(),
         "statusPorcelainZ" => ProcessCommand::new("git", vec!["status", "--porcelain", "-z"], cwd)
             .with_preserved_stdout_whitespace(),
+        "statusPorcelainZAll" => ProcessCommand::new(
+            "git",
+            vec!["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            cwd,
+        )
+        .with_preserved_stdout_whitespace(),
+        /*
+        CDXC:Git 2026-10-26 WHY:
+        Unstaging uses `git reset -q -- <paths>` rather than `git restore --staged`, because reset also works on a branch with no commit yet (it resets the paths to the empty tree), where restore fails for want of a HEAD.
+        */
+        "unstageFiles" => {
+            let files = required_relative_file_paths(params.get("filePaths"))?;
+            let mut args = vec!["reset".to_string(), "-q".to_string(), "--".to_string()];
+            args.extend(files.clone());
+            ProcessCommand::new("git", args, cwd)
+                .with_result_command(Some(CommandSummary {
+                    args: vec![
+                        "reset".to_string(),
+                        "-q".to_string(),
+                        "--".to_string(),
+                        format!("<{} files>", files.len()),
+                    ],
+                    cwd: cwd.to_string(),
+                    executable: "git".to_string(),
+                }))
+                .with_env("GIT_LITERAL_PATHSPECS", "1")
+        }
         "upstreamCounts" => ProcessCommand::new(
             "git",
             vec!["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
@@ -476,11 +600,15 @@ pub(crate) fn normalize_git_action(input: Option<&Value>) -> Result<String, Type
         | "diffCached"
         | "diffCachedFiles"
         | "diffCachedStatFiles"
+        | "diffCachedNameOnlyZ"
         | "diffCachedNoExt"
+        | "diffCachedNumstatZ"
         | "diffCachedStat"
         | "diffNoExt"
         | "diffNoIndexAgainstNull"
         | "diffNumstat"
+        | "diffNumstatZ"
+        | "discardFiles"
         | "getOriginRemoteUrl"
         | "isInsideWorkTree"
         | "isUntrackedFile"
@@ -497,6 +625,8 @@ pub(crate) fn normalize_git_action(input: Option<&Value>) -> Result<String, Type
         | "status"
         | "statusPorcelain"
         | "statusPorcelainZ"
+        | "statusPorcelainZAll"
+        | "unstageFiles"
         | "upstreamCounts"
         | "verifyRef" => Ok(action.to_string()),
         _ => Err(TypedOperationError::bad_request(format!(
