@@ -52,7 +52,7 @@ pub(crate) fn run(args: &[String]) -> CliResult<()> {
     }
 }
 
-pub(super) fn flag_text(flags: &Flags, key: &str) -> Option<String> {
+pub(in crate::ghostex_cli) fn flag_text(flags: &Flags, key: &str) -> Option<String> {
     flags
         .string_value(key)
         .map(str::trim)
@@ -60,7 +60,10 @@ pub(super) fn flag_text(flags: &Flags, key: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-pub(super) fn text_or_file(parsed: &ParsedArgs, text_key: &str) -> CliResult<Option<String>> {
+pub(in crate::ghostex_cli) fn text_or_file(
+    parsed: &ParsedArgs,
+    text_key: &str,
+) -> CliResult<Option<String>> {
     if let Some(path) = flag_text(&parsed.flags, "bodyFile") {
         return std::fs::read_to_string(&path)
             .map(Some)
@@ -105,7 +108,7 @@ pub(super) fn target_coordinator(parsed: &ParsedArgs) -> CliResult<(Value, Flags
 }
 
 /// Only the flags the RPC layer reads (the server choice); command flags stay out of it.
-pub(super) fn server_flags(flags: &Flags) -> Flags {
+pub(in crate::ghostex_cli) fn server_flags(flags: &Flags) -> Flags {
     let mut result = Flags::default();
     if let Some(server) = flags.string_value("server") {
         result.insert_text("server", server);
@@ -430,7 +433,7 @@ fn options(parsed: &ParsedArgs) -> CliResult<()> {
 
 /// `{ agentCommand, icon }` of a launcher from `/api/readSidebarHud`, the way the desktop sends
 /// it: custom agents are listed per machine, so a project that does not list one still launches it.
-pub(super) fn launch_settings_for(rows: &[Value], agent_id: &str) -> Value {
+pub(in crate::ghostex_cli) fn launch_settings_for(rows: &[Value], agent_id: &str) -> Value {
     let mut settings = serde_json::Map::new();
     if let Some(row) = rows
         .iter()
@@ -448,11 +451,11 @@ pub(super) fn launch_settings_for(rows: &[Value], agent_id: &str) -> Value {
 
 /// The first configured agent, in `COORDINATOR_AGENT_FAMILIES` order.
 /// CDXC:Coordinators 2026-10-01 SEE-ALSO: DEFAULT_CLAUDE_COORDINATOR_MODEL in apps/desktop/src/app/window/new_coordinator_modal.rs (the user's Opus 5.5 decision); `create` on a Claude agent without `--model` uses the same, a Codex agent keeps its configured model.
-const DEFAULT_CLAUDE_COORDINATOR_MODEL: &str = "opus[1m]";
+pub(in crate::ghostex_cli) const DEFAULT_CLAUDE_COORDINATOR_MODEL: &str = "opus[1m]";
 
 /// The orchestrator family of a launcher row (`COORDINATOR_AGENT_FAMILIES`): by its icon, its
 /// agent id, or the executable its command runs.
-fn agent_family(row: &Value) -> Option<&'static str> {
+pub(in crate::ghostex_cli) fn agent_family(row: &Value) -> Option<&'static str> {
     let icon = agents::text(row, "icon");
     let by_icon = crate::agents::default_agent_icon_to_id(icon).map(str::to_string);
     let by_id = Some(agents::text(row, "agentId").to_string());
@@ -468,7 +471,7 @@ fn agent_family(row: &Value) -> Option<&'static str> {
         })
 }
 
-fn default_coordinator_agent(rows: &[Value]) -> Option<String> {
+pub(in crate::ghostex_cli) fn default_coordinator_agent(rows: &[Value]) -> Option<String> {
     crate::coordinators::COORDINATOR_AGENT_FAMILIES
         .iter()
         .find_map(|family| {

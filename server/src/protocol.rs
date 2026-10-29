@@ -521,6 +521,17 @@ pub fn endpoint_for(path: &str) -> Option<EndpointDescriptor> {
         | "/api/coordinatorThreadTitleReminder"
         | "/api/checkAgentSessionWrite"
         // CDXC:Coordinators 2026-10-19 WHY: an orchestrator reads its playbook from the machine that runs it, so a client looking at a remote machine reads and edits that machine's. They carry a project id, a session id and bounded text.
+        // CDXC:Ghosts 2026-10-29 WHY: a Ghost lives on the machine that runs its chat, like an orchestrator, so a client looking at a remote machine reads and steers that machine's Ghosts. The calls carry a Ghost id, project ids and bounded text (Soul, Memory, a skill's SKILL.md); file names are checked against SOUL.md, MEMORY.md and memory/<topic>.md, never used as paths.
+        | "/api/listGhosts"
+        | "/api/readGhost"
+        | "/api/createGhost"
+        | "/api/updateGhost"
+        | "/api/deleteGhost"
+        | "/api/writeGhostFile"
+        | "/api/ghostMemory"
+        | "/api/ghostSkills"
+        | "/api/ghostArtifacts"
+        | "/api/resetGhostConversation"
         | "/api/readCoordinatorPlaybook"
         | "/api/setCoordinatorPlaybook"
         | "/api/readCoordinatorGuide"

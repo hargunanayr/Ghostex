@@ -62,6 +62,8 @@ pub(super) fn normalize_definition_payload(
         created_at,
         enabled,
         execution_mode,
+        // Set by the save from the project (a Ghost's home), never taken from the client.
+        ghost_id: None,
         id,
         name,
         next_run_at,

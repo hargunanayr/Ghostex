@@ -34,6 +34,7 @@ pub(super) fn recover_running_automation_runs(
             Some(&run.created_at),
         )? {
             complete_run(db, &run.project_id, &run.id, &status, summary.as_deref())?;
+            report_ghost_habit_run(db, repository, &run.project_id, &run.id, session_id, &status);
         } else {
             /*
             A recovered run already reached the delivery step in the watcher that

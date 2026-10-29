@@ -131,6 +131,7 @@ mod coordinator_resolve;
 mod coordinator_runtime;
 mod empty_session_cleanup_runtime;
 mod foreground;
+mod ghost_habit_runtime;
 mod http_dispatch;
 pub mod http_endpoints;
 pub mod http_infra;

@@ -587,6 +587,10 @@ pub fn usage() -> String {
             "Run an orchestrator: one agent you talk to that starts, supervises, and reports on thread sessions",
         ),
         format_help_command(
+            "ghost --help",
+            "Run a Ghost: a long-lived agent with a Soul and Memory that holds projects, starts threads, keeps documents and runs habits",
+        ),
+        format_help_command(
             "agentbox status | list | url <session> [--screen] [--json]",
             "Check agentbox readiness, list boxes, and print a box session's web app or screen URL",
         ),

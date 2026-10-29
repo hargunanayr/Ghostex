@@ -1244,4 +1244,8 @@ pub const GXSERVER_STORAGE_MIGRATIONS: &[Migration] = &[
         id: "0048_session_completed_at",
         sql: include_str!("migrations/0048_session_completed_at.sql"),
     },
+    Migration {
+        id: "0049_ghosts",
+        sql: include_str!("migrations/0049_ghosts.sql"),
+    },
 ];

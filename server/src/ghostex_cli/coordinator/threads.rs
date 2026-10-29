@@ -27,7 +27,7 @@ fn sender(row: &Value) -> MessageSender {
 
 /// CDXC:Coordinators 2026-09-30 WHY:
 /// The task reaches the thread as a message from the coordinator (so its chat shows who sent it and `Reply to` names the coordinator), wrapped with the goal, standing instructions, memory and reporting rules. The thread is linked before its agent starts, so the supervisor sees its first turn from the beginning.
-pub(super) fn start_thread(parsed: &ParsedArgs) -> CliResult<()> {
+pub(in crate::ghostex_cli) fn start_thread(parsed: &ParsedArgs) -> CliResult<()> {
     let title = flag_text(&parsed.flags, "title")
         .ok_or_else(|| CliError::Other("start-thread needs --title \"<3 to 6 words>\".".into()))?;
     let task = text_or_file(parsed, "task")?

@@ -453,6 +453,7 @@ pub(crate) fn domain_error_response(
         "corruptState" => StatusCode::CONFLICT,
         "projectPathUnavailable" => StatusCode::CONFLICT,
         crate::accounts::launch::ACCOUNT_UNAVAILABLE => StatusCode::CONFLICT,
+        crate::ghosts::GHOST_FILE_CONFLICT => StatusCode::CONFLICT,
         "dependencyUnavailable" => StatusCode::SERVICE_UNAVAILABLE,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     };

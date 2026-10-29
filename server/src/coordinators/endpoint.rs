@@ -184,6 +184,7 @@ pub fn handle_coordinator_endpoint(
                     "An orchestrator cannot be its own thread.",
                 ));
             }
+            crate::ghosts::refuse_thread_outside_ghost_projects(db, &coordinator_key.0, &thread_key.0)?;
             if repository
                 .get_session(&thread_key.0, &thread_key.1)?
                 .is_none()

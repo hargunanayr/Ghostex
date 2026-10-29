@@ -1,4 +1,4 @@
-use serde_json::{Map, Value};
+use serde_json::Value;
 use std::time::Duration;
 use tokio::sync::broadcast;
 
@@ -6,7 +6,6 @@ use crate::{
     domain::{DomainRepository, DomainStateError},
     paths::GxserverPaths,
     storage::open_gxserver_database,
-    zmx::dispatch_zmx_session_interaction_endpoint,
 };
 
 use super::*;
@@ -25,6 +24,8 @@ pub(super) struct AutomationDefinitionRecord {
     pub(super) created_at: String,
     pub(super) enabled: bool,
     pub(super) execution_mode: Value,
+    /// The Ghost this automation is a habit of (it lives in that Ghost's home project).
+    pub(super) ghost_id: Option<String>,
     pub(super) id: String,
     pub(super) name: String,
     pub(super) next_run_at: Option<String>,
@@ -203,17 +204,28 @@ impl AutomationRuntime {
                 run_created_at.as_deref(),
             )? {
                 complete_run(&db, &project_id, &run_id, &status, summary.as_deref())?;
+                report_ghost_habit_run(&db, &repository, &project_id, &run_id, &session_id, &status);
                 return Ok(());
             }
         }
         let db = open_gxserver_database(&self.paths).map_err(internal_error)?;
+        let repository = DomainRepository::new(&db, self.server_id.as_str());
         fail_run(
             &db,
             &project_id,
             &run_id,
             "Automation did not report an AUTOMATION_RESULT marker before the watcher timeout.",
             "needs_attention",
-        )
+        )?;
+        report_ghost_habit_run(
+            &db,
+            &repository,
+            &project_id,
+            &run_id,
+            &session_id,
+            "needs_attention",
+        );
+        Ok(())
     }
 
     /*
@@ -248,34 +260,65 @@ impl AutomationRuntime {
     }
 }
 
+/// Hands a finished run of a Ghost's habit to the Ghost (server/src/ghosts/habits.rs); runs of
+/// every other automation are left alone.
+pub(super) fn report_ghost_habit_run(
+    db: &rusqlite::Connection,
+    repository: &DomainRepository<'_>,
+    project_id: &str,
+    run_id: &str,
+    session_id: &str,
+    status: &str,
+) {
+    let Ok(run) = read_run(db, project_id, run_id) else {
+        return;
+    };
+    let habit_name: Option<String> = db
+        .query_row(
+            "SELECT name FROM automations WHERE automationId = ?1 AND ghostId IS NOT NULL",
+            [&run.automation_id],
+            |row| row.get(0),
+        )
+        .ok();
+    if let Some(habit_name) = habit_name {
+        crate::ghosts::report_habit_run(db, repository, project_id, &habit_name, session_id, status);
+    }
+}
+
+/// CDXC:Automations 2026-10-29 WHY:
+/// The prompt goes in the way a chat message does (composer wait, verified clear, bracketed paste checked on screen, a separate Enter, then a check that the agent took it), not through `sendSessionMessage`. That endpoint types the raw text and sends Enter 150ms later without looking, and Claude Code swallowed that Enter for a long multi-line habit prompt: the run sat at "running" with the prompt staged in the input box and no transcript until the watcher timed out (Ghost habit run, 2026-10-29).
 pub(super) fn send_automation_prompt(
     repository: &DomainRepository<'_>,
     session_project_id: &str,
     session_id: &str,
     prompt: &str,
 ) -> Result<(), DomainStateError> {
-    let mut params = Map::new();
-    params.insert(
-        "projectId".to_string(),
-        Value::String(session_project_id.to_string()),
+    let session = repository
+        .get_session(session_project_id, session_id)?
+        .ok_or_else(|| {
+            DomainStateError::not_found(format!(
+                "Session {session_project_id}/{session_id} does not exist."
+            ))
+        })?;
+    let agent = crate::session_chat_composer::session_chat_composer_agent_id(&session);
+    let steps = crate::session_chat_send::build_session_chat_message_steps(
+        agent.as_deref(),
+        prompt,
+        &[],
+        false,
     );
-    params.insert(
-        "sessionId".to_string(),
-        Value::String(session_id.to_string()),
-    );
-    params.insert("submit".to_string(), Value::Bool(true));
-    params.insert("text".to_string(), Value::String(prompt.to_string()));
-    /*
-    Tag the write with its origin. The send queue already uses
-    `diagnosticInputSource` to attribute every byte to its caller; analytics
-    reads the same tag to attribute this prompt to `automation` rather than
-    lumping it in with the untagged `gx sendMessage` default.
-    */
-    params.insert(
-        "diagnosticInputSource".to_string(),
-        Value::String("automation".to_string()),
-    );
-    dispatch_zmx_session_interaction_endpoint(repository, "/api/sendSessionMessage", &params)
-        .map_err(zmx_error)?;
+    // The `automation` source attributes every byte to this caller in the input log, and
+    // analytics counts it as an automation prompt rather than a `gx sendMessage` one.
+    crate::session_chat_send::enqueue_session_write_sequence(
+        &session,
+        session_project_id,
+        session_id,
+        "automation",
+        steps,
+    )?;
+    if let Some(source) = crate::telemetry::prompt_source_for_diagnostic_input_source("automation")
+    {
+        crate::telemetry::prompt_sent(&session, source);
+    }
     Ok(())
 }

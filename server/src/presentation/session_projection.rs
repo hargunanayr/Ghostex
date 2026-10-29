@@ -103,6 +103,14 @@ pub(crate) fn project_presentation_project(project: &Value) -> Value {
             Value::from(crate::bot_feed::published_bot_runs_today(profile)),
         );
     }
+    // CDXC:Ghosts 2026-10-29 WHY: like a bot's flag, a Ghost rides on its home project's snapshot row, which every client holds from its first frame; the row is published from the `ghosts` table (ghosts/published.rs), refreshed on every Ghost change.
+    if let Some(ghost) = project
+        .get("projectId")
+        .and_then(Value::as_str)
+        .and_then(crate::ghosts::published_ghost_for_project)
+    {
+        output.insert("ghost".to_string(), ghost);
+    }
     if let Some(project_id) = project.get("projectId").and_then(Value::as_str) {
         insert_issues_workflow_fields(
             &mut output,

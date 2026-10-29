@@ -13,8 +13,8 @@ pub(super) fn upsert_automation(
         r#"
         INSERT INTO automations (
           automationId, projectId, agentId, name, prompt, enabled, scheduleJson,
-          executionModeJson, nextRunAt, createdAt, updatedAt
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+          executionModeJson, nextRunAt, createdAt, updatedAt, ghostId
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
         ON CONFLICT(automationId) DO UPDATE SET
           projectId = excluded.projectId,
           agentId = excluded.agentId,
@@ -24,7 +24,8 @@ pub(super) fn upsert_automation(
           scheduleJson = excluded.scheduleJson,
           executionModeJson = excluded.executionModeJson,
           nextRunAt = excluded.nextRunAt,
-          updatedAt = excluded.updatedAt
+          updatedAt = excluded.updatedAt,
+          ghostId = excluded.ghostId
         "#,
         params![
             automation.id,
@@ -38,6 +39,7 @@ pub(super) fn upsert_automation(
             automation.next_run_at,
             automation.created_at,
             automation.updated_at,
+            automation.ghost_id,
         ],
     )
     .map_err(sql_error)?;
@@ -346,6 +348,7 @@ fn automation_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AutomationDe
         created_at: row.get("createdAt")?,
         enabled: row.get::<_, i64>("enabled")? == 1,
         execution_mode: parse_json_value(&execution_mode_json),
+        ghost_id: row.get("ghostId")?,
         id: row.get("automationId")?,
         name: row.get("name")?,
         next_run_at: row.get("nextRunAt")?,
@@ -385,6 +388,7 @@ pub(super) fn automations_to_value(automations: Vec<AutomationDefinitionRecord>)
                     "createdAt": automation.created_at,
                     "enabled": automation.enabled,
                     "executionMode": automation.execution_mode,
+                    "ghostId": automation.ghost_id,
                     "id": automation.id,
                     "name": automation.name,
                     "nextRunAt": automation.next_run_at,

@@ -76,7 +76,18 @@ fn launch_automation(
         .get("kind")
         .and_then(Value::as_str)
         .unwrap_or("local");
-    let prompt = build_automation_prompt(&automation.prompt);
+    let habit_ghost = automation
+        .ghost_id
+        .as_ref()
+        .and_then(|_| crate::ghosts::habit_ghost_name(db, &automation.project_id));
+    let prompt = match habit_ghost.as_deref() {
+        Some(ghost_name) => build_automation_prompt(&crate::ghosts::ghost_habit_prompt(
+            ghost_name,
+            &automation.name,
+            &automation.prompt,
+        )),
+        None => build_automation_prompt(&automation.prompt),
+    };
     match execution_kind {
         "thread" => launch_thread_automation(runtime, repository, db, automation, &prompt, run),
         "worktree" => launch_worktree_automation(runtime, repository, db, automation, &prompt, run),
@@ -269,10 +280,13 @@ fn create_and_start_agent_session(
         "surface".to_string(),
         Value::String("workspace".to_string()),
     );
-    params.insert(
-        "title".to_string(),
-        Value::String(format!("Automation: {}", automation.name)),
-    );
+    let title = match crate::ghosts::habit_ghost_name(db, &automation.project_id)
+        .filter(|_| automation.ghost_id.is_some())
+    {
+        Some(ghost_name) => crate::ghosts::ghost_habit_session_title(&ghost_name, &automation.name),
+        None => format!("Automation: {}", automation.name),
+    };
+    params.insert("title".to_string(), Value::String(title));
     let mut runtime_settings = json!({ "firstUserMessage": prompt });
     if let Some(agent_session_id) = resume_agent_session_id {
         runtime_settings["agentSessionId"] = Value::String(agent_session_id.to_string());

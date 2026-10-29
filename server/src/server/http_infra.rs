@@ -80,7 +80,10 @@ pub(crate) fn json_body_limit_bytes(endpoint_path: &str) -> usize {
         crate::constants::GXSERVER_FEEDBACK_BODY_LIMIT_BYTES
     } else if endpoint_path == "/api/runProjectDocsAction" {
         3 * 1024 * 1024
-    } else if endpoint_path == crate::visual_pages::PUBLISH_VISUAL_PAGE_ENDPOINT {
+    } else if endpoint_path == crate::visual_pages::PUBLISH_VISUAL_PAGE_ENDPOINT
+        || endpoint_path == "/api/ghostArtifacts"
+    {
+        // A Ghost's document carries the same page a publish does.
         crate::visual_pages::PUBLISH_VISUAL_PAGE_BODY_LIMIT_BYTES
     } else {
         GXSERVER_JSON_BODY_LIMIT_BYTES

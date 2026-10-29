@@ -115,7 +115,13 @@ pub fn insert_coordinator_threads(
             .get(&(project_id.to_string(), session_id.to_string()))
             .map(|panel| panel.summary.clone())
     });
-    if let Some(value) = value {
+    if let Some(mut value) = value {
+        // CDXC:Ghosts 2026-10-29 WHY: a Ghost's chat is a coordinator underneath, but its welcome speaks as the Ghost (gx-chat-core `extras/document.rs`), so the panel names the Ghost it belongs to.
+        if let Some(ghost) = crate::ghosts::published_ghost_for_project(project_id)
+            .filter(|ghost| ghost["chatSessionId"].as_str() == Some(session_id))
+        {
+            value["ghostName"] = ghost["name"].clone();
+        }
         frame.insert("coordinatorThreads".to_string(), value);
     }
 }

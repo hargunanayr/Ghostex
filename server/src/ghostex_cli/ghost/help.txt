@@ -1,0 +1,61 @@
+Run a Ghost: a long-lived agent with a Soul and a Memory that looks after
+several projects, opens threads in them, and keeps its own skills, documents
+and habits.
+
+USAGE
+  ghostex ghost list [--json]
+  ghostex ghost create --name <name> [--agent <agent-id>] [--model <m>] [--effort <e>]
+                       [--projects <name-or-id>,...] [--mascot <m>] [--color <c>] [--json]
+  ghostex ghost whoami [--ghost <name-or-id>] [--json]
+  ghostex ghost guide
+  ghostex ghost update [--ghost <name-or-id>] [--name <name>] [--projects <name-or-id>,...]
+                       [--mascot <m>] [--color <c>] [--show-threads true|false] [--json]
+  ghostex ghost delete --ghost <name-or-id> [--json]
+  ghostex ghost start-thread --project <name-or-id> --title <title> (--task <text> | --body-file <path>)
+                       [--agent <agent-id>] [--model <m>] [--effort <e>] [--worktree [--base-branch <b>]] [--json]
+  ghostex ghost memory add "<fact>" [--until <yyyy-mm-dd>] [--topic <topic>]
+  ghostex ghost memory replace --find "<words>" "<new fact>" [--until <yyyy-mm-dd>] [--topic <topic>]
+  ghostex ghost memory remove --find "<words>" [--topic <topic>]
+  ghostex ghost memory search [<words>] [--json]
+  ghostex ghost memory read [--topic <topic>]
+  ghostex ghost soul read [--json]
+  ghostex ghost soul update (--body-file <path> | <text>) --expected-hash <hash>
+  ghostex ghost skills list [--json]
+  ghostex ghost skills add <installed-skill-name>
+  ghostex ghost skills remove <name>
+  ghostex ghost artifact write --title <title> --kind html|markdown --file <path> [--summary <line>] [--json]
+  ghostex ghost artifact list [--json]
+  ghostex ghost habit list [--json]
+  ghostex ghost habit add --name <name> --schedule "<when>" (--instructions <text> | --body-file <path>)
+  ghostex ghost habit update <habit-id> [--name] [--schedule] [--instructions | --body-file] [--enabled true|false]
+  ghostex ghost habit run <habit-id>
+  ghostex ghost habit remove <habit-id>
+
+WHAT A GHOST IS
+  A Ghost has a home folder in Ghostex's data folder with its SOUL.md (who it
+  is, its standing instructions) and MEMORY.md (dated facts), and a chat
+  session that runs there. Ghostex writes AGENTS.md and CLAUDE.md in the home
+  from the Soul, the Memory and the Ghost's projects, so the agent reads them on
+  every start and resume. Its chat is an orchestrator underneath: threads it
+  starts report back by themselves, and `ghostex orchestrator status`,
+  `resolve`, `reopen` and `ghostex agents send` work for it too.
+
+FINDING THE GHOST
+  Inside a Ghost's chat (or a habit run) every command acts on that Ghost.
+  Elsewhere pass --ghost <name or id>.
+
+THREADS
+  start-thread starts an agent session in one of the Ghost's projects and
+  hands it the task, like `ghostex orchestrator start-thread`. A project the
+  Ghost does not hold is refused; add it in the Ghost's settings first.
+
+MEMORY
+  A fact is one line, `- <date> · <fact>`, with an optional `· until <date>`.
+  replace strikes the old fact through and adds the new one under it; remove
+  deletes it; --find must match exactly one fact. Lines the user wrote by hand
+  (without a date) are never changed. --topic writes to memory/<topic>.md,
+  which is read on demand instead of every conversation. Anything that looks
+  like a token or API key is redacted.
+
+SCHEDULES
+  hourly :MM | daily HH:MM | weekdays HH:MM | weekly <mon..sun> HH:MM

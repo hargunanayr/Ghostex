@@ -21,6 +21,7 @@ pub mod diagnostics;
 pub mod editors;
 pub mod extensions;
 mod feedback;
+mod ghost;
 pub mod guide;
 pub mod launchers;
 pub mod notify;
@@ -102,6 +103,7 @@ const HELP_GATE_EXCLUDED: &[&str] = &[
     "claude-cloud",
     "orchestrator",
     "coordinator",
+    "ghost",
     "automations",
     "bd",
     "beads",
@@ -208,6 +210,7 @@ fn is_known_command(name: &str) -> bool {
         "claude-cloud",
         "orchestrator",
         "coordinator",
+        "ghost",
         "sessions",
         "s",
         "list-sessions",
@@ -422,6 +425,7 @@ fn run_command(name: &str, args: &[String]) -> CliResult<()> {
         "claude-cloud" => claude_cloud_cli::run(args),
         // CDXC:Coordinators 2026-10-10 DECISION: user renamed Coordinator to Orchestrator; `coordinator` stays a hidden alias (see ghostex_cli/coordinator/command.rs).
         "orchestrator" | "coordinator" => coordinator::run(args),
+        "ghost" => ghost::run(args),
         "sessions" | "s" | "list-sessions" | "ls" => sessions::sessions_command(args),
         "find" | "f" => launchers::zehn_search_command(args),
         "history" | "h" => launchers::history_command(args),

@@ -39,65 +39,25 @@ pub fn show_command(args: &[String]) -> CliResult<()> {
                 .to_string(),
         ));
     };
-    let path = absolute_path(file);
-    let source = read_source(&path)?;
-    let base_dir = path.parent().unwrap_or(Path::new("/"));
-    let prepared = prepare_page(&source, base_dir).map_err(CliError::Other)?;
-    let title = parsed
-        .flags
-        .string_value("title")
-        .map(str::trim)
-        .filter(|title| !title.is_empty())
-        .map(str::to_string)
-        .or(prepared.title)
-        .unwrap_or_else(|| file_stem(&path));
-    // gxserver keeps the file's path so the desktop's page window can offer to refresh the page
-    // when the file changes (visual_pages/source.rs).
-    let mut params = json!({
-        "title": title,
-        "html": prepared.html,
-        "sourcePath": path.to_string_lossy(),
-    });
-    if let Some(session_ref) = calling_session_ref() {
-        params["sessionRef"] = Value::String(session_ref);
-    }
-    let target = resolve_gxserver_server_target(&parsed.flags, &params)?;
-    let result = request_gxserver_rpc(
-        &target,
-        PUBLISH_VISUAL_PAGE_ENDPOINT,
-        &params,
+    let published = publish_html_file(
+        &absolute_path(file),
+        parsed.flags.string_value("title"),
+        popup,
         &parsed.flags,
     )?;
-    let text = |key: &str| result.get(key).and_then(Value::as_str).unwrap_or_default();
-    let (id, page_path) = (text("id"), text("path"));
-    if id.is_empty() || page_path.is_empty() {
-        return Err(CliError::Other(
-            "gxserver did not return the published page's address. Update Ghostex and try again."
-                .to_string(),
-        ));
-    }
-    let title = Some(text("title"))
-        .filter(|title| !title.is_empty())
-        .unwrap_or(title.as_str());
-    let url = format!("{}{page_path}", target.base_url.trim_end_matches('/'));
-    let file_name = path
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let block = visual_page_block(
-        title,
-        &url,
-        &file_name,
-        popup,
-        page_question_tags(&source).as_deref(),
+    let (id, title, url, block) = (
+        published.id.as_str(),
+        published.title.as_str(),
+        published.url.as_str(),
+        published.block.as_str(),
     );
     if parsed.flags.truthy("json") {
         println!(
             "{{\"ok\":true,\"id\":{},\"title\":{},\"url\":{},\"block\":{}}}",
             json_string(id),
             json_string(title),
-            json_string(&url),
-            json_string(&block)
+            json_string(url),
+            json_string(block)
         );
     } else {
         println!(
@@ -110,6 +70,78 @@ pub fn show_command(args: &[String]) -> CliResult<()> {
         );
     }
     Ok(())
+}
+
+/// A page `publish_html_file` published: its id, title, address, and the ```visual block that
+/// shows it as a card in the chat.
+pub(crate) struct PublishedPage {
+    pub(crate) id: String,
+    pub(crate) title: String,
+    pub(crate) url: String,
+    pub(crate) block: String,
+    /// The file's own HTML, before gxserver's head and images were added.
+    pub(crate) source: String,
+}
+
+/// Prepares an HTML file and publishes it through gxserver, as `ghostex show` does.
+pub(crate) fn publish_html_file(
+    path: &Path,
+    title: Option<&str>,
+    popup: bool,
+    flags: &crate::ghostex_cli::args::Flags,
+) -> CliResult<PublishedPage> {
+    let source = read_source(path)?;
+    let base_dir = path.parent().unwrap_or(Path::new("/"));
+    let prepared = prepare_page(&source, base_dir).map_err(CliError::Other)?;
+    let title = title
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .map(str::to_string)
+        .or(prepared.title)
+        .unwrap_or_else(|| file_stem(path));
+    // gxserver keeps the file's path so the desktop's page window can offer to refresh the page
+    // when the file changes (visual_pages/source.rs).
+    let mut params = json!({
+        "title": title,
+        "html": prepared.html,
+        "sourcePath": path.to_string_lossy(),
+    });
+    if let Some(session_ref) = calling_session_ref() {
+        params["sessionRef"] = Value::String(session_ref);
+    }
+    let target = resolve_gxserver_server_target(flags, &params)?;
+    let result = request_gxserver_rpc(&target, PUBLISH_VISUAL_PAGE_ENDPOINT, &params, flags)?;
+    let text = |key: &str| result.get(key).and_then(Value::as_str).unwrap_or_default();
+    let (id, page_path) = (text("id"), text("path"));
+    if id.is_empty() || page_path.is_empty() {
+        return Err(CliError::Other(
+            "gxserver did not return the published page's address. Update Ghostex and try again."
+                .to_string(),
+        ));
+    }
+    let title = Some(text("title"))
+        .filter(|title| !title.is_empty())
+        .unwrap_or(title.as_str())
+        .to_string();
+    let url = format!("{}{page_path}", target.base_url.trim_end_matches('/'));
+    let file_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let block = visual_page_block(
+        &title,
+        &url,
+        &file_name,
+        popup,
+        page_question_tags(&source).as_deref(),
+    );
+    Ok(PublishedPage {
+        id: id.to_string(),
+        title,
+        url,
+        block,
+        source,
+    })
 }
 
 /// The tags of the questions a page asks (`<gx-question tag="Q1">`), or `None` when it asks none:
@@ -189,7 +221,7 @@ fn json_string(text: &str) -> String {
     serde_json::to_string(text).unwrap_or_else(|_| "\"\"".to_string())
 }
 
-fn absolute_path(file: &str) -> PathBuf {
+pub(crate) fn absolute_path(file: &str) -> PathBuf {
     let path = PathBuf::from(file);
     if path.is_absolute() {
         return path;

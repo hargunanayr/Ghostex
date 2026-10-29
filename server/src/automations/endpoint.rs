@@ -26,7 +26,10 @@ pub async fn handle_automation_endpoint(
         }
         "/api/saveAutomation" => {
             let project = resolve_automation_project(&repository, &params)?;
-            let automation = normalize_definition_payload(&project, &params)?;
+            let mut automation = normalize_definition_payload(&project, &params)?;
+            automation.ghost_id =
+                crate::ghosts::read_ghost_by_home_project(&db, &automation.project_id)?
+                    .map(|ghost| ghost.ghost_id);
             upsert_automation(&db, &automation)?;
             let stored = resolve_project_by_id(&repository, &automation.project_id)?;
             read_project_automation_state(&repository, &db, &stored)
