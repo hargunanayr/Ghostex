@@ -49,6 +49,7 @@ use crate::json::J;
 /// User (Q29): Show Advanced hides rows on General only. Q30-Q32 moved these behind it: following the active session's Space, keeping the previous project live, the session status source, the collapse and panel animations, the tooltip delay, Commands pane auto-minimize, the menu bar indicators, the tab strip's New buttons, custom transcript width, grey thinking, keeping the chat box expanded, Escape twice to interrupt, the orchestrator playbook, verbose mode, terminal padding, terminal background opacity and blur, custom shaders, ignored dev server ports, reset expiry notifications, and the action-completion and copy sounds (the action-completion sound supersedes the visible row above).
 pub const ADVANCED_MAIN_SETTING_KEYS: &[&str] = &[
     "closeEmptySessionsOnNew",
+    "autoCloseEmptySessionsMinutes",
     "chatSendOnPick",
     "sessionCardHoverButtons",
     "showSessionCardHoverButtonsInContextMenu",
@@ -196,6 +197,7 @@ pub const HOTKEY_SETTINGS_SECTIONS: J = J::Arr(&[
                 J::Str("toggleViewPanel"),
                 J::Str("expandViewPanel"),
                 J::Str("expandViewPanelFully"),
+                J::Str("toggleSessionBoard"),
                 J::Str("switchAgentsView"),
                 J::Str("switchSourceView"),
                 J::Str("switchGitHubView"),
@@ -391,6 +393,7 @@ pub const MAIN_SETTINGS_SCROLL_TARGET_SETTING_KEYS: &[(&str, &[&str])] = &[
         &[
             "preferredAgentInterface",
             "closeEmptySessionsOnNew",
+            "autoCloseEmptySessionsMinutes",
             "sessionChatFontFamily",
             "sessionChatZoomPercent",
             "sessionChatCustomTranscriptWidthEnabled",
@@ -421,6 +424,7 @@ pub const MAIN_SETTINGS_SCROLL_TARGET_SETTING_KEYS: &[(&str, &[&str])] = &[
         "sidebar",
         &[
             "sidebarSettingsPreset",
+            "sidebarLayout",
             "showProjectIcons",
             "hideSessionAgentIconUntilHover",
             "hideBrowserFaviconUntilHover",
@@ -740,6 +744,7 @@ pub const MAIN_SETTINGS_SECTION_SETTING_KEYS: &[(&str, &[&str])] = &[
         &[
             "preferredAgentInterface",
             "closeEmptySessionsOnNew",
+            "autoCloseEmptySessionsMinutes",
             "sessionChatFontFamily",
             "sessionChatZoomPercent",
             "sessionChatCustomTranscriptWidthEnabled",
@@ -770,6 +775,7 @@ pub const MAIN_SETTINGS_SECTION_SETTING_KEYS: &[(&str, &[&str])] = &[
         "sidebar",
         &[
             "sidebarSettingsPreset",
+            "sidebarLayout",
             "showProjectIcons",
             "hideSessionAgentIconUntilHover",
             "hideBrowserFaviconUntilHover",

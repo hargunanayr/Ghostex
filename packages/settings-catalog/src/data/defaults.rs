@@ -93,6 +93,7 @@ pub const DEFAULT_GHOSTEX_SETTINGS: &[(&str, J)] = &[
     ("codeViewTabHidden", J::Bool(false)),
     ("browserViewTabHidden", J::Bool(false)),
     ("kanbanViewTabHidden", J::Bool(false)),
+    ("sessionBoardHidden", J::Bool(false)),
     ("automateViewTabHidden", J::Bool(false)),
     ("docsViewTabHidden", J::Bool(false)),
     ("terminalViewTabHidden", J::Bool(false)),
@@ -495,6 +496,8 @@ pub const DEFAULT_GHOSTEX_SETTINGS: &[(&str, J)] = &[
     ("preferredAgentInterfaceOverrides", J::Obj(&[])),
     // CDXC:Sessions 2026-10-09 DECISION: User: "setting to enable this just for preferred chat view user (advanced). let's set disabled by default". Off until the user turns it on.
     ("closeEmptySessionsOnNew", J::Bool(false)),
+    // CDXC:Sessions 2026-10-28 DECISION: Auto Close Empty Sessions is off by default (server/src/empty_session_cleanup.rs).
+    ("autoCloseEmptySessionsMinutes", J::Num(0.0)),
     ("sidebarCollapseAnimationDurationMs", J::Num(400.0)),
     ("panelAnimationSpeed", J::Str("normal")),
     ("closeSidePanelWithLastTab", J::Bool(true)),
@@ -510,6 +513,7 @@ pub const DEFAULT_GHOSTEX_SETTINGS: &[(&str, J)] = &[
     ("projectSwitchKeepAliveMinutes", J::Num(10.0)),
     ("sidebarSpaceFollowActiveSession", J::Bool(false)),
     ("sidebarVisibilityMemory", J::Str("shared")),
+    ("sidebarLayout", J::Str("classic")),
     ("expandCollapsedProjectsOnJump", J::Bool(true)),
     // CDXC:Theming 2026-09-14 DECISION: User: default App theme to System, with Chat and Terminal on Follow app. Existing saved theme selections remain unchanged.
     ("sidebarTheme", J::Str("system")),
@@ -712,6 +716,7 @@ pub const DEFAULT_GHOSTEX_SETTINGS: &[(&str, J)] = &[
             ("toggleViewPanel", J::Str("cmd+alt+b")),
             ("expandViewPanel", J::Str("cmd+ctrl+e")),
             ("expandViewPanelFully", J::Str("cmd+ctrl+shift+e")),
+            ("toggleSessionBoard", J::Str("cmd+shift+b")),
             ("renameActiveSession", J::Str("cmd+r")),
             ("openBrowserPane", J::Str("cmd+t")),
             ("switchAgentsView", J::Str("")),

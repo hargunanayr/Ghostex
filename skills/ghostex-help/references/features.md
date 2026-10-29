@@ -214,7 +214,11 @@ view from the strip.
   empty: nothing sent, no chat draft, nothing queued, and no text in the agent's
   input box. It only applies when Chat is the default view for that agent; with
   Terminal as the default view it never runs. Once you type or send something a
-  session stays like any other.
+  session stays like any other. A second Advanced setting, Auto close empty
+  sessions (`autoCloseEmptySessionsMinutes`, Off by default; 5 minutes to 5
+  hours), closes such a completely empty session by itself once no window,
+  browser or phone has had it open for that long, also for Chat only. Empty
+  sessions never auto-sleep, so this is how unused ones go away on their own.
   Cmd+Option+Arrow moves focus between the session panes and the Commands pane;
   it skips the view panel.
   Hotkeys: `createAgentSession`, `openNewThreadPalette`, `createSession`,
@@ -486,6 +490,26 @@ manager and Add to Group.
 A project's Sleep, Wake, Sleep Inactive and Close Inactive act on that
 project's sessions only; its browser tabs are slept and closed from the tab
 strip above the view, where they live.
+Settings > Sidebar > Sidebar layout switches between Classic (the list above)
+and Two columns. In Two columns the left column holds Needs you, Running and
+All sessions, your pinned orchestrators, then your projects in a card per
+project group, with the Spaces row at its foot. Each project shows how many of
+its sessions need you (pink while one waits on an answer or a permission, light
+blue for a finished turn you have not seen), an orange dot while one is
+running, or its line changes. A project without an icon you picked gets a
+little pixel creature in its group's colour. Clicking a project opens it on its
+last session (or starts its default agent when it has none), like Quick Access.
+The right column shows the project's header with its New Terminal, agent and ⋯
+buttons, and its sessions under Pinned, Needs you, Running, Today, This week,
+Older (folded until you open it), Drafts and Parked, with an All / Needs you /
+Running filter above them; each card's second line says what the session is
+doing, its agent and its branch. A thread that needs you is listed under Needs
+you even while its orchestrator is folded or the thread sits behind its older
+threads. Needs you, Running and All sessions list the
+matching sessions of every project, by project; the × at their top goes back to
+the project. The right column follows the session you open. On a narrow sidebar
+the left column turns into icons; widen the sidebar to see both columns in
+full. Setting key: `sidebarLayout` (`classic`, `twoColumns`).
 Click a project header (or the chevron beside it) or a group header to expand
 or collapse it; rename a group from its right-click menu.
 Session groups gather some of a project's sessions under a header of their
@@ -1587,17 +1611,21 @@ and its command; click the row to see the full command and its result. File writ
 edits appear outside the tool groups while the agent works. As soon as the agent
 finishes a turn, its tool work folds away under "Worked for Xs" above the final
 reply (open by default with Simple mode off or Verbose mode on); click that
-line to open or close it. When a turn shows
-"Worked for", all its file changes are grouped in a collapsed "N files changed"
-section directly below it. Older history loads with completed turns already
+line to open or close it. When a turn changed files, an "N files changed" card
+closes the turn under the final reply, folded by default: its header shows the
+turn's total added and removed lines and, on the desktop, Open diff opens the
+Commit dialog with the project's changes and their diffs. Click the card's
+header to open the list of files: each row shows the file name, its folder, an
+A, M or D letter (added, modified, deleted) and its added and removed lines.
+Click a file to open its diff. Older history loads with completed turns already
 collapsed, so you can scroll through prompts and answers without passing through
 their tool logs first. Expanding older work or its files loads those details on
 demand; the original history remains available. The count includes each file once, even if it was
-edited repeatedly. File changes show as one card per message (or per turn in
-that section): its header says how many files changed, the folder they share,
+edited repeatedly. While the agent is still working, file changes show as one
+card per message: its header says how many files changed, the folder they share,
 and the total added and removed lines with a green/red ratio bar, and on the
-desktop Review all opens the project's Code view to review the changes. Each
-file is a row with its name, its folder, an Edited, New or Deleted tag, its
+desktop Review all opens the Commit dialog too. Each
+file is a row with its name, its folder, its
 green/red counts and a five-block change bar. Click a row to open its diff,
 with the file's own line numbers and the function each change sits in (for
 Claude sessions); under the first seven lines, Show all N changed lines shows
@@ -2503,10 +2531,10 @@ version of the Projects features in Cursor and Claude Code.
   threads are folded, the orchestrator's row shows their status dots (with its
   own) overlapping in place of its time, like a computer tab's dots, so a thread
   that is working, finished or asking something is never hidden (a thread
-  waiting on you, for a question or a permission, is the pink dot). Opening an
-  orchestrator marks its finished threads as seen, so their blue dots clear
-  (a thread waiting on a question or approval keeps its dot); otherwise opening
-  its chat leaves the fold and the older threads as you set them; opening one of its threads
+  waiting on you, for a question or a permission, is the pink dot). A finished
+  thread keeps its blue dot until you open that thread: opening the
+  orchestrator leaves its threads' dots alone, and also leaves the fold and the
+  older threads as you set them; opening one of its threads
   unfolds the orchestrator so the thread shows. Click a thread to watch it or
   talk to it directly; answer its questions and approvals there. A thread is
   named after its latest task and keeps that name, like the orchestrator keeps
@@ -2663,6 +2691,57 @@ start-work <bead-id>`); the session is linked to the card and the card shows
 
 Related settings: Settings > Projects (beads directory and display key),
 `globalBeadsDirectory`, `globalBeadsDisplayKey`.
+
+## Board (threads by status)
+
+The Board shows every agent thread of the Space the sidebar has selected as
+a card in four columns: **Pending** (a new thread that has not had its first
+prompt, or a task waiting to start), **In progress** (the agent is working),
+**Review** (the agent finished its turn or is waiting on your answer) and
+**Completed** (threads you marked done). It never mixes Spaces; with Spaces off
+it covers every project. Open it with the **Board** button at the top left, next
+to Toggle sidebar and the Agents Panel (chat) button. It is the alternative to
+your chats rather than a view of one project: it covers the whole work area in
+every project and stays open while you switch projects. Opening it hides the
+sidebar; the Board button again, or the chat button beside it, takes you back to
+your chats and puts the sidebar back. **Cmd+Shift+B** (Ctrl+Shift+B on Windows
+and Linux) switches between the Board and your chats from anywhere, the Code
+editor included. The heading is a project filter: click
+**All projects** to search the Space's projects by name, group or folder and pick
+one. Cards and pickers name a project after its group (the sidebar folder it
+sits in), such as "XMOR - forever", and show the git branch the agent works on,
+plus the worktree when the session runs in one. With Spaces on, click **Board · <Space>**
+above the heading to switch the Board (and the sidebar) to another Space.
+
+- Click a card to open its chat beside the columns, the same chat its session
+  shows, where you can read the transcript, answer and send messages. The panel
+  shows the card's column and project, **Complete** or **Reopen**, and **Open in
+  chats**, which leaves the Board on that thread. Clicking a session in the
+  sidebar while the Board is open does the same.
+- Review lists the threads waiting on your answer first, then finished turns you
+  have not seen, then the rest. Press **Complete** on a card, or drag it to
+  Completed. Completing a thread puts it to sleep. A thread that works again
+  leaves Completed on its own.
+- **Complete all** on the Review column completes every card it shows except the
+  ones waiting on your answer; **Close all** on Completed closes every completed
+  thread it shows. Both ask for a second click. **Reopen** (or dragging a card
+  back to Review) takes a thread out of Completed.
+- **Add task** (or **+** on Pending) makes a task: pick a project of the Space
+  (the picker searches by name or folder), an agent, and for Claude, Codex, Pi and
+  Antigravity CLI a **Model** and **Effort** for this task alone (**Default** keeps
+  the agent's usual one), an optional title and the prompt, then **Add to
+  Pending**. The agent is
+  not started until you press **Start** on the card; click the card to edit the
+  title and prompt, Start it, or Delete it. A new thread started from a project in
+  the sidebar lands in Pending too.
+- Agents and scripts can do the same from the command line:
+  `ghostex create-agent <agent> --project-id <id> --task "<prompt>"` makes a
+  task, `ghostex start-task <selector>` starts it, and
+  `ghostex complete-session <selector> [true|false]` completes or reopens a
+  thread.
+
+Related settings: Settings > Extensions > Store (`sessionBoardHidden` hides the
+Board button); Settings > Hotkeys, Toggle Board (`toggleSessionBoard`).
 
 ## Automations
 
@@ -3357,7 +3436,10 @@ Git's progress and a Cancel clone link.
 
 Project headers show the branch and diff stats; the header’s Commit (Git) menu offers
 commit, sync with main, PR review by a prompt agent, and related actions with
-persistent running toasts. The Commit dialog lists Staged Changes and Changes
+persistent running toasts. Its Status section shows how far the branch is ahead
+of and behind its remote branch; click that row (Sync upstream, or Check for
+updates when it shows nothing yet) to fetch from the remote, bring in your
+teammates' commits and push yours, without a terminal. The Commit dialog lists Staged Changes and Changes
 (unstaged and untracked files) with a count each and a status letter per file
 (M modified, A added, D deleted, R renamed, U untracked); hover a file to Stage
 (+), Unstage (−) or Discard (↺) it, or use Stage All, Unstage All and Discard All

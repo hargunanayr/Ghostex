@@ -37,6 +37,7 @@ Default bindings are listed for macOS (`cmd`) with the Windows/Linux default whe
 | Toggle View Panel | `cmd+alt+b` |  | Open or close the view panel beside your sessions. | `toggleViewPanel` |
 | Expand Side Panel | `cmd+ctrl+e` |  | Expand the side panel over the Agents Panel, or bring the Agents Panel back. | `expandViewPanel` |
 | Expand Side Panel Fully | `cmd+ctrl+shift+e` |  | Expand the side panel over the Agents Panel and hide the sidebar, or bring both back. | `expandViewPanelFully` |
+| Toggle Board | `cmd+shift+b` |  | Switch between the Board and your chats. | `toggleSessionBoard` |
 | Rename Active Session | `cmd+r` | `cmd+shift+r` | Rename the focused session. | `renameActiveSession` |
 | Open Browser Pane | `cmd+t` |  | Open a browser tab beside the focused tab. | `openBrowserPane` |
 | Switch to Agents | unassigned |  | Switch to Agents view. | `switchAgentsView` |

@@ -38,6 +38,30 @@
       "agentWritable": false
     },
     {
+      "key": "sidebarLayout",
+      "title": "Sidebar layout",
+      "subtitle": "Classic lists every project with its sessions under it. Two columns puts your projects and the Needs you, Running and All sessions views on the left, and the selected project's sessions on the right, grouped into Needs you, Running, Today, This week and Older, with a filter for Needs you or Running. Widen the sidebar to see both columns in full.",
+      "tab": "settings",
+      "tabTitle": "General",
+      "group": "sidebar",
+      "groupTitle": "Sidebar",
+      "section": "sidebar",
+      "sectionTitle": "Sidebar",
+      "type": "enum",
+      "default": "classic",
+      "options": [
+        {
+          "label": "Classic",
+          "value": "classic"
+        },
+        {
+          "label": "Two columns",
+          "value": "twoColumns"
+        }
+      ],
+      "agentWritable": true
+    },
+    {
       "key": "sidebarSpaceSwitchBehavior",
       "title": "When switching to a Space",
       "subtitle": "Reopen the session you last had open in a Space when you switch to it, in the view its project was in. Shown while the Spaces extension is on.",
@@ -990,6 +1014,55 @@
       "sectionTitle": "Chat",
       "type": "boolean",
       "default": false,
+      "advanced": true,
+      "agentWritable": true
+    },
+    {
+      "key": "autoCloseEmptySessionsMinutes",
+      "title": "Auto close empty sessions",
+      "subtitle": "Close a session you started but never sent anything to once it has gone unopened for this long. Sessions with anything typed, drafted or queued stay open. Only applies when Chat is the default view for that agent; with Terminal it never runs.",
+      "tab": "settings",
+      "tabTitle": "General",
+      "group": "chat",
+      "groupTitle": "Chat",
+      "section": "chat",
+      "sectionTitle": "Chat",
+      "type": "number",
+      "default": 0,
+      "options": [
+        {
+          "label": "Off",
+          "value": "0"
+        },
+        {
+          "label": "5 minutes",
+          "value": "5"
+        },
+        {
+          "label": "10 minutes",
+          "value": "10"
+        },
+        {
+          "label": "15 minutes",
+          "value": "15"
+        },
+        {
+          "label": "30 minutes",
+          "value": "30"
+        },
+        {
+          "label": "1 hour",
+          "value": "60"
+        },
+        {
+          "label": "2 hours",
+          "value": "120"
+        },
+        {
+          "label": "5 hours",
+          "value": "300"
+        }
+      ],
       "advanced": true,
       "agentWritable": true
     },
@@ -3619,6 +3692,7 @@
         "toggleViewPanel": "cmd+alt+b",
         "expandViewPanel": "cmd+ctrl+e",
         "expandViewPanelFully": "cmd+ctrl+shift+e",
+        "toggleSessionBoard": "cmd+shift+b",
         "renameActiveSession": "cmd+r",
         "openBrowserPane": "cmd+t",
         "switchAgentsView": "",
@@ -10054,6 +10128,17 @@
       "agentWritable": false
     },
     {
+      "key": "sessionBoard",
+      "title": "Board",
+      "subtitle": "Every thread of the Space on one board: Pending, In progress, Review and Completed, with tasks you start later. Opened from the Board button at the top left.",
+      "tab": "extensions",
+      "tabTitle": "Store",
+      "section": "official",
+      "sectionTitle": "Built-in",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
       "key": "automate",
       "title": "Automate",
       "subtitle": "Turn repeatable project routines into simple workflows you can run whenever you need them.",
@@ -10283,6 +10368,18 @@
       "sectionTitle": "Built-in",
       "type": "ui",
       "agentWritable": false
+    },
+    {
+      "key": "sessionBoardHidden",
+      "title": "Hide Board",
+      "subtitle": "Stop offering the Board, where every thread of the Space sits in Pending, In progress, Review or Completed, so its button next to Toggle sidebar is gone.",
+      "tab": "extensions",
+      "tabTitle": "Store",
+      "section": "official",
+      "sectionTitle": "Built-in",
+      "type": "boolean",
+      "default": false,
+      "agentWritable": true
     },
     {
       "key": "botsHidden",
@@ -12105,6 +12202,12 @@
       "title": "Expand Side Panel Fully",
       "description": "Expand the side panel over the Agents Panel and hide the sidebar, or bring both back.",
       "defaultKey": "cmd+ctrl+shift+e"
+    },
+    {
+      "id": "toggleSessionBoard",
+      "title": "Toggle Board",
+      "description": "Switch between the Board and your chats.",
+      "defaultKey": "cmd+shift+b"
     },
     {
       "id": "renameActiveSession",
