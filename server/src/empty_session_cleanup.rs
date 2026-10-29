@@ -9,7 +9,10 @@
 //! CDXC:Sessions 2026-10-06 WHY:
 //! Only a session made by that same user action carries the marker, so a session an agent, the CLI, a coordinator, the board or an automation started (it may be waiting for its task) is never a candidate. The marker stays on the row for its whole life, so "never prompted" must be positively known, never inferred from a signal that is missing: issue #204 saw sessions the user had been working in (mostly Claude) closed by the next new session, because the 2026-10-04 rule counted a session as never prompted when it was still a draft OR had no `lastActiveAt`, and each of those survives a real prompt (a prompt typed into the terminal whose hook was rejected or never arrived keeps the draft marker; a prompt whose turn was never seen as working leaves `lastActiveAt` empty). A candidate now has to pass every never-used signal at once: still a draft, never active, never seen working, no first user message from a hook, and no agent transcript on disk (agents write none before the first prompt); a session that was not created as a draft is never a candidate, since gxserver cannot see what was typed into its terminal. It must also have no chat draft text (parked ones included), nothing queued or armed, no note or stash, not be pinned, parked, favorited, tagged, renamed, a coordinator or thread, or armed for Close After Done, be idle, in the same folder, not shown by any client (a pane, the focused session, a phone attached to it), and its agent input box must read as empty; a box that cannot be read counts as holding text. This supersedes the 2026-10-04 WHY and its "or an agent that has never been active" rule, and "a draft is never thrown away on its own" (CDXC:Drafts 2026-08-29 in agents/drafts.rs) for exactly these sessions.
 //!
-//! SEE-ALSO: server/src/server/empty_session_cleanup_runtime.rs, apps/desktop/src/app/gx_store/create/agent.rs, apps/desktop/src/app/helpers/agents_hub/workspace_agent_actions.rs, server/src/ghostex_cli/actions/create.rs (`--replace-empty-sessions`, the phone's new session).
+//! CDXC:Sessions 2026-10-28 DECISION:
+//! User (Ryan): "Gimana kalau yang belum pernah di prompt ada fitur auto close?", then agreed to Chat only, the clock counting from when the session was last shown, and off by default. Auto Close Empty Sessions (`autoCloseEmptySessionsMinutes`, default 0 = off) closes a session that passes this same fully-empty rule (marker, input box and all) once no client has shown it for that many minutes; the clock starts at the latest of its creation, the last time a client held it awake, and this daemon's start. Like the cleanup above it only runs for agents that open in Chat. A session nobody prompted still never auto-sleeps (CDXC:SessionSleep 2026-08-22 in session_auto_sleep.rs); this closes it instead, since nothing in it can be lost.
+//!
+//! SEE-ALSO: server/src/server/empty_session_cleanup_runtime.rs, apps/desktop/src/app/gx_store/create/agent.rs, apps/desktop/src/app/helpers/agents_hub/workspace_agent_actions.rs, server/src/ghostex_cli/actions/create.rs (`--replace-empty-sessions`, the phone's new session), server/src/session_keep_awake.rs (`last_held_at_ms`, the last-shown clock), apps/desktop/src/app/window/settings_modal/tabs/general/chat_tools.rs (the setting's row).
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Map, Value};
@@ -23,6 +26,10 @@ pub(crate) const REPLACE_EMPTY_SESSIONS_PARAM: &str = "replaceEmptySessions";
 const CLOSE_EMPTY_SESSIONS_SETTING: &str = "closeEmptySessionsOnNew";
 /// Server-owned: written at creation only when the create carried the parameter above.
 const NEW_SESSION_MARKER_KEY: &str = "userNewSession";
+/// The minutes an unshown empty session lives before Auto Close Empty Sessions closes it (0: off).
+const AUTO_CLOSE_EMPTY_SESSIONS_SETTING: &str = "autoCloseEmptySessionsMinutes";
+/// The minutes the Settings row offers; anything else reads as off.
+const AUTO_CLOSE_MINUTE_OPTIONS: [i64; 8] = [0, 5, 10, 15, 30, 60, 120, 300];
 
 pub(crate) fn requests_empty_session_cleanup(params: &Map<String, Value>) -> bool {
     params
@@ -37,20 +44,23 @@ pub(crate) fn cleanup_applies(paths: &crate::paths::GxserverPaths, new_session: 
     let Some(settings) = crate::session_lifecycle::read_sidebar_settings(paths) else {
         return false;
     };
-    if settings
+    settings
         .get(CLOSE_EMPTY_SESSIONS_SETTING)
         .and_then(Value::as_bool)
-        != Some(true)
-    {
-        return false;
-    }
+        == Some(true)
+        && opens_in_chat(&settings, new_session)
+}
+
+/// The session's agent opens in Chat: its own Default view, else the Default Agent View, which
+/// means Chat when unset.
+fn opens_in_chat(settings: &Value, session: &Value) -> bool {
     fn view(value: Option<&Value>) -> Option<&str> {
         value
             .and_then(Value::as_str)
             .filter(|value| matches!(*value, "chat" | "terminal"))
     }
     let overrides = settings.pointer("/preferredAgentInterfaceOverrides");
-    let agent_override = crate::session_chat_composer::session_chat_composer_agent_id(new_session)
+    let agent_override = crate::session_chat_composer::session_chat_composer_agent_id(session)
         .and_then(|agent_id| {
             view(overrides.and_then(|map| map.get(&agent_id))).map(str::to_string)
         });
@@ -72,9 +82,26 @@ pub(crate) fn apply_new_session_marker(
     }
 }
 
+/// Auto Close Empty Sessions' limit in minutes, 0 when off or unreadable.
+pub(crate) fn auto_close_minutes(paths: &crate::paths::GxserverPaths) -> i64 {
+    crate::session_lifecycle::read_sidebar_settings(paths)
+        .and_then(|settings| {
+            settings
+                .get(AUTO_CLOSE_EMPTY_SESSIONS_SETTING)
+                .and_then(Value::as_f64)
+        })
+        .and_then(|value| {
+            AUTO_CLOSE_MINUTE_OPTIONS
+                .into_iter()
+                .find(|option| *option as f64 == value)
+        })
+        .unwrap_or(0)
+}
+
 /// A session the rule may close once its agent's input box reads as empty.
 #[derive(Clone, Debug)]
 pub(crate) struct EmptySessionCandidate {
+    pub project_id: String,
     pub session_id: String,
     pub zmx_name: String,
     pub agent_id: String,
@@ -93,43 +120,97 @@ pub(crate) fn empty_session_candidates(
     let folder = new_session.get("cwd").cloned();
     let mut candidates = Vec::new();
     for session in repository.list_sessions_excluding_stopped(Some(project_id))? {
-        let Some(session_id) = session.get("sessionId").and_then(Value::as_str) else {
-            continue;
-        };
-        if session_id == new_session_id
+        if session.get("sessionId").and_then(Value::as_str) == Some(new_session_id)
             || session.get("cwd").cloned() != folder
-            || !row_is_empty(&session)
-            // Shown in a pane, focused, or attached from the phone: clients hold what they show.
-            || crate::session_keep_awake::is_held_awake(project_id, session_id)
         {
             continue;
         }
-        let presentation = crate::presentation::build_presentation_session_delta(
-            db, repository, project_id, session_id,
-        )?;
-        if !presentation
-            .get("session")
-            .is_some_and(presentation_is_empty)
-            || holds_chat_text(db, project_id, session_id)
-            || crate::session_chat_queue::session_has_pending_session_chat_queue(
-                db, project_id, session_id,
-            )
-        {
-            continue;
-        }
-        let (Ok(zmx_name), Some(agent_id)) = (
-            crate::zmx::provider_zmx_session_name(&session),
-            crate::session_chat_composer::session_chat_composer_agent_id(&session),
+        candidates.extend(empty_candidate(db, repository, &session)?);
+    }
+    Ok(candidates)
+}
+
+/// Every project's fully empty Chat sessions that no client has shown for `minutes`, for Auto
+/// Close Empty Sessions. `daemon_started_ms` floors the clock: shown-times before it are unknown.
+pub(crate) fn idle_empty_session_candidates(
+    db: &Connection,
+    repository: &DomainRepository<'_>,
+    settings: &Value,
+    minutes: i64,
+    daemon_started_ms: i64,
+    now_ms: i64,
+) -> Result<Vec<EmptySessionCandidate>, DomainStateError> {
+    let mut candidates = Vec::new();
+    for session in repository.list_sessions_excluding_stopped(None)? {
+        let (Some(project_id), Some(session_id)) = (
+            session.get("projectId").and_then(Value::as_str),
+            session.get("sessionId").and_then(Value::as_str),
         ) else {
             continue;
         };
-        candidates.push(EmptySessionCandidate {
-            session_id: session_id.to_string(),
-            zmx_name,
-            agent_id,
-        });
+        let Some(created_ms) = session
+            .get("createdAt")
+            .and_then(Value::as_str)
+            .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+            .map(|at| at.timestamp_millis())
+        else {
+            continue;
+        };
+        let idle_since = created_ms
+            .max(daemon_started_ms)
+            .max(crate::session_keep_awake::last_held_at_ms(project_id, session_id).unwrap_or(0));
+        if now_ms - idle_since < minutes * 60_000 || !opens_in_chat(settings, &session) {
+            continue;
+        }
+        candidates.extend(empty_candidate(db, repository, &session)?);
     }
     Ok(candidates)
+}
+
+/// The session as a candidate when it is empty as far as gxserver's own state can tell and no
+/// client shows it.
+fn empty_candidate(
+    db: &Connection,
+    repository: &DomainRepository<'_>,
+    session: &Value,
+) -> Result<Option<EmptySessionCandidate>, DomainStateError> {
+    let (Some(project_id), Some(session_id)) = (
+        session.get("projectId").and_then(Value::as_str),
+        session.get("sessionId").and_then(Value::as_str),
+    ) else {
+        return Ok(None);
+    };
+    if !row_is_empty(session)
+        // Shown in a pane, focused, or attached from the phone: clients hold what they show.
+        || crate::session_keep_awake::is_held_awake(project_id, session_id)
+    {
+        return Ok(None);
+    }
+    let presentation = crate::presentation::build_presentation_session_delta(
+        db, repository, project_id, session_id,
+    )?;
+    if !presentation
+        .get("session")
+        .is_some_and(presentation_is_empty)
+        || holds_chat_text(db, project_id, session_id)
+        || crate::session_chat_queue::session_has_pending_session_chat_queue(
+            db, project_id, session_id,
+        )
+    {
+        return Ok(None);
+    }
+    let (Ok(zmx_name), Some(agent_id)) = (
+        crate::zmx::provider_zmx_session_name(session),
+        crate::session_chat_composer::session_chat_composer_agent_id(session),
+    ) else {
+        return Ok(None);
+    };
+    Ok(Some(EmptySessionCandidate {
+        project_id: project_id.to_string(),
+        session_id: session_id.to_string(),
+        zmx_name,
+        agent_id,
+    }))
 }
 
 /// The durable row: made by the new-session action, positively never used, untagged and never
@@ -150,6 +231,7 @@ fn row_is_empty(session: &Value) -> bool {
         && session.get("kind").and_then(Value::as_str) == Some("agent")
         && !crate::presentation::session_tag_is_truthy(session)
         && setting("pendingAgentTitleRequestStatus").is_none()
+        && setting(crate::session_board::PENDING_TASK_PROMPT_KEY).is_none()
         && !matches!(
             setting("titleSource").and_then(Value::as_str),
             Some("user" | "generated")

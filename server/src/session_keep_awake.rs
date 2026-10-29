@@ -51,6 +51,24 @@ fn leases() -> &'static Mutex<LeaseTable> {
     LEASES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// When any client last held each session: the "last shown" clock of Auto Close Empty Sessions.
+/// In memory like the leases; a day-old entry is dropped, since no idle limit is that long.
+fn last_held() -> &'static Mutex<HashMap<String, i64>> {
+    static LAST_HELD: OnceLock<Mutex<HashMap<String, i64>>> = OnceLock::new();
+    LAST_HELD.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+const LAST_HELD_RETENTION_MS: i64 = 24 * 60 * 60 * 1000;
+
+/// When a client last held the session awake (it was shown), if this daemon has seen it.
+pub fn last_held_at_ms(project_id: &str, session_id: &str) -> Option<i64> {
+    last_held()
+        .lock()
+        .expect("keep-awake last-held table poisoned")
+        .get(&lease_key(project_id, session_id))
+        .copied()
+}
+
 fn lease_key(project_id: &str, session_id: &str) -> String {
     format!("{}\u{1f}{}", project_id.trim(), session_id.trim())
 }
@@ -91,6 +109,12 @@ pub fn hold(project_id: &str, session_id: &str, holder_id: &str, ttl_ms: i64) ->
     if holders.is_empty() {
         table.remove(&key);
     }
+    drop(table);
+    let mut last_held = last_held()
+        .lock()
+        .expect("keep-awake last-held table poisoned");
+    last_held.retain(|_, at| now - *at < LAST_HELD_RETENTION_MS);
+    last_held.insert(key, now);
     effective
 }
 
