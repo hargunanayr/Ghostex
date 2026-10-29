@@ -14,4 +14,4 @@ mod sprite;
 mod state;
 
 pub(crate) use layout::two_column_enabled;
-pub(crate) use state::TwoColumnState;
+pub(crate) use state::{TwoColumnState, TwoColumnView};

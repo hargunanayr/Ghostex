@@ -48,7 +48,7 @@ pub(crate) fn titlebar_mode_official_extension_id(mode: TitlebarMode) -> Option<
         // User: the Ghostex pages are app-wide, so they are available in every project regardless of
         // scope. No scope key means nothing to hide them with, which is exactly that rule.
         TitlebarMode::Agents
-        | TitlebarMode::BotFeed
+        | TitlebarMode::BotFeed | TitlebarMode::GhostOverview
         | TitlebarMode::Work
         | TitlebarMode::Extension(_) => None,
     }

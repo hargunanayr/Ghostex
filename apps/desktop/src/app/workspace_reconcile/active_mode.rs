@@ -57,6 +57,9 @@ impl GhostexGpuiApp {
         if mode == TitlebarMode::BotFeed && previous_mode != mode {
             self.native_bot_feed_opened(cx);
         }
+        if mode == TitlebarMode::GhostOverview && previous_mode != mode {
+            self.native_ghost_overview_opened(cx);
+        }
         self.focus_default_surface_for_active_mode(cx);
         if mode == TitlebarMode::Terminal {
             self.request_focused_command_terminal_text_focus_handoff();

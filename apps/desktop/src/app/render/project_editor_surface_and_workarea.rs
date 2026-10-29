@@ -54,6 +54,7 @@ impl GhostexGpuiApp {
             TitlebarMode::Automate => self.render_automate_workarea_surface(window, cx),
             TitlebarMode::Manage => self.render_manage_workarea_surface(window, cx),
             TitlebarMode::BotFeed => self.render_native_bot_feed_surface(window, cx),
+            TitlebarMode::GhostOverview => self.render_native_ghost_overview_surface(window, cx),
             TitlebarMode::Work => self.render_work_view_surface(cx),
             TitlebarMode::Extension(id) => self.render_extension_workarea_surface(id, window, cx),
         }

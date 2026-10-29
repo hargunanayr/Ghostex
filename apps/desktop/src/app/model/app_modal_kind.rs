@@ -52,6 +52,8 @@ pub(crate) enum GpuiAppModalKind {
     MakeCoordinator,
     /// An orchestrator's Goal & Instructions or Memory editor (coordinator_details_modal_lifecycle.rs).
     CoordinatorDetails,
+    /// New Ghost, and a Ghost's settings (General, Soul, Memory, Skills) (native_ghost/modal_host.rs).
+    Ghost,
     /// Send Bug / Feedback, from the More options menu (feedback_modal_lifecycle.rs).
     Feedback,
     /// Create a Linear ticket and start work on it, from a work-mode project's menu
@@ -106,6 +108,7 @@ impl GpuiAppModalKind {
             "newCoordinator" => Some(Self::NewCoordinator),
             "makeCoordinator" => Some(Self::MakeCoordinator),
             "coordinatorDetails" => Some(Self::CoordinatorDetails),
+            "ghost" => Some(Self::Ghost),
             "feedback" => Some(Self::Feedback),
             "createLinearTicket" => Some(Self::CreateLinearTicket),
             "workLinkPicker" => Some(Self::WorkLinkPicker),
@@ -153,6 +156,7 @@ impl GpuiAppModalKind {
             Self::NewCoordinator => "newCoordinator",
             Self::MakeCoordinator => "makeCoordinator",
             Self::CoordinatorDetails => "coordinatorDetails",
+            Self::Ghost => "ghost",
             Self::Feedback => "feedback",
             Self::CreateLinearTicket => "createLinearTicket",
             Self::WorkLinkPicker => "workLinkPicker",
@@ -197,6 +201,7 @@ impl GpuiAppModalKind {
             Self::NewCoordinator => "Ghostex New Orchestrator",
             Self::MakeCoordinator => "Ghostex Make Orchestrator",
             Self::CoordinatorDetails => "Ghostex Orchestrator",
+            Self::Ghost => "Ghostex Ghost",
             Self::Feedback => "Ghostex Send Bug / Feedback",
             Self::CreateLinearTicket => "Ghostex Create Linear Ticket",
             Self::WorkLinkPicker => "Ghostex Link Session",
@@ -368,6 +373,10 @@ impl GpuiAppModalKind {
                 px(crate::app::window::COORDINATOR_DETAILS_MODAL_WIDTH),
                 px(crate::app::window::COORDINATOR_DETAILS_MODAL_INITIAL_HEIGHT),
             ),
+            Self::Ghost => size(
+                px(crate::app::window::GHOST_MODAL_WIDTH),
+                px(crate::app::window::GHOST_MODAL_INITIAL_HEIGHT),
+            ),
             Self::Feedback => size(
                 px(crate::app::window::FEEDBACK_MODAL_WIDTH),
                 px(crate::app::window::FEEDBACK_MODAL_INITIAL_HEIGHT),
@@ -513,6 +522,7 @@ impl GpuiAppModalKind {
             | Self::NewCoordinator
             | Self::MakeCoordinator
             | Self::CoordinatorDetails
+            | Self::Ghost
             | Self::CreateLinearTicket
             | Self::WorkLinkPicker => serde_json::Value::Null,
             Self::UpdateAvailable => serde_json::json!({

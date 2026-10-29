@@ -4,6 +4,7 @@ mod bot_feed;
 mod create;
 mod delayed_send;
 mod find_prompts;
+mod ghosts;
 mod git_menu;
 mod host_messages;
 mod modals;

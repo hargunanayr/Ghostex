@@ -28,6 +28,9 @@ pub(crate) struct NativeSidebarSnapshot {
     pub(crate) automations_row: bool,
     /// The runs every bot delivered today, drawn on the Automations row.
     pub(crate) automations_today: u64,
+    /// The Ghosts section's rows (native_sidebar/ghosts.rs).
+    #[serde(skip)]
+    pub(crate) ghosts: Vec<ghostex_gx_core::GhostView>,
     pub(crate) collections: Vec<NativeSidebarCollection>,
     pub(crate) order: Vec<NativeSidebarOrderItem>,
     pub(crate) more_menu: Value,

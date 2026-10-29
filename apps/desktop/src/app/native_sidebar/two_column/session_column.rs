@@ -71,10 +71,7 @@ impl GhostexGpuiApp {
             .child(
                 div()
                     .on_children_prepainted(move |_, window, cx| {
-                        view.update(cx, |app, cx| {
-                            app.update_native_sidebar_scroll(window, cx);
-                            app.update_native_space_transition(window, cx);
-                        })
+                        view.update(cx, |app, cx| app.update_native_sidebar_scroll(window, cx))
                     })
                     .id("native-sidebar-scroll")
                     .w_full()

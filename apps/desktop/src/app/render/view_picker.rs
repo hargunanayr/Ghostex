@@ -79,6 +79,7 @@ fn view_picker_description(mode: TitlebarMode) -> (gpui::SharedString, Option<gp
         TitlebarMode::Terminal => "Shell commands beside your agents..",
         TitlebarMode::Manage => "Notes, plans and reference files.",
         TitlebarMode::BotFeed => "Every Hermes cron run, one channel per job.",
+        TitlebarMode::GhostOverview => "A Ghost's threads, documents and habits.",
         TitlebarMode::Work => "Your tickets, issues and PRs.",
         TitlebarMode::Extension(id) => {
             let Some(view) = gpui_custom_view(id).filter(|view| !view.url.is_empty()) else {
@@ -442,6 +443,9 @@ fn view_picker_shortcut(mode: TitlebarMode) -> Option<char> {
         TitlebarMode::Manage => Some('D'),
         TitlebarMode::Terminal => Some('T'),
         TitlebarMode::Work => Some('W'),
-        TitlebarMode::Agents | TitlebarMode::BotFeed | TitlebarMode::Extension(_) => None,
+        TitlebarMode::Agents
+        | TitlebarMode::BotFeed
+        | TitlebarMode::GhostOverview
+        | TitlebarMode::Extension(_) => None,
     }
 }

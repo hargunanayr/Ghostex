@@ -1,0 +1,1 @@
+../../../../desktop/src/app/window/ghost_modal.rs

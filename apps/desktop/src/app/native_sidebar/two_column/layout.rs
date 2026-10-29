@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use gpui::prelude::FluentBuilder;
 use gpui::{AnyElement, Hsla, IntoElement, ParentElement, Styled, px};
 use gpui_component::h_flex;
 use serde_json::Value;
@@ -9,6 +10,7 @@ use super::super::appearance::SidebarAppearance;
 use super::super::model::{NativeSidebarGroup, NativeSidebarSession, NativeSidebarSnapshot};
 use super::super::session_group_tree::SessionGroupTree;
 use super::buckets::{DayBounds, Tally};
+use super::state::TwoColumnView;
 use crate::GhostexGpuiApp;
 
 /// The navigation column's width with labels, before the sidebar zoom.
@@ -51,6 +53,9 @@ pub(super) struct TwoColumnFrame {
     pub(super) day: DayBounds,
     pub(super) rail: bool,
     pub(super) nav_width: f32,
+    /// A Ghost is selected: the project column takes the whole sidebar and no project's sessions
+    /// show beside it (`open_ghost` in native_sidebar/ghosts.rs).
+    pub(super) ghost_selected: bool,
 }
 
 impl TwoColumnFrame {
@@ -162,6 +167,7 @@ impl TwoColumnFrame {
             day: DayBounds::now(),
             rail,
             nav_width: if rail { NAV_RAIL_WIDTH } else { NAV_WIDTH } * scale,
+            ghost_selected: false,
         }
     }
 
@@ -221,18 +227,38 @@ impl GhostexGpuiApp {
             state.followed_active_group = active;
             state.selected_group = None;
         }
-        let frame = TwoColumnFrame::build(
+        // A Ghost's chat is focused and no project or view was picked since it was opened.
+        let ghost_selected = state.view == TwoColumnView::Project
+            && state.selected_group.is_none()
+            && content
+                .ghosts
+                .iter()
+                .any(|ghost| ghost.chat.as_ref().is_some_and(|chat| chat.is_focused));
+        let mut frame = TwoColumnFrame::build(
             content,
             state.selected_group.as_deref(),
             self.sidebar_width,
             appearance.scale,
         );
+        if ghost_selected {
+            frame.ghost_selected = true;
+            frame.selected_group = None;
+            frame.rail = false;
+            frame.nav_width = self.sidebar_width;
+        }
+        let view = cx.entity().clone();
         h_flex()
+            // CDXC:Spaces 2026-10-29 WHY: The Space switch fade advances from the frame both columns sit in, not from the session column: a selected Ghost hides that column, and the list then stayed on the outgoing Space's frozen snapshot after the switch.
+            .on_children_prepainted(move |_, window, cx| {
+                view.update(cx, |app, cx| app.update_native_space_transition(window, cx))
+            })
             .w_full()
             .flex_1()
             .min_h_0()
             .child(self.render_two_column_nav(content, selectors, &frame, appearance, cx))
-            .child(self.render_two_column_sessions(content, &frame, appearance, cx))
+            .when(!ghost_selected, |columns| {
+                columns.child(self.render_two_column_sessions(content, &frame, appearance, cx))
+            })
             .into_any_element()
     }
 }

@@ -11,6 +11,7 @@ mod disclosure;
 pub(crate) mod drag;
 mod drag_source;
 mod empty;
+pub(crate) mod ghosts;
 mod host;
 pub(crate) mod hover_actions;
 pub(crate) mod icons;

@@ -59,6 +59,9 @@ pub(crate) enum TitlebarMode {
     /// The Work page: the tickets, issues and PRs of every work-mode project the window shows,
     /// app-wide, as a first-party web page. See `app/work_view/`.
     Work,
+    /// A Ghost's Overview: its threads, documents and habits beside its chat, app-wide, drawn by
+    /// GPUI, opened from the Ghost's row in the sidebar. See `app/native_ghost/`.
+    GhostOverview,
     Extension(ExtensionId),
 }
 
@@ -74,6 +77,7 @@ impl TitlebarMode {
             "terminal" => Some(Self::Terminal),
             "bot-feed" => Some(Self::BotFeed),
             "work" => Some(Self::Work),
+            "ghost-overview" => Some(Self::GhostOverview),
             value if value.starts_with("extension:") => {
                 ExtensionId::new(value.trim_start_matches("extension:")).map(Self::Extension)
             }
@@ -92,6 +96,7 @@ impl TitlebarMode {
             Self::Terminal => "terminal".to_string(),
             Self::BotFeed => "bot-feed".to_string(),
             Self::Work => "work".to_string(),
+            Self::GhostOverview => "ghost-overview".to_string(),
             Self::Extension(id) => format!("extension:{}", id.as_str()),
         }
     }
@@ -109,6 +114,7 @@ impl TitlebarMode {
             Self::Terminal => "Terminal",
             Self::BotFeed => "Automations",
             Self::Work => "Issues",
+            Self::GhostOverview => "Overview",
             Self::Extension(id) => id.as_str(),
         }
     }
@@ -147,6 +153,7 @@ impl TitlebarMode {
             Self::Terminal => TITLEBAR_ICON_TERMINAL,
             Self::BotFeed => TITLEBAR_ICON_MESSAGES,
             Self::Work => "titlebar/briefcase.svg",
+            Self::GhostOverview => TITLEBAR_ICON_LAYOUT_COLUMNS,
             Self::Extension(_) => TITLEBAR_ICON_EXTENSIONS,
         }
     }
@@ -186,8 +193,9 @@ impl TitlebarMode {
             Self::Terminal => 5,
             Self::BotFeed => 6,
             Self::Work => 7,
-            Self::Extension(_) => 8,
-            Self::Agents => 9,
+            Self::GhostOverview => 8,
+            Self::Extension(_) => 9,
+            Self::Agents => 10,
         }
     }
 
@@ -202,6 +210,7 @@ impl TitlebarMode {
             Self::Terminal => 6,
             Self::BotFeed => 7,
             Self::Work => 8,
+            Self::GhostOverview => 9,
             Self::Extension(id) => {
                 id.as_str()
                     .bytes()
@@ -226,6 +235,7 @@ impl TitlebarMode {
             Self::Manage => "Files is unavailable for the current project context.",
             Self::Terminal => "",
             Self::BotFeed => "",
+            Self::GhostOverview => "",
             Self::Work => "Issues shows your tickets once a Linear key is set or gh is signed in.",
             Self::Extension(_) => "This extension is unavailable for the current project context.",
         }

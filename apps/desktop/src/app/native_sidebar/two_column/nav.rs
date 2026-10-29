@@ -146,11 +146,14 @@ impl GhostexGpuiApp {
             .id("native-sidebar-two-column-nav")
             .role(gpui::Role::Navigation)
             .aria_label("Projects and views")
-            .w(px(frame.nav_width))
+            .when(frame.ghost_selected, |nav| nav.flex_1().min_w_0())
+            .when(!frame.ghost_selected, |nav| {
+                nav.w(px(frame.nav_width))
+                    .flex_shrink_0()
+                    .border_r_1()
+                    .border_color(hairline())
+            })
             .h_full()
-            .flex_shrink_0()
-            .border_r_1()
-            .border_color(hairline())
             .child(
                 v_flex()
                     .px(px(pad * scale))
@@ -179,6 +182,27 @@ impl GhostexGpuiApp {
                         v_flex()
                             .px(px(pad * scale))
                             .pb(px(16.0 * scale))
+                            .when(!content.bots_mode && !frame.rail, |column| {
+                                column.child(div().pt(px(10.0 * scale)).child(
+                                    self.render_native_sidebar_ghosts_section(
+                                        &content.ghosts,
+                                        appearance,
+                                        cx,
+                                    ),
+                                ))
+                            })
+                            .when(
+                                !content.bots_mode && frame.rail && !content.ghosts.is_empty(),
+                                |column| {
+                                    column
+                                        .child(rail_rule(None, appearance))
+                                        .children(content.ghosts.iter().map(|ghost| {
+                                            self.render_native_sidebar_ghost_rail_avatar(
+                                                ghost, appearance, cx,
+                                            )
+                                        }))
+                                },
+                            )
                             .when(!frame.pinned_agents.is_empty(), |column| {
                                 column
                                     .when(!frame.rail, |column| {

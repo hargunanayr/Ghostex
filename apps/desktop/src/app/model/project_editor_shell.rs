@@ -53,7 +53,7 @@ impl ProjectEditorAutoSleepEpochs {
             TitlebarMode::Manage => Some(self.manage),
             TitlebarMode::Agents
             | TitlebarMode::Terminal
-            | TitlebarMode::BotFeed
+            | TitlebarMode::BotFeed | TitlebarMode::GhostOverview
             | TitlebarMode::Work
             | TitlebarMode::Extension(_) => None,
         }
@@ -68,7 +68,7 @@ impl ProjectEditorAutoSleepEpochs {
             TitlebarMode::Manage => &mut self.manage,
             TitlebarMode::Agents
             | TitlebarMode::Terminal
-            | TitlebarMode::BotFeed
+            | TitlebarMode::BotFeed | TitlebarMode::GhostOverview
             | TitlebarMode::Work
             | TitlebarMode::Extension(_) => {
                 return None;
@@ -115,7 +115,7 @@ impl ProjectEditorAutoSleepPolicySnapshot {
             TitlebarMode::Manage => self.manage,
             TitlebarMode::Agents
             | TitlebarMode::Terminal
-            | TitlebarMode::BotFeed
+            | TitlebarMode::BotFeed | TitlebarMode::GhostOverview
             | TitlebarMode::Work
             | TitlebarMode::Extension(_) => None,
         }
@@ -226,7 +226,7 @@ impl ProjectEditorShellModel {
             }
             TitlebarMode::Agents
             | TitlebarMode::Terminal
-            | TitlebarMode::BotFeed
+            | TitlebarMode::BotFeed | TitlebarMode::GhostOverview
             | TitlebarMode::Work => None,
         }
     }
@@ -249,7 +249,7 @@ impl ProjectEditorShellModel {
             )),
             TitlebarMode::Agents
             | TitlebarMode::Terminal
-            | TitlebarMode::BotFeed
+            | TitlebarMode::BotFeed | TitlebarMode::GhostOverview
             | TitlebarMode::Work => None,
         }
     }

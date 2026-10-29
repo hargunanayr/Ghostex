@@ -586,6 +586,11 @@ pub struct GhostexGpuiApp {
     pub(crate) native_automate: Option<Entity<crate::app::native_automate::NativeAutomateView>>,
     /// The Bot automations feed page, cached like Automate's (`app/native_bot_feed/host.rs`).
     pub(crate) native_bot_feed: Option<Entity<crate::app::native_bot_feed::NativeBotFeedView>>,
+    /// The Ghost Overview page, cached like the feed's (`app/native_ghost/host.rs`).
+    pub(crate) native_ghost_overview:
+        Option<Entity<crate::app::native_ghost::NativeGhostOverviewView>>,
+    /// The Ghost the Overview panel shows.
+    pub(crate) ghost_overview_ghost_id: Option<String>,
     /// The Board page and its full-screen layout (`app/native_session_board/host.rs`).
     pub(crate) native_session_board: crate::app::native_session_board::NativeSessionBoardHost,
     /// The Work page's pending ticket open (`app/work_view/host.rs`).

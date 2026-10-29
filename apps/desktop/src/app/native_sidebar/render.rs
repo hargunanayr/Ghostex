@@ -260,6 +260,15 @@ impl GhostexGpuiApp {
                                         .relative()
                                         .left(px(space_offset * appearance.scale))
                                         .opacity(space_opacity)
+                                        .when(!content.bots_mode, |column| {
+                                            column.child(
+                                                self.render_native_sidebar_ghosts_section(
+                                                    &content.ghosts,
+                                                    &appearance,
+                                                    cx,
+                                                ),
+                                            )
+                                        })
                                         .when(content.automations_row, |column| {
                                             column.child(
                                                 self.render_native_sidebar_automations_row(

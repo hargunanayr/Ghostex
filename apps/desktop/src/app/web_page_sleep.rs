@@ -198,7 +198,7 @@ impl GhostexGpuiApp {
                 }
                 TitlebarMode::Agents
                 | TitlebarMode::Terminal
-                | TitlebarMode::BotFeed
+                | TitlebarMode::BotFeed | TitlebarMode::GhostOverview
                 | TitlebarMode::Work => {}
                 mode => {
                     kept.views.insert(project_id, mode);

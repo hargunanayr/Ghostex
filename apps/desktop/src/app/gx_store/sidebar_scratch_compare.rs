@@ -86,6 +86,7 @@ pub(super) fn compare_views(
             && incremental.automations_row == scratch.automations_row
             && incremental.automations_today == scratch.automations_today,
     );
+    top("ghosts", incremental.ghosts == scratch.ghosts);
     top(
         "collections",
         incremental.collections == scratch.collections,

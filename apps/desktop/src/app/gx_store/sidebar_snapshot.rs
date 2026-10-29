@@ -410,6 +410,7 @@ pub(super) fn snapshot_from_view(
         bots_mode: view.bots_mode,
         automations_row: view.automations_row,
         automations_today: view.automations_today,
+        ghosts: view.ghosts.clone(),
         collections,
         order: view
             .order

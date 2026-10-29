@@ -210,6 +210,15 @@ impl SidebarList {
         &self.model
     }
 
+    /// Every local project's group and place in the sidebar, whatever Space or filter the list is
+    /// showing (the Ghost modal's project picker).
+    pub(crate) fn project_places(
+        &self,
+        core: &ghostex_gx_core::Core,
+    ) -> Vec<ghostex_gx_core::ProjectPlace> {
+        ghostex_gx_core::project_places(core, &self.last_inputs, now_ms())
+    }
+
     /// The session Close Project focuses before it parks the project
     /// (gx_store/sidebar_close_project.rs).
     pub(crate) fn close_project_successor_session_id(&self, group_id: &str) -> Option<String> {
@@ -624,6 +633,7 @@ impl GhostexGpuiApp {
             bots_mode: false,
             automations_row: false,
             automations_today: 0,
+            ghosts: Vec::new(),
             collections: Vec::new(),
             order: Vec::new(),
             more_menu: Value::Null,

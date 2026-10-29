@@ -409,7 +409,7 @@ impl ProjectScopedWorkareaAvailability {
             // App-wide: the feed reads Hermes, not the project, so every context can show it.
             // The Work view's own condition (a work-mode project in the window) is the app's:
             // `work_view_available` in app/work_view/.
-            TitlebarMode::Agents | TitlebarMode::BotFeed | TitlebarMode::Work => true,
+            TitlebarMode::Agents | TitlebarMode::BotFeed | TitlebarMode::GhostOverview | TitlebarMode::Work => true,
             TitlebarMode::Extension(_) => self.project_context.has_project_scoped_workareas(),
             TitlebarMode::Source => self.project_features.source,
             TitlebarMode::Browser | TitlebarMode::Kanban | TitlebarMode::Automate => {
@@ -521,7 +521,7 @@ impl ProjectWorkareaCefSurfaceSlotKey {
             TitlebarMode::Agents
             | TitlebarMode::Browser
             | TitlebarMode::Terminal
-            | TitlebarMode::BotFeed => {
+            | TitlebarMode::BotFeed | TitlebarMode::GhostOverview => {
                 return None;
             }
         })
