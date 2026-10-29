@@ -1,4 +1,4 @@
-//! `/api/acknowledgeCoordinatorThreads`: viewing an orchestrator marks its finished threads seen.
+//! `/api/acknowledgeCoordinatorThreads`: marks an orchestrator's finished threads seen.
 
 use std::collections::BTreeSet;
 
@@ -47,8 +47,10 @@ fn finished_unseen_threads(
 /// Acknowledges the orchestrator's finished-unseen threads the way a sidebar click on each would,
 /// so their blue dot clears on every client. Runs on the blocking pool.
 ///
-/// CDXC:Coordinators 2026-10-24 DECISION:
-/// User: "also when i see the main thread itself then that should clear the blue dot on all the sub threads below it :)". Viewing an orchestrator (every client's "saw this session" door: gx-core `attention::acknowledge` on the desktop and the web build, the phone's row tap through `ghostex orchestrator acknowledge-threads`) acknowledges every thread under it, at any depth, whose finished turn is unseen. Only that blue finished-unseen state clears: a thread that waits on the user (a question, an approval, or any attention that is not a finished turn) keeps its dot. gxserver decides which threads qualify because only it knows why a session is in attention.
+/// Every thread under it, at any depth, whose finished turn is unseen is acknowledged; a thread that waits on the user (a question, an approval, or any attention that is not a finished turn) keeps its dot. gxserver decides which threads qualify because only it knows why a session is in attention.
+///
+/// CDXC:Coordinators 2026-10-28 WHY:
+/// The desktop and the web build no longer call this when the user views an orchestrator (the user's 2026-10-28 decision on gx-core `attention::acknowledge`: a finished thread counts as seen only when the thread itself is opened). It is still reached through `ghostex orchestrator acknowledge-threads`, which the phone's orchestrator row tap runs (apps/mobile/app/src/terminal/attention.ts) until the phone follows that decision.
 pub(crate) fn acknowledge_coordinator_threads(
     state: &AppState,
     params: &Map<String, Value>,

@@ -313,8 +313,7 @@ impl FoldedStatus {
     pub(crate) fn add(&mut self, row: &SessionRow) {
         self.working |= row.activity == "working";
         // A thread waiting on the user (a permission prompt, a bell: gxserver's `waiting`) is the
-        // pink needs-you dot; only a finished turn is the stack's blue, so the blue is exactly what
-        // opening the orchestrator clears (server/src/coordinators/seen_threads.rs).
+        // pink needs-you dot; only a finished turn is the stack's blue.
         let waiting = row.activity == "attention" && row.thread_state.as_deref() == Some("waiting");
         self.question |= row.pending_question_count > 0 || waiting;
         self.attention |=

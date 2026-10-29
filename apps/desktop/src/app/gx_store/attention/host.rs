@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use ghostex_gx_core::{Effect, Event, Intent, SessionKey};
 
-use super::report::{acknowledge_coordinator_threads, report_agent_activity};
+use super::report::report_agent_activity;
 use crate::GhostexGpuiApp;
 use crate::app::gx_store::host::now_ms;
 
@@ -97,18 +97,6 @@ impl GhostexGpuiApp {
                 };
                 cx.background_executor()
                     .spawn(report_agent_activity(remote, session, report, agent_name))
-                    .detach();
-            }
-            Effect::AcknowledgeCoordinatorThreads { session } => {
-                let remote = match session.machine.remote_id() {
-                    None => None,
-                    Some(machine_id) => match self.remote_gxserver_connections.get(machine_id) {
-                        Some(connection) => Some(connection.request_target()),
-                        None => return,
-                    },
-                };
-                cx.background_executor()
-                    .spawn(acknowledge_coordinator_threads(remote, session))
                     .detach();
             }
             Effect::SessionAttentionRaised { session } => {

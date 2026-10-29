@@ -24,20 +24,3 @@ pub(super) async fn report_agent_activity(
     params.insert("sessionId".into(), Value::from(session.session_id));
     let _ = gx_rpc(remote, "/api/updateAgentActivity", Value::Object(params)).await;
 }
-
-/// The user saw an orchestrator: its machine marks the orchestrator's finished threads seen
-/// (server/src/coordinators/seen_threads.rs). Best effort like the report above.
-pub(super) async fn acknowledge_coordinator_threads(
-    remote: Option<GpuiRemoteGxserverRequestTarget>,
-    session: SessionKey,
-) {
-    let mut params = Map::new();
-    params.insert("projectId".into(), Value::from(session.project_id));
-    params.insert("sessionId".into(), Value::from(session.session_id));
-    let _ = gx_rpc(
-        remote,
-        "/api/acknowledgeCoordinatorThreads",
-        Value::Object(params),
-    )
-    .await;
-}

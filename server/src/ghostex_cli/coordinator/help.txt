@@ -127,9 +127,10 @@ THREADS
   Sleep Inactive Threads on its sidebar menu: threads that are working, waiting
   on a question or approval, or running a background shell stay awake, and so
   does the orchestrator. Nothing is parked or closed.
-  acknowledge-threads marks the orchestrator's finished threads as seen, as
-  opening the orchestrator does: their blue dot clears, while a thread waiting
-  on a question or approval keeps its dot.
+  acknowledge-threads marks the orchestrator's finished threads as seen: their
+  blue dot clears, while a thread waiting on a question or approval keeps its
+  dot. Opening the orchestrator in the app leaves them alone; a finished thread
+  stays under Needs you until you open it.
 
 MEMORY AND INSTRUCTIONS
   remember saves a one-line note (a preference, a decision, a pitfall); every

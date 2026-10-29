@@ -200,9 +200,6 @@ pub enum Effect {
         report: crate::attention::AgentActivityReport,
         agent_name: Option<String>,
     },
-    /// The user saw an orchestrator with threads that may have finished unseen: ask its machine
-    /// (`/api/acknowledgeCoordinatorThreads`) to mark their finished turns seen.
-    AcknowledgeCoordinatorThreads { session: SessionKey },
     /// A live delta moved a session of this computer into unacknowledged attention: play the
     /// completion sound unless the user turned it off.
     SessionAttentionRaised { session: SessionKey },
@@ -387,13 +384,6 @@ impl Core {
             Event::Tick => output.changes = self.presentation.expire_patches(now_ms),
         }
         self.settle_after_change(&mut output);
-        crate::attention::acknowledge_threads_of_focused_coordinator(
-            &self.attention,
-            &self.presentation,
-            self.focus.focused_session.as_ref(),
-            &output.changes,
-            &mut output.effects,
-        );
         self.attention.observe(
             &self.presentation,
             &output.changes,
