@@ -85,6 +85,17 @@ pub fn is_coordinator(threads: Option<&Value>) -> bool {
     threads.is_some_and(Value::is_object)
 }
 
+/// The Ghost whose chat this coordinator is (server/src/coordinators/panel.rs names it), so the
+/// chat speaks as the Ghost; `None` for an orchestrator.
+pub fn ghost_name(threads: Option<&Value>) -> Option<String> {
+    threads?
+        .get("ghostName")?
+        .as_str()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+}
+
 fn plural(count: usize, one: &str, many: &str) -> String {
     format!("{count} {}", if count == 1 { one } else { many })
 }

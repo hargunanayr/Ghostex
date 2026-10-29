@@ -19,7 +19,8 @@ use super::spaces::{
     OTHER_SPACE_ICON, OTHER_SPACE_ID, OTHER_SPACE_LABEL,
 };
 use super::view::{
-    CollectionView, EmptyState, GroupSummary, GroupView, MachineSummary, MachineTabView, OrderItem,
+    CollectionView, EmptyState, GhostView, GroupSummary, GroupView, MachineSummary, MachineTabView,
+    OrderItem,
     OrderKind, SidebarView, SpaceProject, SpaceView,
 };
 use crate::keys::{parse_workspace_subgroup_id, MachineId};
@@ -60,6 +61,8 @@ pub(crate) fn assemble(input: AssembleInput<'_>) -> SidebarView {
     // The bot groups, which only Bots mode draws and no Space shows or counts.
     let mut bot_groups: BTreeSet<&str> = BTreeSet::new();
     let mut bot_runs_today = 0;
+    // The Ghost home groups, which only the Ghosts section draws.
+    let mut ghost_groups: BTreeSet<&str> = BTreeSet::new();
     for plan in input.plans {
         if let Some(project) = &plan.project {
             projects_by_group.insert(
@@ -76,8 +79,12 @@ pub(crate) fn assemble(input: AssembleInput<'_>) -> SidebarView {
                 bot_groups.insert(plan.group_id.as_str());
                 bot_runs_today += project.bot_runs_today;
             }
+            if project.ghost.is_some() {
+                ghost_groups.insert(plan.group_id.as_str());
+            }
         }
     }
+    let is_ghost_group = |group_id: &str| ghost_groups.contains(group_id);
     let project_of_group = |group_id: &str| -> Option<String> {
         projects_by_group
             .get(group_id)
@@ -131,9 +138,9 @@ pub(crate) fn assemble(input: AssembleInput<'_>) -> SidebarView {
                 .map(String::as_str),
         )
     });
-    // Bots belong to no Space: a Space only ever shows and counts projects.
+    // Bots and Ghosts belong to no Space: a Space only ever shows and counts projects.
     let shows_group = |selection: &SpaceSelection, group_id: &str| -> bool {
-        if is_bot_group(group_id) {
+        if is_bot_group(group_id) || is_ghost_group(group_id) {
             return false;
         }
         let project = space_project_of_group(group_id);
@@ -158,7 +165,7 @@ pub(crate) fn assemble(input: AssembleInput<'_>) -> SidebarView {
             .is_some_and(GroupBuild::contains_focused_session)
     });
     let active_space_id = match (&selection, active_group_id) {
-        (Some(selection), Some(group_id)) if !is_bot_group(group_id) => {
+        (Some(selection), Some(group_id)) if !is_bot_group(group_id) && !is_ghost_group(group_id) => {
             let project = space_project_of_group(group_id);
             Some(space_for_group(
                 &spaces_state,
@@ -246,10 +253,39 @@ pub(crate) fn assemble(input: AssembleInput<'_>) -> SidebarView {
     }
 
     let mut groups: Vec<GroupView> = Vec::new();
+    let mut ghosts: Vec<GhostView> = Vec::new();
     for plan in input.plans {
         let Some(build) = input.builds.get(&plan.group_id) else {
             continue;
         };
+        if let Some((project, ghost)) = plan
+            .project
+            .as_ref()
+            .and_then(|project| Some((project, project.ghost.as_ref()?)))
+        {
+            ghosts.push(GhostView {
+                ghost_id: ghost.ghost_id.clone(),
+                name: ghost.name.clone(),
+                mascot: ghost.mascot.clone(),
+                color: ghost.color.clone(),
+                project_id: project.project_id.clone(),
+                project_ids: ghost.project_ids.clone(),
+                chat_session_id: ghost.chat_session_id.clone(),
+                chat: build
+                    .core
+                    .sessions
+                    .iter()
+                    .find(|session| {
+                        session
+                            .row
+                            .key
+                            .as_ref()
+                            .is_some_and(|key| key.session_id == ghost.chat_session_id)
+                    })
+                    .cloned(),
+            });
+            continue;
+        }
         if is_bot_group(&plan.group_id) != bots_mode {
             continue;
         }
@@ -458,6 +494,7 @@ pub(crate) fn assemble(input: AssembleInput<'_>) -> SidebarView {
         bots_mode,
         automations_row: bots_mode && input.settings.bot_automations_enabled,
         automations_today: bot_runs_today,
+        ghosts,
         groups,
         collections,
         order,

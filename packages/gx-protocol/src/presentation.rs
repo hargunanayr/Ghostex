@@ -227,6 +227,32 @@ pub struct PresentationProject {
         skip_serializing_if = "is_false"
     )]
     pub every_workspace: bool,
+    /// The Ghost this project is the home of; absent for every other project and from an older
+    /// daemon (server/src/ghosts/published.rs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ghost: Option<PresentationGhost>,
+}
+
+/// A Ghost as its home project's row carries it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PresentationGhost {
+    #[serde(default, deserialize_with = "crate::de::null_as_default")]
+    pub ghost_id: String,
+    #[serde(default, deserialize_with = "crate::de::null_as_default")]
+    pub name: String,
+    #[serde(default, deserialize_with = "crate::de::null_as_default")]
+    pub mascot: String,
+    #[serde(default, deserialize_with = "crate::de::null_as_default")]
+    pub color: String,
+    /// The session the user talks to the Ghost in, in the home project.
+    #[serde(default, deserialize_with = "crate::de::null_as_default")]
+    pub chat_session_id: String,
+    /// The projects the Ghost holds.
+    #[serde(default, deserialize_with = "crate::de::null_as_default")]
+    pub project_ids: Vec<String>,
+    #[serde(default, deserialize_with = "crate::de::null_as_default")]
+    pub show_threads_in_sidebar: bool,
 }
 
 impl PresentationProject {

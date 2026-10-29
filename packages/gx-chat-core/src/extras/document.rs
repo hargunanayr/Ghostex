@@ -86,7 +86,13 @@ pub fn document(state: &ChatState, context: &ChatContext, into: &mut Document) {
         let agent_name = welcome_agent_name(state.session.agent.as_deref());
         NewSessionWelcome {
             // CDXC:Coordinators 2026-09-30 WHY: a new coordinator's first screen says what it is for; the generic "What should we build with Claude?" hides that this agent hands the work to threads.
-            title: if coordinator_threads::is_coordinator(
+            title: if let Some(ghost_name) =
+                coordinator_threads::ghost_name(state.session.coordinator_threads.as_ref())
+            {
+                crate::extras::welcome::wrap_new_session_welcome_title(&format!(
+                    "What can {ghost_name} do for you?"
+                ))
+            } else if coordinator_threads::is_coordinator(
                 state.session.coordinator_threads.as_ref(),
             ) {
                 crate::extras::welcome::wrap_new_session_welcome_title(

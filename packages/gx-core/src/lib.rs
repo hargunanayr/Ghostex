@@ -24,6 +24,7 @@ mod connection;
 mod core;
 mod doc_sync;
 mod focus;
+pub mod ghosts;
 pub mod git_menu;
 pub mod hud;
 pub mod indicators;
@@ -210,11 +211,12 @@ pub use crate::sidebar_view::{
     armed_actions_by_session, close_project_group_is_active, close_project_successor_candidates,
     close_project_successor_group_order, first_awake_successor_session_id, is_awake_successor_row,
     machine_state_copy, machine_state_is_busy, machine_state_is_failure, plan_space_sleep,
-    plan_space_switch_restore, project_slot_plan, rename_shake_key, rendered_session_ids,
+    plan_space_switch_restore, project_places, project_slot_plan, ProjectPlace, rename_shake_key, rendered_session_ids,
     reveal_plan, session_is_snoozed, session_slot_plan, space_for_focused_row,
     space_landing_project_ids, ArmedAction, BrowserTabInput, CloseAfterDoneInput, Collection,
     CollectionView, CollectionsState, CoordinatorBadge, CoordinatorBadgeTone, DelayedSendInput,
-    DelayedSendView, DropLanding, DropWrites, EmptyState, FocusedRowSpace, FoldedStatus, GroupCore,
+    DelayedSendView, DropLanding, DropWrites, EmptyState, FocusedRowSpace, FoldedStatus, GhostView,
+    GroupCore,
     GroupSummary, GroupView, LabelDeadline, MachineNotice, MachineSummary, MachineTabInput,
     MachineTabView, OrderItem, OrderKind, ProjectContextView, ProjectDiffStats, ProjectDropLanding,
     ProjectDropRow,

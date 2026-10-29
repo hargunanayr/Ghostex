@@ -37,6 +37,9 @@ pub struct SidebarView {
     pub automations_row: bool,
     /// The runs every bot delivered today, which the Automations row shows.
     pub automations_today: u64,
+    /// The Ghosts of the selected machine, in creation order. Their home projects are never drawn
+    /// as project groups; the Ghosts section draws one row each.
+    pub ghosts: Vec<GhostView>,
     /// Every group of the machine that is drawn, in order.
     pub groups: Vec<GroupView>,
     pub collections: Vec<CollectionView>,
@@ -46,6 +49,26 @@ pub struct SidebarView {
     /// The selected remote machine is not connected, so the list says why above whatever it still
     /// holds (`machines::machine_notice`). Absent for this computer and a connected machine.
     pub machine_notice: Option<MachineNotice>,
+}
+
+/// One row of the Ghosts section.
+///
+/// CDXC:Ghosts 2026-10-29 DECISION:
+/// User chose a "Ghosts" section of its own in the sidebar, like Monocode's "Monos", drawn in the classic and the Two columns layouts. A Ghost's home project is built like any project (so its chat row has its live status) but only this row shows it; the home project never appears among the projects, in a Space or in a workspace filter.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GhostView {
+    pub ghost_id: String,
+    pub name: String,
+    pub mascot: String,
+    pub color: String,
+    /// The home project's id (its group id is the project's default group).
+    pub project_id: String,
+    pub project_ids: Vec<String>,
+    /// The session the Ghost's chat is, in its home project.
+    pub chat_session_id: String,
+    /// The Ghost's chat as a sidebar row: its status and focus. Absent while the snapshot does not
+    /// hold the session (just created, or reset).
+    pub chat: Option<SessionView>,
 }
 
 /// What the list of a remote machine that is not connected says about its connection.

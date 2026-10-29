@@ -44,6 +44,8 @@ pub(crate) struct ProjectContextInput {
     pub(crate) bot_profile: Option<String>,
     pub(crate) bot_gateway_running: bool,
     pub(crate) bot_runs_today: u64,
+    /// The Ghost this project is the home of.
+    pub(crate) ghost: Option<ghostex_gx_protocol::PresentationGhost>,
     pub(crate) work_mode: bool,
     pub(crate) work_linear: bool,
     pub(crate) work_pull_requests: bool,

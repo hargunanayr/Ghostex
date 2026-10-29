@@ -512,9 +512,11 @@ impl SidebarViewModel {
         let window_workspace = super::workspaces::window_workspace(store, effective, &machine);
         let loaded = store.loaded(&machine);
         for project_id in meta.grouped_project_ids() {
-            // Bots belong to no workspace; every other project shows in its workspace's windows.
+            // Bots and Ghosts belong to no workspace; every other project shows in its workspace's
+            // windows.
             if let (Some(workspace), Some(loaded)) = (&window_workspace, loaded) {
                 if meta.bot_profile(project_id).is_none()
+                    && meta.ghost(project_id).is_none()
                     && !workspace.shows_project(loaded, project_id)
                 {
                     continue;
@@ -886,6 +888,7 @@ fn project_context(
         bot_profile: meta.bot_profile(project_id).map(str::to_string),
         bot_gateway_running: project.bot_gateway_running == Some(true),
         bot_runs_today: project.bot_runs_today.unwrap_or_default(),
+        ghost: meta.ghost(project_id).cloned(),
         work_mode: project.work_mode,
         work_linear: project.work_mode && project.work_linear,
         work_pull_requests: project.work_mode && !project.work_github_off,

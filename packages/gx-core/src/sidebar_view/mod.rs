@@ -27,6 +27,7 @@ mod model;
 pub(crate) mod ordering;
 mod program_status;
 mod project_drop_landing;
+mod project_places;
 pub(crate) mod projects;
 mod reveal;
 pub(crate) mod rows;
@@ -72,6 +73,7 @@ pub use machine_switch::{
 pub use model::{SidebarUpdateWork, SidebarViewModel};
 pub use ordering::session_is_snoozed;
 pub use project_drop_landing::{ProjectDropLanding, ProjectDropRow};
+pub use project_places::{project_places, ProjectPlace};
 pub use reveal::{reveal_plan, space_for_focused_row, FocusedRowSpace, SidebarRevealPlan};
 pub use session_slot::{rendered_session_ids, session_slot_plan, SessionSlotPlan};
 pub use slot_hotkey::{project_slot_plan, ProjectSlotPlan};
@@ -88,7 +90,8 @@ pub use status_buckets::{
 pub use tags::{TagListItem, TagListItemKind, TagPresentation, UNTAGGED_TAG_FILTER};
 pub use view::{
     rename_shake_key, CollectionView, CoordinatorBadge, CoordinatorBadgeTone, DelayedSendView,
-    EmptyState, FoldedStatus, GroupCore, GroupSummary, GroupView, LabelDeadline, MachineNotice,
+    EmptyState, FoldedStatus, GhostView, GroupCore, GroupSummary, GroupView, LabelDeadline,
+    MachineNotice,
     MachineSummary, MachineTabView, OrderItem, OrderKind, ProjectContextView, RemoteMachineView,
     RowNesting, SectionView, SessionMenuFacts, SessionRow, SessionTiming, SessionView, SidebarView,
     SpaceView, ThreadTally, WorktreeView, RENAME_SHAKE_FRESH_MS,

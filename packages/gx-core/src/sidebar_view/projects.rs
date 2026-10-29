@@ -10,7 +10,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use ghostex_gx_protocol::PresentationProject;
+use ghostex_gx_protocol::{PresentationGhost, PresentationProject};
 use serde_json::Value;
 
 use crate::presentation_store::MachinePresentation;
@@ -27,6 +27,8 @@ pub(crate) struct ProjectOverlay {
     pub(crate) icon_data_url: Option<String>,
     /// The Hermes profile a bot project stands for (`default` for `HERMES_HOME` itself).
     pub(crate) bot_profile: Option<String>,
+    /// The Ghost a Ghost's home project stands for.
+    pub(crate) ghost: Option<PresentationGhost>,
     pub(crate) order_index: Option<usize>,
     pub(crate) worktree: Option<WorktreeView>,
 }
@@ -41,6 +43,9 @@ pub(crate) struct ProjectMeta {
     pub(crate) project_order: Vec<String>,
     /// Visible bot projects in sidebar order, which Bots mode lists instead of `project_order`.
     pub(crate) bot_order: Vec<String>,
+    /// Ghost home projects, in creation order. Their groups are built (the Ghosts section reads
+    /// the chat row's status from them) but never drawn as projects.
+    pub(crate) ghost_order: Vec<String>,
     /// How many projects the Projects settings page would list; the empty state reads it.
     pub(crate) project_settings_count: usize,
 }
@@ -50,14 +55,22 @@ impl ProjectMeta {
         self.overlays.get(project_id)
     }
 
-    /// Every project that gets a project group, projects first, then bots. Both kinds are
-    /// built in either mode; `assemble` draws the kind the mode lists, the way it applies a Space.
+    /// Every project that gets a project group, projects first, then bots, then Ghost homes. Every
+    /// kind is built in either mode; `assemble` draws the kind the mode lists, the way it applies a
+    /// Space.
     pub(crate) fn grouped_project_ids(&self) -> impl Iterator<Item = &String> {
-        self.project_order.iter().chain(&self.bot_order)
+        self.project_order
+            .iter()
+            .chain(&self.bot_order)
+            .chain(&self.ghost_order)
     }
 
     pub(crate) fn bot_profile(&self, project_id: &str) -> Option<&str> {
         self.overlay(project_id)?.bot_profile.as_deref()
+    }
+
+    pub(crate) fn ghost(&self, project_id: &str) -> Option<&PresentationGhost> {
+        self.overlay(project_id)?.ghost.as_ref()
     }
 }
 
@@ -248,7 +261,8 @@ pub(crate) fn build_project_meta(
         // A bot is an ordinary gxserver project flagged in `launchSettings` (`isBot`, `botProfile`), so no schema migration and no `systemKind` value is needed.
         // The presentation row carries the profile (`botProfile`), which every client holds from its first frame.
         let bot_profile = project.bot_profile.clone();
-        if index.is_some() || worktree.is_some() || bot_profile.is_some() {
+        let ghost = project.ghost.clone();
+        if index.is_some() || worktree.is_some() || bot_profile.is_some() || ghost.is_some() {
             merge_overlay(
                 &mut meta.overlays,
                 &project.project_id,
@@ -256,6 +270,7 @@ pub(crate) fn build_project_meta(
                     order_index: index,
                     worktree,
                     bot_profile,
+                    ghost,
                     ..ProjectOverlayPatch::default()
                 },
             );
@@ -270,6 +285,10 @@ pub(crate) fn build_project_meta(
                 && !machine.is_project_hidden(&project.project_id)
         })
         .collect();
+    let (ghosts, visible): (Vec<&PresentationProject>, Vec<&PresentationProject>) = visible
+        .iter()
+        .copied()
+        .partition(|project| meta.ghost(&project.project_id).is_some());
     let (bots, projects): (Vec<&PresentationProject>, Vec<&PresentationProject>) = visible
         .iter()
         .copied()
@@ -278,6 +297,10 @@ pub(crate) fn build_project_meta(
     let bot_order = order_sidebar_projects(bots.into_iter(), &meta);
     meta.project_order = project_order;
     meta.bot_order = bot_order;
+    meta.ghost_order = ghosts
+        .iter()
+        .map(|project| project.project_id.clone())
+        .collect();
     meta.project_settings_count = project_settings_count(machine);
     meta
 }
@@ -299,6 +322,9 @@ fn merge_overlay(
     if let Some(bot_profile) = patch.bot_profile {
         overlay.bot_profile = Some(bot_profile);
     }
+    if let Some(ghost) = patch.ghost {
+        overlay.ghost = Some(ghost);
+    }
     if let Some(order_index) = patch.order_index {
         overlay.order_index = Some(order_index);
     }
@@ -311,6 +337,7 @@ fn merge_overlay(
 struct ProjectOverlayPatch {
     icon_data_url: Option<String>,
     bot_profile: Option<String>,
+    ghost: Option<PresentationGhost>,
     order_index: Option<usize>,
     worktree: Option<WorktreeView>,
 }
@@ -319,6 +346,7 @@ impl ProjectOverlayPatch {
     fn is_empty(&self) -> bool {
         self.icon_data_url.is_none()
             && self.bot_profile.is_none()
+            && self.ghost.is_none()
             && self.order_index.is_none()
             && self.worktree.is_none()
     }
