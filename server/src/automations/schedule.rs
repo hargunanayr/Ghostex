@@ -56,11 +56,30 @@ pub(super) fn is_one_shot_schedule(schedule: &Value) -> bool {
 }
 
 fn next_daily(now: chrono::DateTime<Utc>, hour: u32, minute: u32) -> Option<String> {
-    let today = candidate_utc(now.date_naive(), hour, minute)?;
+    let local_today = now.with_timezone(&chrono::Local).date_naive();
+    let today = candidate_local(local_today, hour, minute)?;
     let next = if today > now {
         today
     } else {
-        candidate_utc(now.date_naive().succ_opt()?, hour, minute)?
+        candidate_local(local_today.succ_opt()?, hour, minute)?
+    };
+    Some(next.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+}
+
+/// The next `:minute` of an hour after `now`, in this computer's time (a whole hour later when
+/// that minute has passed).
+fn next_hourly(now: chrono::DateTime<Utc>, minute: u32) -> Option<String> {
+    use chrono::Timelike;
+    let local = now.with_timezone(&chrono::Local);
+    let this_hour = local
+        .with_minute(minute)?
+        .with_second(0)?
+        .with_nanosecond(0)?
+        .with_timezone(&Utc);
+    let next = if this_hour > now {
+        this_hour
+    } else {
+        this_hour + chrono::Duration::hours(1)
     };
     Some(next.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
 }
@@ -72,15 +91,14 @@ fn next_weekly(
     days: Vec<u64>,
 ) -> Option<String> {
     let day_set = days.into_iter().collect::<HashSet<_>>();
+    let local_today = now.with_timezone(&chrono::Local).date_naive();
     for offset in 0..=7 {
-        let date = now
-            .date_naive()
-            .checked_add_signed(chrono::Duration::days(offset))?;
+        let date = local_today.checked_add_signed(chrono::Duration::days(offset))?;
         let weekday = date.weekday().num_days_from_sunday() as u64;
         if !day_set.contains(&weekday) {
             continue;
         }
-        let candidate = candidate_utc(date, hour, minute)?;
+        let candidate = candidate_local(date, hour, minute)?;
         if candidate > now {
             return Some(candidate.to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
         }
@@ -106,7 +124,10 @@ fn next_basic_cron(now: chrono::DateTime<Utc>, expression: &str) -> Option<Strin
                 .map(|date| date.to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
         }
     }
-    let minute = parts[0].parse::<u32>().ok()?;
+    let minute = parts[0].parse::<u32>().ok().filter(|minute| *minute <= 59)?;
+    if parts[1..] == ["*", "*", "*", "*"] {
+        return next_hourly(now, minute);
+    }
     let hour = parts[1].parse::<u32>().ok()?;
     if parts[2] != "*" || parts[3] != "*" {
         return None;
@@ -121,9 +142,15 @@ fn next_basic_cron(now: chrono::DateTime<Utc>, expression: &str) -> Option<Strin
     next_weekly(now, hour, minute, days)
 }
 
-fn candidate_utc(date: NaiveDate, hour: u32, minute: u32) -> Option<chrono::DateTime<Utc>> {
-    Utc.from_local_datetime(&date.and_hms_opt(hour, minute, 0)?)
-        .single()
+/// `hour:minute` on `date` in this computer's time zone, as a UTC instant.
+///
+/// CDXC:Automations 2026-10-29 WHY:
+/// The Automate dialog sends a daily or weekly time as the user's local time (with the local zone name), and Ghost habits are written the same way ("Daily at 17:20"), but the times were read as UTC, so in Jakarta a 17:20 run fired at 00:20. gxserver runs on the user's computer, so its local zone is the zone those times were written in. On a DST jump the earlier of two times wins, and a time that does not exist that day is skipped to the next.
+fn candidate_local(date: NaiveDate, hour: u32, minute: u32) -> Option<chrono::DateTime<Utc>> {
+    chrono::Local
+        .from_local_datetime(&date.and_hms_opt(hour, minute, 0)?)
+        .earliest()
+        .map(|time| time.with_timezone(&Utc))
 }
 
 fn parse_time(value: &str) -> Option<(u32, u32)> {
