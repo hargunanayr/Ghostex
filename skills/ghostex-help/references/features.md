@@ -2755,6 +2755,28 @@ status, transcript, and an archive action; a run must end with an
 `ghostex automations --help` documents `automation-save`,
 `automation-run-now`, `automation-set-enabled`, and `automation-state`.
 
+## Ghosts
+
+A Ghost is a long-lived agent you talk to that remembers you and looks
+after several of your projects. The Ghosts section at the top of the
+sidebar lists them; + makes one (a name, a look, the agent it runs on and
+the projects it holds), and a Ghost's row opens its chat. Each Ghost has a
+Soul (who it is and its standing instructions) and a Memory (dated facts it
+saves as you talk), both editable in its settings (the gear on its row:
+General, Soul, Memory, Skills). When you ask it for real work it starts a
+thread in one of its projects and tells you when the thread reports back;
+it cannot touch a project you did not give it. It keeps documents it writes
+for you (reports, dashboards, plans) and runs habits, routines on a
+schedule such as "Daily at 17:20", which message you only when they have
+something to say. The Overview button on its row opens a panel beside the
+chat with its Threads, Documents and Habits (Run now, Turn off, New habit).
+Skills you add to a Ghost are its own copy; skills installed for every agent
+work for it too. Reset conversation starts a fresh chat and keeps the Soul
+and Memory; Delete keeps its folder. In a terminal: `ghostex ghost create`,
+`list`, `update`, `memory`, `soul`, `skills`, `artifact`, `habit`, and
+`start-thread` (`ghostex ghost --help`). Creating a Ghost and its Overview
+need the app; the browser page opens a Ghost's chat.
+
 ## Bots (Hermes agents)
 
 Bots switches the sidebar to your Hermes agents, one row per Hermes profile.
