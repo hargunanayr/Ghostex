@@ -6,14 +6,15 @@
 //! User (question 1, answer 1A): auto-sleep and Close After Done run in gxserver, always, with the same settings. One policy for every client: sessions started from the phone or the CLI are covered, and it keeps working while the app window is closed. This replaces the desktop app runtime's sweep (`auto-sleep.ts`, `helpers/auto-sleep.ts`), whose rules are ported here one for one.
 //!
 //! CDXC:SessionSleep 2026-09-25 WHY:
-//! gxserver does not know what a client shows, and the runtime's sweep skipped every session the user was looking at (CDXC:SessionSleep 2026-08-20). Clients now report the sessions they show as keep-awake leases (`/api/holdSessionsAwake`, the same presence input the phone already used), so a session is shown while any client holds it. The runtime's "a group with no focused or visible row keeps its first row awake" rule reads the leases as its focused and visible rows and the daemon's group order as the row order.
+//! gxserver does not know what a client shows, and the runtime's sweep skipped every session the user was looking at (CDXC:SessionSleep 2026-08-20). Clients now report the sessions they show as keep-awake leases (`/api/holdSessionsAwake`, the same presence input the phone already used), so a session is shown while any client holds it.
+//!
+//! CDXC:SessionSleep 2026-10-27 DECISION:
+//! User chose "remove the rule" for the runtime's "a group with no focused or visible row keeps its first row awake" protection. The daemon's group order puts the oldest-active session first, so an agent alone in its project (or the oldest awake one) never slept while nobody looked at that project: idle agents stayed up for 25+ hours under a 5-minute setting. Only what a client shows stays awake now; a slept session resumes when it is opened.
 //!
 //! SEE-ALSO: server/src/session_keep_awake.rs, server/src/server/session_auto_sleep_sweep.rs,
 //! server/src/coordinators/auto_sleep.rs (an orchestrator with an active thread stays awake),
 //! apps/desktop/src/app/gx_store/terminal_lifecycle/shown_sessions.rs (the desktop's report),
 //! server/src/zmx/endpoint.rs (the daemon's own automatic-sleep declines).
-
-use std::collections::HashSet;
 
 use chrono::DateTime;
 use serde_json::Value;
@@ -87,27 +88,24 @@ pub fn sessions_to_sleep(
         return Vec::new();
     }
     let sessions = rows(snapshot, "sessions");
-    let protected = protected_sessions(snapshot, held);
     let threads = coordinator_thread_activity(sessions);
     sessions
         .iter()
         .filter_map(|session| {
             let key = session_ref(session)?;
             let thread_activity = threads.get(&key);
-            if thread_activity.is_some_and(|activity| activity.has_active_thread) {
+            if thread_activity.is_some_and(|activity| activity.has_active_thread)
+                || held(&key.0, &key.1)
+            {
                 return None;
             }
-            (!protected.contains(&key) && !held(&key.0, &key.1))
-                .then_some(())
-                .filter(|_| {
-                    should_sleep(
-                        session,
-                        settings,
-                        now_ms,
-                        thread_activity.and_then(|activity| activity.last_thread_activity_ms),
-                    )
-                })
-                .map(|_| key)
+            should_sleep(
+                session,
+                settings,
+                now_ms,
+                thread_activity.and_then(|activity| activity.last_thread_activity_ms),
+            )
+            .then_some(key)
         })
         .collect()
 }
@@ -166,32 +164,7 @@ fn timestamp_ms(value: Option<&str>) -> Option<i64> {
         .map(|time| time.timestamp_millis())
 }
 
-/// `collectGpuiAutoSleepProtectedProjectSessionKeys`, less what the leases already say: for each
-/// group, a group whose rows nobody shows keeps its FIRST row awake.
-fn protected_sessions(snapshot: &Value, held: &dyn Fn(&str, &str) -> bool) -> HashSet<SessionRef> {
-    let mut protected = HashSet::new();
-    for group in rows(snapshot, "groups") {
-        let Some(project_id) = group.get("projectId").and_then(Value::as_str) else {
-            continue;
-        };
-        let session_ids: Vec<&str> = group
-            .get("sessionIds")
-            .and_then(Value::as_array)
-            .map(|ids| ids.iter().filter_map(Value::as_str).collect())
-            .unwrap_or_default();
-        let has_owner = session_ids
-            .iter()
-            .any(|session_id| held(project_id, session_id));
-        if !has_owner {
-            if let Some(first) = session_ids.first() {
-                protected.insert((project_id.to_string(), first.to_string()));
-            }
-        }
-    }
-    protected
-}
-
-/// `shouldAutoSleepGpuiPresentationAgentSession`, less the protected-set test.
+/// `shouldAutoSleepGpuiPresentationAgentSession`.
 /// `last_thread_activity_ms` is an orchestrator's latest thread activity, which its idle clock
 /// does not start before.
 pub fn should_sleep(
