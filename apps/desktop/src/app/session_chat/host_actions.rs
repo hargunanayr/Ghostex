@@ -485,19 +485,11 @@ impl GhostexGpuiApp {
             }
             return;
         }
-        // A file change card's Review all. Ghostex has no Git view, so the changes are reviewed in
-        // the project's Code view, whose Source Control lists them.
+        // A file change card's Review all or Open diff: the Commit dialog, the header's Commit
+        // button, lists the project's changes with their diffs (CDXC:SessionChat 2026-10-27 on
+        // `file_change_list` in gx-chat-core).
         if action == "reviewChanges" {
-            if self.set_active_mode(TitlebarMode::Source, window, cx) {
-                cx.notify();
-            } else {
-                self.dispatch_gpui_app_modal_toast(
-                    "info",
-                    "This project has no Code view to review the changes in",
-                    "",
-                    cx,
-                );
-            }
+            self.dispatch_gpui_titlebar_git_action_selector("commit", cx);
             return;
         }
         if action == "locateFile" {

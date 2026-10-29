@@ -77,7 +77,7 @@ impl NativeChatView {
         let motion = self.disclosure_frame(&id, expanded, cx);
         let heading = self.work_summary(item, &id, expanded, p, cx);
         // Every row of a finished turn hides its own writes; they belong to the turn's
-        // "N files changed" fold below the heading (file_change_card.rs). Rows that are still
+        // "N files changed" card at its end (file_change_list.rs). Rows that are still
         // folding keep theirs until they are gone, as they were a moment ago.
         let folding = motion.is_some_and(|frame| frame.kind == FoldMotionKind::Fold);
         let log = if folding {
@@ -114,7 +114,7 @@ impl NativeChatView {
             None
         };
         self.hide_file_changes = true;
-        let files = self.completed_files_fold(item, p, cx);
+        let files = self.completed_files_card(item, p, cx);
         let mut tail: Vec<AnyElement> = Vec::new();
         for message in artifacts {
             tail.push(self.message_row(message, p, window, cx));
@@ -145,7 +145,8 @@ impl NativeChatView {
             if let Some(log) = log {
                 row = row.children(log);
             }
-            return row.children(files).children(tail).into_any_element();
+            // The changed files card closes the turn, under the reply (file_change_list.rs).
+            return row.children(tail).children(files).into_any_element();
         };
         self.moving_completed_work_row(&id, frame, heading, log, files, tail, s)
     }
@@ -307,6 +308,7 @@ impl NativeChatView {
                         .into_any_element(),
                 ));
             }
+            row = row.children(tail.into_iter().map(spaced));
             if let Some(files) = files {
                 row = row.child(eased_part(
                     self.disclosure_motion.borrow_mut().height(id, "files"),
@@ -327,9 +329,10 @@ impl NativeChatView {
                         .into_any_element(),
                 ));
             }
-            row = row.children(files.map(spaced));
+            row = row
+                .children(tail.into_iter().map(spaced))
+                .children(files.map(spaced));
         }
-        row.children(tail.into_iter().map(spaced))
-            .into_any_element()
+        row.into_any_element()
     }
 }

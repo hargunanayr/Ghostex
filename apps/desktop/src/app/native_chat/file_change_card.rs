@@ -15,7 +15,6 @@ use super::{
     transcript::text,
 };
 use crate::app::native_chat::cursor::ChatCursor as _;
-use ghostex_gx_chat_core::TranscriptItem;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, Context, FontWeight, Hsla, InteractiveElement as _, IntoElement,
@@ -27,11 +26,11 @@ const MONO: &str = "JetBrainsMono Nerd Font";
 
 /// The card's colours: the surfaces come from the chat theme (CDXC:Theming 2026-09-22, the diff
 /// cards take from the theme colour too) and the hues name what happened to a file.
-struct Palette {
-    surface: Hsla,
-    border: Hsla,
-    hairline: Hsla,
-    hover: Hsla,
+pub(super) struct Palette {
+    pub(super) surface: Hsla,
+    pub(super) border: Hsla,
+    pub(super) hairline: Hsla,
+    pub(super) hover: Hsla,
     well: Hsla,
     edited: Hsla,
     new: Hsla,
@@ -51,7 +50,7 @@ struct Palette {
 }
 
 impl Palette {
-    fn of(p: &ChatAppearance) -> Self {
+    pub(super) fn of(p: &ChatAppearance) -> Self {
         let hue =
             |dark: u32, light: u32| -> Hsla { rgb(if p.light { light } else { dark }).into() };
         Self {
@@ -90,7 +89,7 @@ impl Palette {
         }
     }
 
-    fn status(&self, status: &str) -> Hsla {
+    pub(super) fn status(&self, status: &str) -> Hsla {
         match status {
             "new" => self.new,
             "deleted" => self.deleted,
@@ -99,7 +98,7 @@ impl Palette {
     }
 }
 
-fn status_icon(status: &str) -> &'static str {
+pub(super) fn status_icon(status: &str) -> &'static str {
     match status {
         "new" => "titlebar/file-plus.svg",
         "deleted" => "titlebar/file-minus.svg",
@@ -107,7 +106,7 @@ fn status_icon(status: &str) -> &'static str {
     }
 }
 
-fn icon(path: &'static str, size: f32, color: Hsla) -> AnyElement {
+pub(super) fn icon(path: &'static str, size: f32, color: Hsla) -> AnyElement {
     gpui::svg()
         .path(path)
         .size(px(size))
@@ -119,7 +118,7 @@ fn icon(path: &'static str, size: f32, color: Hsla) -> AnyElement {
 /// A folder that gives up its start, never its end, so the part nearest the file stays readable.
 /// `truncate()` ellipsises from the end, so the text keeps its own width and this box clips it
 /// from the left (the old card's fix for the same paths).
-fn folder_label(folder: String, color: Hsla, size: f32) -> AnyElement {
+pub(super) fn folder_label(folder: String, color: Hsla, size: f32) -> AnyElement {
     div()
         .flex()
         .justify_end()
@@ -132,7 +131,7 @@ fn folder_label(folder: String, color: Hsla, size: f32) -> AnyElement {
         .into_any_element()
 }
 
-fn counts(added: u64, removed: u64, palette: &Palette, s: f32) -> AnyElement {
+pub(super) fn counts(added: u64, removed: u64, palette: &Palette, s: f32) -> AnyElement {
     div()
         .flex()
         .flex_shrink_0()
@@ -187,66 +186,6 @@ impl NativeChatView {
         }
         rows.push(self.file_change_card(&id, &message["fileCard"], &files, p, cx));
         rows
-    }
-
-    /// The turn's writes, folded behind "N files changed" the way React grouped a finished turn
-    /// (the decision in `session-chat-message-list/list.tsx`). The label and the rows are projected
-    /// together in the core (`transcript/presentation.rs`), so the label counts the files drawn.
-    pub(super) fn completed_files_fold(
-        &mut self,
-        item: &TranscriptItem,
-        p: &ChatAppearance,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let TranscriptItem::CompletedWork {
-            id,
-            files_card,
-            files,
-            files_label,
-            simple_files_label,
-            deferred,
-            ..
-        } = item
-        else {
-            return None;
-        };
-        // An older turn arrives collapsed with only the paths its unread work changed; the row
-        // stays and reads that work on open, as React's list did (`list.tsx`).
-        let unread = files.is_empty()
-            && deferred
-                .as_ref()
-                .and_then(|work| work["filePaths"].as_array())
-                .is_some_and(|paths| !paths.is_empty());
-        if files.is_empty() && !unread {
-            return None;
-        }
-        let key = format!("work-files:{id}");
-        let expanded = self.is_expanded(&key, false);
-        let motion = self.disclosure_frame(&key, expanded, cx);
-        let load = unread.then(|| json!({"type":"loadWork","id":id,"work":deferred}));
-        let label = if p.simple {
-            simple_files_label.clone()
-        } else {
-            files_label.clone()
-        };
-        let mut group = div()
-            .flex()
-            .flex_col()
-            .w_full()
-            .min_w_0()
-            .gap(px(8.0 * p.scale))
-            .child(self.disclosure(key.clone(), label, expanded, load, p, cx));
-        if expanded || motion.is_some() {
-            let body = if unread {
-                self.deferred_work_notice(item, p, cx)
-            } else {
-                Some(self.file_change_card(&format!("work:{id}"), files_card, files, p, cx))
-            };
-            if let Some(body) = body {
-                group = group.child(self.disclosure_body_motion(&key, motion, 8.0 * p.scale, body));
-            }
-        }
-        Some(group.into_any_element())
     }
 
     /// One card: the header, then a row per file.
@@ -483,7 +422,7 @@ impl NativeChatView {
     }
 
     /// An open row's diff on its darker well, with the buttons under it.
-    fn file_change_diff(
+    pub(super) fn file_change_diff(
         &mut self,
         key: &str,
         file: &Value,

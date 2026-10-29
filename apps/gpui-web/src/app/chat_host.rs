@@ -229,7 +229,11 @@ impl GhostexGpuiApp {
                 "The header's Commit menu commits and opens pull requests here.",
                 cx,
             ),
-            Some("reviewChanges" | "openFile" | "locateFile" | "annotateReply") => self
+            // A file change card's Open diff: the Commit dialog, as on the desktop.
+            Some("reviewChanges") => {
+                self.gx_store_git_titlebar_action("commit", cx);
+            }
+            Some("openFile" | "locateFile" | "annotateReply") => self
                 .web_chat_needs_app_toast(
                     "Files open in the Ghostex app",
                     "The browser has no Code or Docs view.",

@@ -13,6 +13,7 @@ pub mod deferred_work;
 pub mod diff;
 pub mod document;
 pub mod file_change_rows;
+pub mod file_change_list;
 pub mod file_changes;
 pub mod file_paths;
 pub mod file_position;

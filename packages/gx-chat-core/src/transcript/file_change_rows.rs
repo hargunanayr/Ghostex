@@ -311,7 +311,8 @@ fn common_folder(files: &[Value]) -> String {
 /// heading, with "Show all N changed lines" and Open file under the preview. Simple mode keeps its
 /// "Edited N files" fold, which opens to this card. It replaces the activity-rail stack of one card
 /// per file. The rows had an Edited/New/Deleted tag until the user said "remove Edit/New etc next
-/// to the file names please, no need"; the file icon's colour still tells them apart.
+/// to the file names please, no need"; the file icon's colour still tells them apart. A finished
+/// turn's card has its own header and file list (`file_change_list`, 2026-10-27).
 /// SEE-ALSO: apps/desktop/src/app/native_chat/file_change_card.rs,
 /// apps/mobile/app/src/chat/native/transcript/FileChanges.tsx, server/src/session_chat_file_patch.rs.
 pub fn file_change_card(files: &[Value]) -> Value {
