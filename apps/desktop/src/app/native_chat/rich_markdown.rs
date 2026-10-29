@@ -705,7 +705,12 @@ impl NativeChatView {
             }
             Segment::Table(source) => {
                 let key = format!("{id}:{index}");
+                /*
+                CDXC:SessionChat 2026-10-29 WHY:
+                The toolbar's buttons carry fixed ids, and GPUI keys a press by the element's global id, so two tables in one message shared one pending press: on release the first table's unhovered button cancelled it and no button of a later table ever clicked. Keying each table by its segment makes their buttons distinct.
+                */
                 div()
+                    .id(key.clone())
                     .group(TABLE_GROUP)
                     .flex()
                     .flex_col()
