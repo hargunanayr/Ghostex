@@ -1129,7 +1129,8 @@ pub(crate) fn normalize_agent_hook_event_activity(params: &Map<String, Value>) -
     prompt, not a completion or request for user action, so it must never enter
     attention. Genuine permission notifications are not tagged idleInput and
     retain their attention transition. Older notify binaries omit the tag and
-    keep their existing behavior.
+    keep their existing behavior. The idle never ends an unread finished turn
+    (CDXC:SessionStatus 2026-10-28 in session_status/transition.rs).
     */
     if hook_activity.as_deref() == Some("attention")
         && params.get("notificationKind").and_then(Value::as_str) == Some("idleInput")

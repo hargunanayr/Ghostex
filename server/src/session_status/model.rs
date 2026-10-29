@@ -109,6 +109,8 @@ pub(super) struct ActivityInput {
     /// The event id of an attention the program's same report already
     /// announced (`reuseAttentionEventId`), so re-applying it does not notify again.
     pub(super) reuse_attention_event_id: Option<String>,
+    /// Claude's 60-second "waiting for your input" reminder (`notificationKind: idleInput`).
+    pub(super) idle_input_reminder: bool,
 }
 
 /*
@@ -175,6 +177,8 @@ pub fn compute_activity_update(
             title: read_text(params, "title"),
             program_status_activity: program_status_activity.clone(),
             reuse_attention_event_id: read_text(params, "reuseAttentionEventId"),
+            idle_input_reminder: read_text(params, "notificationKind").as_deref()
+                == Some("idleInput"),
         });
         /*
         Sessions that predate the meaningful-activity clock seed it from their

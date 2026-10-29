@@ -32,6 +32,14 @@ pub(super) fn apply_agent_activity_transition(input: ActivityInput) -> ActivityS
         return program_status_transition(&input, &previous, activity);
     }
 
+    /*
+    CDXC:SessionStatus 2026-10-28 WHY:
+    Claude sends its "waiting for your input" reminder 60 seconds after every finished turn, and the hook maps it to idle so a session stuck working cannot be escalated by it (CDXC:SessionChat 2026-08-24 in agents/activity.rs). Applied to a finished turn, that idle cleared the blue dot and marked its notification read a minute after every Claude turn, so a session the user never opened dropped out of Needs you (observed 2026-10-28, session G5nb9; 18 of the last 25 finished notifications were read at exactly 60s). The reminder is not the user looking, so an unread finished turn keeps its attention.
+    */
+    if input.idle_input_reminder && previous.is_unacknowledged_turn_complete_attention() {
+        return previous;
+    }
+
     if input.event.as_deref() == Some("escape") {
         let mut next = previous.clone();
         next.agent_name =
