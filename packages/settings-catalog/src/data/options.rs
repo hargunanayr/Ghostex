@@ -628,6 +628,9 @@ pub const SIDEBAR_THEME_SETTING_OPTIONS: &[Opt] = &[
     opt("System", "system"),
 ];
 
+pub const SIDEBAR_LAYOUT_OPTIONS: &[Opt] =
+    &[opt("Classic", "classic"), opt("Two columns", "twoColumns")];
+
 pub const SIDEBAR_VISIBILITY_MEMORY_OPTIONS: &[Opt] = &[
     opt("Same in every view", "shared"),
     opt("Remembered per view", "perView"),

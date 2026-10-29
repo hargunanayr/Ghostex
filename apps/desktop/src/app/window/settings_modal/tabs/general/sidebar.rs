@@ -99,6 +99,22 @@ fn sidebar_section(
             cx,
         ));
     }
+    if g.visible(s, "sidebarLayout") {
+        let spec = g.spec(
+            "sidebarLayout",
+            "Sidebar layout",
+            "Classic lists every project with its sessions under it. Two columns puts your projects and the Needs you, Running and All sessions views on the left, and the selected project's sessions on the right, grouped by what needs you, what is running and when you last used them. Widen the sidebar to see both columns in full.",
+        );
+        rows.extend(page.segmented(
+            g,
+            s,
+            "sidebarLayout",
+            spec,
+            Some(reset_key::<GeneralTab>("sidebarLayout")),
+            g.options("SIDEBAR_LAYOUT_OPTIONS"),
+            cx,
+        ));
+    }
     // CDXC:Settings 2026-09-11 DECISION: dependent rows are hidden, not disabled, while their parent is off.
     // Their parent is the Spaces switch on the Extensions page now (built_in_extensions.rs), so they
     // sit as plain rows rather than indented under a row this page no longer has.

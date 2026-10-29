@@ -39,6 +39,7 @@ mod quick_access;
 mod refetch;
 mod renderer_commands;
 mod selectors;
+pub mod session_board;
 mod session_create;
 mod sidebar_accounts;
 mod sidebar_actions;
@@ -237,6 +238,10 @@ pub use crate::sidebar_view::{
     plan_workspace_switch_restore, project_workspace_id, toggle_all_project_ids,
     window_machine_tabs, window_spaces, window_workspace, WindowWorkspace,
     MACHINE_SESSION_MEMORY_SPACE_ID,
+};
+pub use crate::sidebar_view::{
+    family_bucket, normalize_sidebar_layout, SessionBucket, SessionBucketFacts, StatusFilter,
+    SIDEBAR_LAYOUT_CLASSIC, SIDEBAR_LAYOUT_SETTING_KEY, SIDEBAR_LAYOUT_TWO_COLUMNS,
 };
 pub use crate::workspace_groups::{
     owns_group_command, plan_group_command, CustomTagsPush, CustomTagsPushEffect, GroupCommandPlan,

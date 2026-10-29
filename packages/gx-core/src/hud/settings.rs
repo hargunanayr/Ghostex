@@ -13,7 +13,8 @@
 use serde_json::{Map, Value};
 
 /// The keys normalized here.
-pub const NORMALIZED_KEYS: [&str; 14] = [
+pub const NORMALIZED_KEYS: [&str; 15] = [
+    "sidebarLayout",
     "sidebarTheme",
     "sidebarTooltipDelayMs",
     "sidebarCollapseAnimationDurationMs",
@@ -112,6 +113,14 @@ pub(crate) fn hud_settings(raw: &Value, debugging_mode: bool, show_beta_features
     settings.insert(
         "agentManagerZoomPercent".into(),
         agent_manager_zoom_percent(source),
+    );
+    settings.insert(
+        crate::SIDEBAR_LAYOUT_SETTING_KEY.into(),
+        Value::from(crate::normalize_sidebar_layout(
+            source
+                .get(crate::SIDEBAR_LAYOUT_SETTING_KEY)
+                .and_then(Value::as_str),
+        )),
     );
     // `normalizeDefaultPromptAgentId`: trimmed, `codex` when empty, at most 120 characters.
     let prompt_agent = source

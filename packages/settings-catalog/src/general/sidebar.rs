@@ -25,6 +25,7 @@ pub(crate) fn sidebar() -> Section {
         "Sidebar",
         vec![
             row("sidebarSettingsPreset", "Preset", "Apply a sidebar UI preset or show Custom when controlled settings diverge.").options_of(SIDEBAR_SETTINGS_PRESETS, "label", "id").options(&[opt("Custom", "custom")]),
+            row("sidebarLayout", "Sidebar layout", "Classic lists every project with its sessions under it. Two columns puts your projects and the Needs you, Running and All sessions views on the left, and the selected project's sessions on the right, grouped into Needs you, Running, Today, This week and Older, with a filter for Needs you or Running. Widen the sidebar to see both columns in full.").options(SIDEBAR_LAYOUT_OPTIONS),
             row("sidebarSpaceSwitchBehavior", "When switching to a Space", "Reopen the session you last had open in a Space when you switch to it, in the view its project was in. Shown while the Spaces extension is on.").options(SIDEBAR_SPACE_SWITCH_BEHAVIOR_OPTIONS),
             row("sidebarSpaceFollowActiveSession", "Follow the active session's Space", "Switch the selected Space to the one that owns a session you open from outside it, such as through Back/Forward or Search by Prompt. Shown while the Spaces extension is on."),
             row("projectSwitchKeepAliveMinutes", "Keep the previous project live for", "After you switch to another project or Space, keep the terminals, chats, and view that were open in the previous project running for this many minutes so switching back is instant. 0 releases them right away."),

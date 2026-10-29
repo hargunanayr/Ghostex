@@ -735,6 +735,7 @@ fn session_element(
         session,
         focus,
         menus,
+        is_snoozed,
         timer_label.clone(),
         last_interaction_label.clone(),
     ));
@@ -762,12 +763,23 @@ fn build_session(
     session: &SessionView,
     focus: (bool, bool),
     menus: &SidebarMenus<'_>,
+    is_snoozed: bool,
     timer_label: Option<String>,
     last_interaction_label: Option<String>,
 ) -> NativeSidebarSession {
     let (is_focused, is_visible) = focus;
     let row = &session.row;
     let mut details = Map::new();
+    // The two-column layout buckets rows by these (native_sidebar/two_column/), since a collapsed
+    // section lists no session ids for it to read membership from.
+    details.insert("isParked".to_string(), Value::Bool(row.is_parked));
+    details.insert("isSnoozed".to_string(), Value::Bool(is_snoozed));
+    if session.nesting.folded {
+        details.insert("threadHidden".to_string(), Value::Bool(true));
+    }
+    // The card's second line in the two-column layout (two_column/card_meta.rs).
+    insert_optional(&mut details, "branch", row.menu_facts.branch.clone());
+    insert_optional(&mut details, "agentName", row.menu_facts.agent_name.clone());
     let actions = menus.row_actions(group, session);
     details.insert("menu".to_string(), menu_to_json(&actions.menu));
     details.insert(

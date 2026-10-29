@@ -451,6 +451,7 @@ pub fn exports(module: &str, platform: Platform) -> Vec<(&'static str, Json)> {
                 "SIDEBAR_TOOLTIP_DELAY_STEP_MS",
                 SIDEBAR_TOOLTIP_DELAY_STEP_MS.to_json(),
             ),
+            ("SIDEBAR_LAYOUT_OPTIONS", SIDEBAR_LAYOUT_OPTIONS.to_json()),
             (
                 "SIDEBAR_VISIBILITY_MEMORY_OPTIONS",
                 SIDEBAR_VISIBILITY_MEMORY_OPTIONS.to_json(),

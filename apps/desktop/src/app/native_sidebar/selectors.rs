@@ -40,6 +40,16 @@ pub(super) fn space_tile_selected_colors(
     }
 }
 
+/// Where the machine tabs and the Spaces row are drawn.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum SelectorsPlacement {
+    /// Under the sidebar's top row, across the sidebar (Classic).
+    Top,
+    /// At the foot of the two-column layout's project column, `width` wide, stacked in a column
+    /// while that column is its icon rail.
+    ProjectColumn { width: f32, vertical: bool },
+}
+
 impl GhostexGpuiApp {
     pub(crate) fn render_native_sidebar_selectors(
         &self,
@@ -47,7 +57,21 @@ impl GhostexGpuiApp {
         appearance: &SidebarAppearance,
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
+        self.render_native_sidebar_selectors_at(snapshot, SelectorsPlacement::Top, appearance, cx)
+    }
+
+    pub(crate) fn render_native_sidebar_selectors_at(
+        &self,
+        snapshot: &NativeSidebarSnapshot,
+        placement: SelectorsPlacement,
+        appearance: &SidebarAppearance,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
         let scale = appearance.scale;
+        let (row_width, vertical) = match placement {
+            SelectorsPlacement::Top => (self.sidebar_width, false),
+            SelectorsPlacement::ProjectColumn { width, vertical } => (width, vertical),
+        };
         // Space buttons have a fixed 28px face and 4px gap in both renderers. The Hermes slot and
         // its hairline take one Space's room plus the hairline's at the end of the row.
         let bots_room = if snapshot.bots_enabled {
@@ -55,9 +79,14 @@ impl GhostexGpuiApp {
         } else {
             0.0
         };
-        let capacity = (((self.sidebar_width / scale - 13.0) + 4.0 - bots_room) / 32.0)
-            .floor()
-            .max(2.0) as usize;
+        // A column in the icon rail holds a short stack; the rest wait in the More menu.
+        let capacity = if vertical {
+            6
+        } else {
+            (((row_width / scale - 13.0) + 4.0 - bots_room) / 32.0)
+                .floor()
+                .max(2.0) as usize
+        };
         let user_spaces: Vec<_> = snapshot
             .spaces
             .iter()
@@ -90,11 +119,16 @@ impl GhostexGpuiApp {
         let more_owner = super::menus::MenuOwner::default();
         v_flex().w_full().flex_shrink_0()
             .children(self.render_native_machine_tabs(snapshot, appearance, cx))
-            .child(div().h(px(13.0 * scale)).flex_shrink_0())
+            .when(placement == SelectorsPlacement::Top, |column| column.child(div().h(px(13.0 * scale)).flex_shrink_0()))
             // CDXC:Spaces 2026-10-11 DECISION: User: Create a space fits its content, and the Spaces row stays centred with no background behind it (a left-aligned row in a rounded track was tried and removed the same day). The workspace tile left the row for the sidebar's bottom bar (workspace_tile.rs).
-            .when(snapshot.spaces_enabled, |column| column.child(h_flex().id("native-sidebar-space-track").sidebar_drop_target("space-row", String::new(), None, cx).w_full().h(px(40.0 * scale)).pb(px(12.0 * scale)).px(px(6.5 * scale)).justify_center().gap(px(4.0 * scale))
-                .when(user_spaces.is_empty(), |row| row.child(h_flex().id("native-sidebar-create-space").role(gpui::Role::Button).aria_label("Create space").flex_shrink_0().h(px(28.0 * scale)).px(px(10.0 * scale)).gap(px(6.0 * scale)).rounded(px(6.0 * scale)).border_1().border_color(appearance.muted.opacity(0.25)).text_size(px(12.0 * scale))
-                    .child(titlebar_svg_icon("titlebar/plus.svg", 14.0 * scale, appearance.muted)).child("Create space")
+            .when(snapshot.spaces_enabled, |column| column.child(h_flex().id("native-sidebar-space-track").sidebar_drop_target("space-row", String::new(), None, cx).w_full().gap(px(4.0 * scale))
+                .map(|row| match placement {
+                    SelectorsPlacement::Top => row.h(px(40.0 * scale)).pb(px(12.0 * scale)).px(px(6.5 * scale)).justify_center(),
+                    SelectorsPlacement::ProjectColumn { vertical: false, .. } => row.h(px(44.0 * scale)).px(px(6.5 * scale)).justify_center(),
+                    SelectorsPlacement::ProjectColumn { vertical: true, .. } => row.flex_col().items_center().py(px(6.0 * scale)),
+                })
+                .when(user_spaces.is_empty(), |row| row.child(h_flex().id("native-sidebar-create-space").role(gpui::Role::Button).aria_label("Create space").flex_shrink_0().h(px(28.0 * scale)).px(px(if vertical { 6.0 } else { 10.0 } * scale)).gap(px(6.0 * scale)).rounded(px(6.0 * scale)).border_1().border_color(appearance.muted.opacity(0.25)).text_size(px(12.0 * scale))
+                    .child(titlebar_svg_icon("titlebar/plus.svg", 14.0 * scale, appearance.muted)).when(!vertical, |button| button.child("Create space"))
                     .on_click(cx.listener(|app, _, _, cx| { cx.stop_propagation(); app.dispatch_native_sidebar_ui(json!({"type": "editSpace"}), cx); }))))
                 .children(visible.into_iter().chain(snapshot.spaces.iter().filter(|space| space.id == "other")).map(|space| self.render_native_sidebar_space(space, &visible_ids, appearance, cx)))
                 .when(overflow, |row| row.child(div().id("native-sidebar-more-spaces").on_prepaint(super::menus::record_menu_owner(&more_owner)).role(gpui::Role::Button).aria_label("More spaces").size(px(28.0 * scale)).flex().items_center().justify_center().rounded(px(6.0 * scale)).hover(|row| row.bg(appearance.hover))

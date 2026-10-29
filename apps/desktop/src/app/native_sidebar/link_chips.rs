@@ -234,8 +234,15 @@ impl GhostexGpuiApp {
     }
 
     /// Whether the row draws a second line: its links line, or a Work mode card's Clean up / Keep
-    /// offer for a merged PR (work_chips.rs), which takes the line while it waits.
+    /// offer for a merged PR (work_chips.rs), which takes the line while it waits. In the
+    /// two-column layout every card has one: when neither of those takes it, the status, agent and
+    /// branch line (two_column/card_meta.rs).
     pub(crate) fn native_session_has_second_line(&self, session: &NativeSidebarSession) -> bool {
+        self.native_sidebar.two_column.active || self.native_session_has_link_line(session)
+    }
+
+    /// Whether the links line or the Work mode offer takes the row's second line.
+    pub(crate) fn native_session_has_link_line(&self, session: &NativeSidebarSession) -> bool {
         let row = self.native_session_links_row(session);
         session.work.as_ref().is_some_and(|work| work.offer_cleanup)
             || !row.line.is_empty()

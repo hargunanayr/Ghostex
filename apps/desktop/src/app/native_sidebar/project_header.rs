@@ -234,104 +234,14 @@ impl GhostexGpuiApp {
                             }
                         })
                         .children(actions.iter().enumerate().map(|(index, item)| {
-                            let label = item["label"].as_str().unwrap_or("").to_owned();
-                            let command = item.get("command").cloned();
-                            let children = item.get("children").cloned();
-                            let header_bounds = header_bounds.clone();
-                            let button_owner = super::menus::MenuOwner::default();
-                            let trigger_id = format!("project:{id}:{label}");
-                            // CDXC:AgentLauncher 2026-09-18 DECISION:
-                            // User: no gap between the last-used agent button and the Select agent chevron; the two halves join into one split button like the React header (24px action, 17px chevron, only the outer corners rounded).
-                            let split = item["split"].as_str();
-                            let image = item["imageDataUrl"].as_str().and_then(|value| {
-                                super::images::agent_image(
-                                    value,
-                                    item["agentIcon"].as_str(),
-                                    appearance.light,
-                                )
-                            });
-                            let glyph = match image {
-                                Some(image) => img(image).size(px(14.0 * scale)).into_any_element(),
-                                None => gpui::svg()
-                                    .path(gpui_sidebar_command_icon_asset_path(
-                                        item["icon"].as_str(),
-                                    ))
-                                    .size(px(14.0 * scale))
-                                    .text_color(appearance.muted)
-                                    .into_any_element(),
-                            };
-                            div()
-                                .on_prepaint(super::menus::record_menu_owner(&button_owner))
-                                .id(format!("native-project-action-{id}-{index}"))
-                                .role(gpui::Role::Button)
-                                .aria_label(label.clone())
-                                .h(px(22.0 * scale))
-                                .w(px(match split {
-                                    Some("start") => 24.0,
-                                    Some("end") => 17.0,
-                                    _ => 22.0,
-                                } * scale))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .map(|button| match split {
-                                    Some("start") => button.rounded_l(px(4.0 * scale)),
-                                    Some("end") => {
-                                        button.rounded_r(px(4.0 * scale)).ml(px(-2.0 * scale))
-                                    }
-                                    _ => button.rounded(px(4.0 * scale)),
-                                })
-                                .cursor_pointer()
-                                .hover(|button| button.bg(appearance.hover))
-                                .child(glyph)
-                                .when(
-                                    self.native_sidebar.pointer_inside
-                                        && self.native_sidebar.menu.is_none()
-                                        && !cx.has_active_drag(),
-                                    |row| {
-                                        // CDXC:Sidebar 2026-09-23 DECISION: User: header button tooltips "appear below and aligned to the left not to the right (so they stay within the bounds of the sidebar)". The bubble's right edge lines up with the button and it grows leftward; the session card's buttons (hover_actions.rs) do the same.
-                                        // The binding is read here, not in gx-core, so it follows the user's Settings > Hotkeys.
-                                        let tooltip = match item["hotkey"].as_str().and_then(
-                                            crate::app::hotkeys::gpui_configured_hotkey_label,
-                                        ) {
-                                            Some(shortcut) => format!("{label} ({shortcut})"),
-                                            None => label.clone(),
-                                        };
-                                        row.managed_discrete_tooltip_with_placement(
-                                            ManagedTooltipPlacement::BelowLeft,
-                                            appearance.tooltip_delay,
-                                            move |window, cx| {
-                                                super::tooltips::sidebar_style_tooltip(
-                                                    tooltip.clone(),
-                                                    window,
-                                                    cx,
-                                                )
-                                            },
-                                        )
-                                    },
-                                )
-                                .on_click(cx.listener(
-                                    move |app, event: &gpui::ClickEvent, window, cx| {
-                                        cx.stop_propagation();
-                                        if let Some(children) = &children {
-                                            Self::show_native_sidebar_menu_hung(
-                                                children,
-                                                header_bounds.get(),
-                                                button_owner.get(),
-                                                Some((
-                                                    trigger_id.clone(),
-                                                    super::menus::press_position(event),
-                                                )),
-                                                event.position(),
-                                                scale,
-                                                window,
-                                                cx,
-                                            );
-                                        } else if let Some(command) = &command {
-                                            app.dispatch_native_sidebar_ui(command.clone(), cx);
-                                        }
-                                    },
-                                ))
+                            self.render_native_project_action(
+                                &id,
+                                index,
+                                item,
+                                header_bounds.clone(),
+                                appearance,
+                                cx,
+                            )
                         })),
                 )
             })
@@ -352,6 +262,107 @@ impl GhostexGpuiApp {
                 cx.stop_propagation();
                 app.dispatch_native_sidebar_ui(json!({"type": "toggleGroup", "groupId": id}), cx);
             }))
+            .into_any_element()
+    }
+}
+
+impl GhostexGpuiApp {
+    /// One of a project header's buttons (New Terminal, the agent launcher, ⋯), which the
+    /// two-column layout's session column header draws too (two_column/header.rs). A button with
+    /// `children` opens them as a menu hung under the header (`header_bounds`).
+    pub(crate) fn render_native_project_action(
+        &self,
+        group_id: &str,
+        index: usize,
+        item: &Value,
+        header_bounds: Rc<Cell<Option<gpui::Bounds<gpui::Pixels>>>>,
+        appearance: &SidebarAppearance,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        let scale = appearance.scale;
+        let label = item["label"].as_str().unwrap_or("").to_owned();
+        let command = item.get("command").cloned();
+        let children = item.get("children").cloned();
+        let button_owner = super::menus::MenuOwner::default();
+        let trigger_id = format!("project:{group_id}:{label}");
+        // CDXC:AgentLauncher 2026-09-18 DECISION:
+        // User: no gap between the last-used agent button and the Select agent chevron; the two halves join into one split button like the React header (24px action, 17px chevron, only the outer corners rounded).
+        let split = item["split"].as_str();
+        let image = item["imageDataUrl"].as_str().and_then(|value| {
+            super::images::agent_image(value, item["agentIcon"].as_str(), appearance.light)
+        });
+        let glyph = match image {
+            Some(image) => img(image).size(px(14.0 * scale)).into_any_element(),
+            None => gpui::svg()
+                .path(gpui_sidebar_command_icon_asset_path(item["icon"].as_str()))
+                .size(px(14.0 * scale))
+                .text_color(appearance.muted)
+                .into_any_element(),
+        };
+        div()
+            .on_prepaint(super::menus::record_menu_owner(&button_owner))
+            .id(format!("native-project-action-{group_id}-{index}"))
+            .role(gpui::Role::Button)
+            .aria_label(label.clone())
+            .h(px(22.0 * scale))
+            .w(px(match split {
+                Some("start") => 24.0,
+                Some("end") => 17.0,
+                _ => 22.0,
+            } * scale))
+            .flex()
+            .items_center()
+            .justify_center()
+            .map(|button| match split {
+                Some("start") => button.rounded_l(px(4.0 * scale)),
+                Some("end") => button.rounded_r(px(4.0 * scale)).ml(px(-2.0 * scale)),
+                _ => button.rounded(px(4.0 * scale)),
+            })
+            .cursor_pointer()
+            .hover(|button| button.bg(appearance.hover))
+            .child(glyph)
+            .when(
+                self.native_sidebar.pointer_inside
+                    && self.native_sidebar.menu.is_none()
+                    && !cx.has_active_drag(),
+                |row| {
+                    // CDXC:Sidebar 2026-09-23 DECISION: User: header button tooltips "appear below and aligned to the left not to the right (so they stay within the bounds of the sidebar)". The bubble's right edge lines up with the button and it grows leftward; the session card's buttons (hover_actions.rs) do the same.
+                    // The binding is read here, not in gx-core, so it follows the user's Settings > Hotkeys.
+                    let tooltip = match item["hotkey"]
+                        .as_str()
+                        .and_then(crate::app::hotkeys::gpui_configured_hotkey_label)
+                    {
+                        Some(shortcut) => format!("{label} ({shortcut})"),
+                        None => label.clone(),
+                    };
+                    row.managed_discrete_tooltip_with_placement(
+                        ManagedTooltipPlacement::BelowLeft,
+                        appearance.tooltip_delay,
+                        move |window, cx| {
+                            super::tooltips::sidebar_style_tooltip(tooltip.clone(), window, cx)
+                        },
+                    )
+                },
+            )
+            .on_click(
+                cx.listener(move |app, event: &gpui::ClickEvent, window, cx| {
+                    cx.stop_propagation();
+                    if let Some(children) = &children {
+                        Self::show_native_sidebar_menu_hung(
+                            children,
+                            header_bounds.get(),
+                            button_owner.get(),
+                            Some((trigger_id.clone(), super::menus::press_position(event))),
+                            event.position(),
+                            scale,
+                            window,
+                            cx,
+                        );
+                    } else if let Some(command) = &command {
+                        app.dispatch_native_sidebar_ui(command.clone(), cx);
+                    }
+                }),
+            )
             .into_any_element()
     }
 }

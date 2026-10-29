@@ -206,6 +206,7 @@ impl GhostexGpuiApp {
                 .children(folded_dots))
                 .children(self.render_native_session_work_chips(session, indent, tooltip_span, appearance, cx))
                 .children(self.render_native_session_link_line(session, indent, tooltip_span, appearance, cx))
+                .children(self.render_two_column_card_meta(session, indent, appearance))
                 .when(can_drag && self.native_sidebar.menu.is_none(), |row| row.sidebar_drag_source(dragged, cx))
 .sidebar_drop_target("session", drag_id, Some(drag_group_id), cx)
                 .on_mouse_down(MouseButton::Middle, |_, window, _| {

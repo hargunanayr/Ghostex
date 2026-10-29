@@ -114,7 +114,7 @@ All are no-ops for native builds; `cargo check --bins` of the desktop crate pass
 - Colour emoji draw as a missing glyph; SVGs with `color(display-p3 ...)` fills fall back to black in resvg.
 - The terminal has no context menu, and Cmd+C / Cmd+V go through gpui_web's clipboard, which cannot read outside a paste event.
 - A terminal attached here is a visible zmx client with its own grid, so a desktop pane showing the same session reflows while both are open.
-- Settings are empty (gxserver has no settings read), so the chat, the HUD and the menus use their defaults for theme, zoom, width, the default agent view and the Open In targets. A test can hand the page some with `?settings=<url-encoded JSON object>` (for example `{"sessionChatTheme":"light","markedHandovers":true,"markedHandoversStyle":"badge"}`), which `lib.rs` installs before the app starts.
+- Settings are empty (gxserver has no settings read), so the chat, the HUD and the menus use their defaults for theme, zoom, width, the default agent view and the Open In targets. A test can hand the page some with `?settings=<url-encoded JSON object>` (for example `{"sessionChatTheme":"light","markedHandovers":true,"markedHandoversStyle":"badge"}`), which `lib.rs` installs before the app starts; the sidebar HUD is composed from the same object (for example `{"sidebarLayout":"twoColumns"}` draws the two-column sidebar).
 - Remote machines are not drawn: the page reaches only the daemon that served it.
 - The commit review and every other CEF-only dialog answer with a toast; Commit, Push and Create PR need the review, so the Git menu's commit flow is the desktop's for now. Sync, Release and the Git workflows that start an agent run.
 

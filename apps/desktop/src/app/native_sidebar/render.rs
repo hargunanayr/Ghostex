@@ -51,6 +51,11 @@ impl GhostexGpuiApp {
         let (space_offset, space_opacity) = self.native_sidebar.space_gesture.presentation();
         let appearance = SidebarAppearance::from_hud(&snapshot.hud, window);
         let sticky_clip_top = self.native_sticky_project_clip_top(&content, &appearance);
+        // The two-column layout takes the list's slot; the rows above and below it stay.
+        let two_column = super::two_column::two_column_enabled(&content);
+        self.native_sidebar.two_column.active = two_column;
+        let two_column_body = two_column
+            .then(|| self.render_native_sidebar_two_column(&content, &snapshot, &appearance, cx));
         // Built once per frame for the Commands row's button and whichever strip can draw: the
         // pinned one and the peek are exclusive (`sidebar_usage_visible`).
         let usage_meters = self.account_usage_meters();
@@ -143,7 +148,13 @@ impl GhostexGpuiApp {
             .font_family(crate::ui_fonts::UI_FONT)
             .font_weight(FontWeight::LIGHT)
             .child(self.render_native_sidebar_navigation(&appearance, false, usage_meter_count, cx))
-            .child(self.render_native_sidebar_selectors(&snapshot, &appearance, cx))
+            // The two-column layout draws the machine tabs and the Spaces row at the foot of its
+            // project column (two_column/nav.rs); the empty slot keeps the list the third child.
+            .child(if two_column {
+                div().into_any_element()
+            } else {
+                self.render_native_sidebar_selectors(&snapshot, &appearance, cx)
+            })
             /*
             The list and its bottom fade ramp are one child on purpose: the
             `on_children_prepainted` above measures the sidebar from its fourth
@@ -155,166 +166,187 @@ impl GhostexGpuiApp {
             took its full content height, never clipped and never scrolled, and the session rows
             painted straight over the usage strip and the Commands row below it.
             */
-            .child(
-                v_flex()
-                    .relative()
-                    .w_full()
-                    .flex_1()
-                    .min_h_0()
-                    .child(crate::app::element::clip_above(
-                        sticky_clip_top,
-                        v_flex()
-                            .on_children_prepainted(move |_, window, cx| {
-                                view.update(cx, |app, cx| {
-                                    app.update_native_sidebar_scroll(window, cx);
-                                    app.update_native_space_transition(window, cx);
-                                    // The store's own request wins over the publish's.
-                                    //
-                                    // CDXC:Projects 2026-09-21 WHY:
-                                    // `ui.renameRequest` used to be the sidebar page's, carried
-                                    // here on every snapshot. Since M5 piece 7d the CREATE is the
-                                    // store's (a project dropped onto New Project Group mints the
-                                    // collection in Rust), so the page never learns that collection
-                                    // exists and its snapshot carries nothing. Both are read, newest
-                                    // first, because the page still creates collections from its own
-                                    // menus until that path moves too.
-                                    if let Some(request) =
-                                        app.gx_store_pending_collection_rename().or_else(|| {
-                                            app.native_sidebar.snapshot.as_ref().and_then(
-                                                |snapshot| snapshot.rename_request.clone(),
-                                            )
-                                        })
-                                        && app.native_sidebar.handled_rename
-                                            != Some(request.request_id)
-                                    {
-                                        app.native_sidebar.handled_rename =
-                                            Some(request.request_id);
-                                        cx.defer_in(window, move |app, window, cx| {
-                                            app.begin_native_collection_rename(
-                                                &request.collection_id,
-                                                window,
-                                                cx,
-                                            )
-                                        });
-                                    }
-                                })
-                            })
-                            .id("native-sidebar-scroll")
-                            .w_full()
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_y_scroll()
-                            .track_scroll(&self.native_sidebar.scroll)
-                            .on_scroll_wheel(cx.listener(|app, _, _, cx| {
-                                app.native_sidebar.scroll_animation = None;
-                                app.native_sidebar_scroll_wheel_moved(cx);
-                            }))
-                            .on_mouse_down(
-                                gpui::MouseButton::Left,
-                                cx.listener(|app, event: &gpui::MouseDownEvent, _, cx| {
-                                    app.begin_native_space_mouse_drag(event, cx)
-                                }),
-                            )
-                            .child(
-                                v_flex()
-                                    // Every block but the trailing ungroup drop zone, which is empty list space.
-                                    .on_children_prepainted(move |bounds, _, cx| {
-                                        blocks_view.update(cx, |app, _| {
-                                            app.native_sidebar.space_gesture.set_list_blocks(
-                                                &bounds[..bounds.len().saturating_sub(1)],
-                                            )
-                                        })
-                                    })
-                                    .w_full()
-                                    .pl(px(6.0 * appearance.scale))
-                                    .pr(px(2.0 * appearance.scale))
-                                    .relative()
-                                    .left(px(space_offset * appearance.scale))
-                                    .opacity(space_opacity)
-                                    .when(content.automations_row, |column| {
-                                        column.child(self.render_native_sidebar_automations_row(
-                                            content.automations_today,
-                                            &appearance,
-                                            cx,
-                                        ))
-                                    })
-                                    .when(
-                                        content.order.is_empty()
-                                            && content.machine_notice.is_none(),
-                                        |column| {
-                                            column.child(self.render_native_sidebar_empty(
-                                                &content,
-                                                &appearance,
-                                                cx,
-                                            ))
-                                        },
-                                    )
-                                    .children(content.order.iter().filter_map(|item| {
-                                        if item.kind == "collection" {
-                                            content
-                                                .collections
-                                                .iter()
-                                                .find(|collection| {
-                                                    collection.collection_id == item.id
-                                                })
-                                                .map(|collection| {
-                                                    self.render_native_collection(
-                                                        collection,
-                                                        &content,
-                                                        &appearance,
-                                                        cx,
-                                                    )
-                                                })
-                                        } else {
-                                            content
-                                                .groups
-                                                .iter()
-                                                .find(|group| group.group_id == item.id)
-                                                .filter(|group| !session_groups.nests(group))
-                                                .map(|group| {
-                                                    // CDXC:Spaces 2026-10-06 WHY: padding, not a margin, so this block's measured bounds (where a press is a row's and not the empty list space that starts a Space drag) cover the project header's box, which reaches left over its chevron; as a margin, a click on the chevron armed the Space drag and showed the grabbing hand.
-                                                    div()
-                                                        .pl(px(18.0 * appearance.scale))
-                                                        .mr(px(5.0 * appearance.scale))
-                                                        .mb(px(10.0 * appearance.scale))
-                                                        .child(
-                                                            self.render_native_sidebar_group(
-                                                                group,
-                                                                session_groups
-                                                                    .children(&group.group_id),
-                                                                &content.hud,
-                                                                &appearance,
-                                                                cx,
-                                                            ),
-                                                        )
-                                                        .into_any_element()
-                                                })
+            .when_some(two_column_body, |root, body| {
+                root.child(
+                    v_flex()
+                        .relative()
+                        .w_full()
+                        .flex_1()
+                        .min_h_0()
+                        .child(body)
+                        .when_some(content.machine_notice.as_ref(), |list, notice| {
+                            list.child(self.render_native_sidebar_machine_notice(
+                                notice,
+                                &appearance,
+                                cx,
+                            ))
+                        }),
+                )
+            })
+            .when(!two_column, |root| {
+                root.child(
+                    v_flex()
+                        .relative()
+                        .w_full()
+                        .flex_1()
+                        .min_h_0()
+                        .child(crate::app::element::clip_above(
+                            sticky_clip_top,
+                            v_flex()
+                                .on_children_prepainted(move |_, window, cx| {
+                                    view.update(cx, |app, cx| {
+                                        app.update_native_sidebar_scroll(window, cx);
+                                        app.update_native_space_transition(window, cx);
+                                        // The store's own request wins over the publish's.
+                                        //
+                                        // CDXC:Projects 2026-09-21 WHY:
+                                        // `ui.renameRequest` used to be the sidebar page's, carried
+                                        // here on every snapshot. Since M5 piece 7d the CREATE is the
+                                        // store's (a project dropped onto New Project Group mints the
+                                        // collection in Rust), so the page never learns that collection
+                                        // exists and its snapshot carries nothing. Both are read, newest
+                                        // first, because the page still creates collections from its own
+                                        // menus until that path moves too.
+                                        if let Some(request) =
+                                            app.gx_store_pending_collection_rename().or_else(|| {
+                                                app.native_sidebar.snapshot.as_ref().and_then(
+                                                    |snapshot| snapshot.rename_request.clone(),
+                                                )
+                                            })
+                                            && app.native_sidebar.handled_rename
+                                                != Some(request.request_id)
+                                        {
+                                            app.native_sidebar.handled_rename =
+                                                Some(request.request_id);
+                                            cx.defer_in(window, move |app, window, cx| {
+                                                app.begin_native_collection_rename(
+                                                    &request.collection_id,
+                                                    window,
+                                                    cx,
+                                                )
+                                            });
                                         }
-                                    }))
-                                    .child(
-                                        div()
-                                            .id("native-sidebar-ungroup-drop")
-                                            .h(px(24.0 * appearance.scale))
-                                            .w_full()
-                                            .flex_shrink_0()
-                                            .sidebar_drop_target(
-                                                "ungroup",
-                                                String::new(),
-                                                None,
-                                                cx,
-                                            ),
-                                    ),
-                            ),
-                    ))
-                    .child(self.render_native_sidebar_list_fade(&appearance))
-                    .when_some(content.machine_notice.as_ref(), |list, notice| {
-                        list.child(self.render_native_sidebar_machine_notice(
-                            notice,
-                            &appearance,
-                            cx,
+                                    })
+                                })
+                                .id("native-sidebar-scroll")
+                                .w_full()
+                                .flex_1()
+                                .min_h_0()
+                                .overflow_y_scroll()
+                                .track_scroll(&self.native_sidebar.scroll)
+                                .on_scroll_wheel(cx.listener(|app, _, _, cx| {
+                                    app.native_sidebar.scroll_animation = None;
+                                    app.native_sidebar_scroll_wheel_moved(cx);
+                                }))
+                                .on_mouse_down(
+                                    gpui::MouseButton::Left,
+                                    cx.listener(|app, event: &gpui::MouseDownEvent, _, cx| {
+                                        app.begin_native_space_mouse_drag(event, cx)
+                                    }),
+                                )
+                                .child(
+                                    v_flex()
+                                        // Every block but the trailing ungroup drop zone, which is empty list space.
+                                        .on_children_prepainted(move |bounds, _, cx| {
+                                            blocks_view.update(cx, |app, _| {
+                                                app.native_sidebar.space_gesture.set_list_blocks(
+                                                    &bounds[..bounds.len().saturating_sub(1)],
+                                                )
+                                            })
+                                        })
+                                        .w_full()
+                                        .pl(px(6.0 * appearance.scale))
+                                        .pr(px(2.0 * appearance.scale))
+                                        .relative()
+                                        .left(px(space_offset * appearance.scale))
+                                        .opacity(space_opacity)
+                                        .when(content.automations_row, |column| {
+                                            column.child(
+                                                self.render_native_sidebar_automations_row(
+                                                    content.automations_today,
+                                                    &appearance,
+                                                    cx,
+                                                ),
+                                            )
+                                        })
+                                        .when(
+                                            content.order.is_empty()
+                                                && content.machine_notice.is_none(),
+                                            |column| {
+                                                column.child(self.render_native_sidebar_empty(
+                                                    &content,
+                                                    &appearance,
+                                                    cx,
+                                                ))
+                                            },
+                                        )
+                                        .children(content.order.iter().filter_map(|item| {
+                                            if item.kind == "collection" {
+                                                content
+                                                    .collections
+                                                    .iter()
+                                                    .find(|collection| {
+                                                        collection.collection_id == item.id
+                                                    })
+                                                    .map(|collection| {
+                                                        self.render_native_collection(
+                                                            collection,
+                                                            &content,
+                                                            &appearance,
+                                                            cx,
+                                                        )
+                                                    })
+                                            } else {
+                                                content
+                                                    .groups
+                                                    .iter()
+                                                    .find(|group| group.group_id == item.id)
+                                                    .filter(|group| !session_groups.nests(group))
+                                                    .map(|group| {
+                                                        // CDXC:Spaces 2026-10-06 WHY: padding, not a margin, so this block's measured bounds (where a press is a row's and not the empty list space that starts a Space drag) cover the project header's box, which reaches left over its chevron; as a margin, a click on the chevron armed the Space drag and showed the grabbing hand.
+                                                        div()
+                                                            .pl(px(18.0 * appearance.scale))
+                                                            .mr(px(5.0 * appearance.scale))
+                                                            .mb(px(10.0 * appearance.scale))
+                                                            .child(
+                                                                self.render_native_sidebar_group(
+                                                                    group,
+                                                                    session_groups
+                                                                        .children(&group.group_id),
+                                                                    &content.hud,
+                                                                    &appearance,
+                                                                    cx,
+                                                                ),
+                                                            )
+                                                            .into_any_element()
+                                                    })
+                                            }
+                                        }))
+                                        .child(
+                                            div()
+                                                .id("native-sidebar-ungroup-drop")
+                                                .h(px(24.0 * appearance.scale))
+                                                .w_full()
+                                                .flex_shrink_0()
+                                                .sidebar_drop_target(
+                                                    "ungroup",
+                                                    String::new(),
+                                                    None,
+                                                    cx,
+                                                ),
+                                        ),
+                                ),
                         ))
-                    }),
-            )
+                        .child(self.render_native_sidebar_list_fade(&appearance))
+                        .when_some(content.machine_notice.as_ref(), |list, notice| {
+                            list.child(self.render_native_sidebar_machine_notice(
+                                notice,
+                                &appearance,
+                                cx,
+                            ))
+                        }),
+                )
+            })
             /*
             The usage strip and the Commands row are one footer child on purpose:
             `on_children_prepainted` above measures the sidebar from its fourth
@@ -381,7 +413,11 @@ impl GhostexGpuiApp {
                 .absolute()
                 .inset_0(),
             )
-            .children(self.render_native_sticky_project(&content, &appearance, cx))
+            .children(
+                (!two_column)
+                    .then(|| self.render_native_sticky_project(&content, &appearance, cx))
+                    .flatten(),
+            )
             .children(self.render_native_sidebar_usage_peek(
                 &appearance,
                 peek_usage_meters,

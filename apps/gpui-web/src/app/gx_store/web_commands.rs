@@ -223,6 +223,43 @@ impl GhostexGpuiApp {
         }
     }
 
+    /// The desktop's `gx_store_activate_project` (gx_store/project_activation.rs), which the
+    /// two-column sidebar's project rows call: the page opens the project's most recently used
+    /// session from the list it holds. It creates no agent in a project without one.
+    pub(crate) fn gx_store_activate_project(
+        &mut self,
+        project_id: &str,
+        cx: &mut gpui::Context<Self>,
+    ) -> bool {
+        let Some(project) = ghostex_gx_core::ProjectKey::parse_workspace_project_id(project_id)
+        else {
+            return false;
+        };
+        let group_id = project.to_sidebar_group_id();
+        let row = self
+            .native_sidebar
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| {
+                snapshot
+                    .groups
+                    .iter()
+                    .find(|group| group.group_id == group_id)
+            })
+            .and_then(|group| {
+                group
+                    .sessions
+                    .iter()
+                    .filter(|session| !session.is_browser())
+                    .max_by(|a, b| a.last_interaction_at.cmp(&b.last_interaction_at))
+                    .map(|session| session.session_id.clone())
+            });
+        if let Some(row) = row {
+            self.web_focus_row(&row, cx);
+        }
+        true
+    }
+
     fn web_focus_row(&mut self, row_id: &str, cx: &mut gpui::Context<Self>) {
         let Some(session) = self.gx_store.session_key_for_row(row_id) else {
             return;

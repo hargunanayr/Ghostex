@@ -38,6 +38,7 @@ mod space_landing;
 mod space_sleep;
 mod space_switch;
 pub(crate) mod spaces;
+mod status_buckets;
 pub(crate) mod tags;
 pub(crate) mod text;
 mod threads;
@@ -80,6 +81,10 @@ pub use space_switch::{
     plan_space_switch_restore, plan_workspace_switch_restore, SpaceSwitchFocus,
 };
 pub use spaces::{Space, SpacesState, OTHER_SPACE_ID};
+pub use status_buckets::{
+    family_bucket, normalize_sidebar_layout, SessionBucket, SessionBucketFacts, StatusFilter,
+    SIDEBAR_LAYOUT_CLASSIC, SIDEBAR_LAYOUT_SETTING_KEY, SIDEBAR_LAYOUT_TWO_COLUMNS,
+};
 pub use tags::{TagListItem, TagListItemKind, TagPresentation, UNTAGGED_TAG_FILTER};
 pub use view::{
     rename_shake_key, CollectionView, CoordinatorBadge, CoordinatorBadgeTone, DelayedSendView,
