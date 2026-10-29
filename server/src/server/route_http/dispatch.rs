@@ -284,6 +284,10 @@ pub(in crate::server) async fn route_http(
         Ok(response) => return response,
         Err(request) => request,
     };
+    let request = match route_session_board_http(request).await {
+        Ok(response) => return response,
+        Err(request) => request,
+    };
     let request = match route_sidebar_http(request).await {
         Ok(response) => return response,
         Err(request) => request,

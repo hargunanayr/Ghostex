@@ -216,6 +216,7 @@ pub(crate) mod session_files_links;
 pub(crate) mod session_links;
 pub mod session_git_status;
 pub mod session_keep_awake;
+pub(crate) mod session_board;
 pub mod session_lifecycle;
 pub mod session_parking;
 pub mod session_status;

@@ -343,6 +343,7 @@ pub(crate) fn create_agent_session_params_for_project(
     See `agents/drafts.rs` for what the marker means and where it is removed.
     */
     apply_draft_session_create_param(params, &mut runtime_settings);
+    crate::session_board::apply_pending_task_create_param(params, &mut runtime_settings);
     crate::empty_session_cleanup::apply_new_session_marker(params, &mut runtime_settings);
 
     let mut runtime_relevant = Map::new();

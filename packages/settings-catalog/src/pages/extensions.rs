@@ -44,6 +44,7 @@ pub(crate) fn official(platform: Platform) -> Section {
         row("code", "Code editor", "Explore, edit, and search your project in a familiar, full-featured workspace without ever leaving Ghostex."),
         row("browser", "Browser", "Open websites alongside your project and keep useful pages organized without leaving Ghostex."),
         row("kanban", "Kanban", "Plan upcoming work and track task progress at a glance."),
+        row("sessionBoard", "Board", "Every thread of the Space on one board: Pending, In progress, Review and Completed, with tasks you start later. Opened from the Board button at the top left."),
         row("automate", "Automate", "Turn repeatable project routines into simple workflows you can run whenever you need them."),
         row("bots", "Bots", "Swap the sidebar to your Hermes agents: one row each, with a new session one click away. Needs the Hermes CLI."),
         row("botAutomations", "Bot automations", "A feed of every Hermes cron run, one channel per job, opened from the Bots sidebar. Needs Bots."),

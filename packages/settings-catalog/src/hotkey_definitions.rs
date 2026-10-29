@@ -380,6 +380,18 @@ pub const HOTKEY_DEFINITIONS: &[HotkeyDefinition] = &[
         retired_default_keys: &[],
         action: J::Obj(&[("id", J::Str("expandViewPanelFully")), ("kind", J::Str("expandViewPanelFully"))]),
     },
+    // CDXC:SessionBoard 2026-10-28 DECISION:
+    // User (Ryan): Cmd+Shift+B switches between the Board and the chat view, what the Board button next to Toggle sidebar does. It is window chrome, so it wins from every responder like Toggle View Panel, the Code editor's own Run Build Task included.
+    HotkeyDefinition {
+        id: "toggleSessionBoard",
+        title: "Toggle Board",
+        description: "Switch between the Board and your chats.",
+        default_key: "cmd+shift+b",
+        windows_linux_default_key: None,
+        alternate_default_keys: &[],
+        retired_default_keys: &[],
+        action: J::Obj(&[("id", J::Str("toggleSessionBoard")), ("kind", J::Str("toggleSessionBoard"))]),
+    },
     // Ctrl+R is reverse history search in the terminal.
     HotkeyDefinition {
         id: "renameActiveSession",

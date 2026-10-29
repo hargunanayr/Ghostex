@@ -311,6 +311,29 @@ pub(crate) fn gpui_keystroke_from_shared_hotkey(key: &str) -> Option<String> {
     if !non_typing_key && !modifiers.iter().any(|modifier| *modifier != "shift") {
         return None;
     }
+    // CDXC:Hotkeys 2026-10-28 WHY:
+    // GPUI on macOS reports Shift with a digit or bracket as the typed symbol without Shift (Cmd+Option+Shift+1 arrives as `cmd-alt-!`), so a `cmd-alt-shift-1` binding never matched and Go to Space did nothing whenever the native router left the key to GPUI (chat and other GPUI focus). Bind the symbol the event carries, the reverse of the table in `gpui_native_hotkey_text`.
+    if cfg!(target_os = "macos") && shift {
+        let shifted = match key_token.as_str() {
+            "1" => Some("!"),
+            "2" => Some("@"),
+            "3" => Some("#"),
+            "4" => Some("$"),
+            "5" => Some("%"),
+            "6" => Some("^"),
+            "7" => Some("&"),
+            "8" => Some("*"),
+            "9" => Some("("),
+            "0" => Some(")"),
+            "[" => Some("{"),
+            "]" => Some("}"),
+            _ => None,
+        };
+        if let Some(shifted) = shifted {
+            modifiers.retain(|modifier| *modifier != "shift");
+            key_token = shifted.to_string();
+        }
+    }
     modifiers.push(&key_token);
     Some(modifiers.join("-"))
 }
@@ -355,6 +378,7 @@ pub(crate) const GPUI_DEFAULT_GHOSTEX_HOTKEYS: &[(&str, &str)] = &[
     ("toggleViewPanel", "cmd+alt+b"),
     ("expandViewPanel", "cmd+ctrl+e"),
     ("expandViewPanelFully", "cmd+ctrl+shift+e"),
+    ("toggleSessionBoard", "cmd+shift+b"),
     ("renameActiveSession", "cmd+r"),
     ("openBrowserPane", "cmd+t"),
     ("switchAgentsView", ""),
@@ -793,6 +817,7 @@ pub(crate) fn gpui_keyboard_owner_allows_hotkey(
         "toggleViewPanel"
             | "expandViewPanel"
             | "expandViewPanelFully"
+            | "toggleSessionBoard"
             | "toggleVoiceAgent"
             | "voiceCallAboutSession"
             | "holdToTalk"

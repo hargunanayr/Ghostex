@@ -67,6 +67,8 @@ pub(crate) fn apply_draft_session_create_param(
 }
 
 pub(crate) fn clear_draft_status(runtime_settings: &mut Map<String, Value>) -> bool {
+    // CDXC:SessionBoard 2026-10-28 SEE-ALSO: a Board task's prompt leaves with the draft marker on every promotion path (session_board/pending_task.rs).
+    crate::session_board::clear_pending_task(runtime_settings);
     runtime_settings.remove(DRAFT_STATUS_KEY).is_some()
 }
 

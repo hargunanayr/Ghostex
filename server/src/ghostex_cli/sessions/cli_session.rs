@@ -105,6 +105,9 @@ pub(super) fn to_cli_session(
         "snoozedUntil",
         &[p("snoozedUntil"), s("snoozedUntil")],
     );
+    insert_js(&mut map, "completedAt", &[p("completedAt"), s("completedAt")]);
+    insert_js(&mut map, "pendingTaskPreview", &[p("pendingTaskPreview")]);
+    insert_js(&mut map, "pendingTaskStartedAt", &[p("pendingTaskStartedAt")]);
     /*
      * CDXC:Git 2026-07-29-00:00:
      * Branch / +n −n / PR badge is resolved once per session cwd by the daemon,

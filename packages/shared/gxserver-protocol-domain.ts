@@ -370,6 +370,8 @@ export interface GxserverSessionDomainState {
   sidebarOrder?: number;
   snoozedAt?: string;
   snoozedUntil?: string;
+  /** When the user marked the thread completed on the Board. */
+  completedAt?: string;
   surface: GxserverSessionSurface;
   title: string;
   updatedAt: string;

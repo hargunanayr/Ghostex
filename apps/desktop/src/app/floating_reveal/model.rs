@@ -228,7 +228,9 @@ impl GhostexGpuiApp {
     pub(crate) fn floating_reveal_available(&self) -> FloatingRevealContent {
         FloatingRevealContent {
             sidebar: self.sidebar_collapsed,
-            agents_column: self.view_panel_maximized(),
+            // Under the Board the sessions column is not folded away but covered; a sidebar row
+            // opens its thread in the Board's chat panel instead.
+            agents_column: self.view_panel_maximized() && !self.session_board_showing(),
         }
     }
 

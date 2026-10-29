@@ -161,6 +161,14 @@ impl GhostexGpuiApp {
                         self.render_workarea_header_agents_toggle(Some(appearance.muted), cx),
                     ),
                 )
+                // The Board button, right of the Agents Panel one in both places.
+                .when(self.session_board_enabled(), |row| {
+                    row.child(
+                        div().flex_shrink_0().ml(px(4.0 - 4.0 * scale)).child(
+                            self.render_workarea_header_board_toggle(Some(appearance.muted), cx),
+                        ),
+                    )
+                })
                 // The negative margin cancels the row gap this zero-width spacer adds, so the
                 // buttons right of it keep their even 38px slots.
                 .child(div().flex_1().mr(px(-4.0 * scale)))

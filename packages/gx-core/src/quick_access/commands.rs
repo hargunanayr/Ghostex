@@ -561,6 +561,7 @@ fn hotkey_action_icon(action: &J) -> &'static str {
         "toggleSidebarCollapsed" => "layout-sidebar",
         "toggleViewPanel" => "layout-sidebar-right-expand",
         "expandViewPanel" | "expandViewPanelFully" => "arrows-diagonal",
+        "toggleSessionBoard" => "layout-kanban",
         "renameActiveSession" => "edit",
         "focusedPaneAction" => focused_pane_icon(text("focusedPaneAction")),
         "focusAdjacentGroup" | "cyclePaneTab" => {

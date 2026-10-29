@@ -99,6 +99,7 @@ mod renderer_commands;
 mod rpc;
 mod rpc_types;
 mod runtime_facts;
+mod session_board;
 mod session_links;
 mod session_walk;
 mod sidebar_accounts;
@@ -165,6 +166,7 @@ pub(crate) use host::GxStoreHost;
 pub(crate) use primary_launcher::read_primary_agent_launcher_id;
 #[allow(unused_imports)] // the first callers arrive with the runtime port's family commits
 pub(crate) use rpc::{gx_rpc, gx_rpc_with_timeout};
+pub(crate) use session_board::{BoardAgentOption, BoardModelOption};
 #[allow(unused_imports)]
 pub(crate) use rpc_types::GxRpcError;
 pub(crate) use workspace_groups::note_native_host_message_dropped;

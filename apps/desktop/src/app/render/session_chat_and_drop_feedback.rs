@@ -42,6 +42,7 @@ impl GhostexGpuiApp {
         self.native_kanban_notify_appearance(cx);
         self.native_automate_notify_appearance(cx);
         self.native_bot_feed_notify_appearance(cx);
+        self.native_session_board_notify_appearance(cx);
     }
 
     pub(crate) fn render_agents_session_chat_body(

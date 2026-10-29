@@ -294,6 +294,7 @@ impl GhostexGpuiApp {
         self.native_kanban_notify_appearance(cx);
         self.native_automate_notify_appearance(cx);
         self.native_bot_feed_notify_appearance(cx);
+        self.native_session_board_notify_appearance(cx);
         self.native_docs_notify_appearance(cx);
         self.refresh_sidebar_runtime_settings_from_shared_settings(settings_snapshot, cx);
         self.coerce_active_mode_to_available_project_context(cx);

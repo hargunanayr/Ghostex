@@ -583,6 +583,12 @@ export interface GxserverPresentationSession {
   sidebarOrder?: number;
   snoozedAt?: string;
   snoozedUntil?: string;
+  /** When the user marked the thread completed on the Board; cleared when its agent works again. */
+  completedAt?: string;
+  /** A Board task's prompt cut for the card, while the task waits in Pending. */
+  pendingTaskPreview?: string;
+  /** When Start was pressed on a Board task that has not reached its agent yet. */
+  pendingTaskStartedAt?: string;
   sortKey: string;
   subtitle?: string;
   surface: GxserverSessionSurface;

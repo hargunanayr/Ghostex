@@ -289,6 +289,8 @@ fn is_known_command(name: &str) -> bool {
         "paired-device-seen",
         "pin-session",
         "park-session",
+        "complete-session",
+        "start-task",
         "issues",
         "work-mode",
         "workspace",
@@ -664,6 +666,18 @@ fn run_command(name: &str, args: &[String]) -> CliResult<()> {
         "park-session" => run_bridge_action(
             "parkSession",
             Parser::SessionBoolean("parked"),
+            fail_on_not_ok,
+            args,
+        ),
+        "complete-session" => run_bridge_action(
+            "completeSession",
+            Parser::SessionBoolean("completed"),
+            fail_on_not_ok,
+            args,
+        ),
+        "start-task" => run_bridge_action(
+            "startSessionTask",
+            Parser::SessionSelector,
             fail_on_not_ok,
             args,
         ),

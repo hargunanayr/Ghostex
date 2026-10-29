@@ -64,7 +64,7 @@ impl GhostexGpuiApp {
         self.gx_store.runtime_facts.hud.clone()
     }
 
-    pub(super) fn gx_store_title_generation_settings(&self) -> TitleGenerationSettings {
+    pub(crate) fn gx_store_title_generation_settings(&self) -> TitleGenerationSettings {
         let snapshot = shared_settings::shared_sidebar_settings_snapshot();
         TitleGenerationSettings::from_settings(&Value::Object(snapshot.object().clone()))
     }

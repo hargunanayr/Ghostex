@@ -172,6 +172,7 @@ pub(crate) fn official_icon(id: &str) -> &'static str {
         "workspaces" => "modals/settings/briefcase.svg",
         "posthog" => "modals/settings/chart-bar.svg",
         "automate" => "modals/settings/bolt.svg",
+        "sessionBoard" => "modals/settings/layout-kanban.svg",
         "botAutomations" => "modals/settings/rss.svg",
         "bots" => "modals/settings/robot.svg",
         "code" | "storybook" => "modals/settings/code-dots.svg",

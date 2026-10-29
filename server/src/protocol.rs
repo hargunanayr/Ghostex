@@ -668,6 +668,12 @@ pub fn endpoint_for(path: &str) -> Option<EndpointDescriptor> {
         | "/api/unsettleSession"
         | "/api/snoozeSession"
         | "/api/unsnoozeSession"
+        // CDXC:SessionBoard 2026-10-28 WHY: remote-allowed like the settle and sleep RPCs: a Board showing a remote machine's threads completes, starts and edits them on that machine, and the calls carry only project and session ids plus a bounded task text.
+        | "/api/completeSession"
+        | "/api/completeSessions"
+        | "/api/startSessionTask"
+        | "/api/updateSessionTask"
+        | "/api/readSessionTask"
         | "/api/runGitAction"
         | "/api/readProjectGitState"
         | "/api/runGitHubAction"

@@ -298,6 +298,9 @@ impl GhostexGpuiApp {
                 "gpui.sidebar.focusRequested",
                 json!({"sessionId": command["sessionId"]}),
             );
+            // Under the Board the focused thread opens in its chat panel
+            // (native_session_board/host.rs); the focus itself goes on below.
+            self.session_board_sidebar_focus(&command, cx);
         }
         // A click on a row of a REMOTE machine: the store acknowledges the attention, performs the same `openRemoteSessionTerminal` the old runtime posted, and the
         // open's own tab selection moves the remote focus marks, so the command goes no further

@@ -146,6 +146,17 @@ pub(crate) const SUPPLEMENTAL_ROWS: &[Supplemental] = &[
         user_only: false,
     },
     Supplemental {
+        key: "sessionBoardHidden",
+        tab: EXTENSIONS,
+        group: None,
+        section: "official",
+        section_title: "Built-in",
+        title: "Hide Board",
+        subtitle: "Stop offering the Board, where every thread of the Space sits in Pending, In progress, Review or Completed, so its button next to Toggle sidebar is gone.",
+        options: &[],
+        user_only: false,
+    },
+    Supplemental {
         key: "automateViewTabHidden",
         tab: EXTENSIONS,
         group: None,

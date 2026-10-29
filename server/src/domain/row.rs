@@ -311,6 +311,7 @@ pub(crate) struct SessionRow {
     agent_id: Option<String>,
     attention_rules_json: String,
     command_id: Option<String>,
+    completed_at: Option<String>,
     completion_rules_json: String,
     created_at: String,
     cwd: Option<String>,
@@ -374,6 +375,7 @@ pub(crate) fn session_row_from_sql(row: &rusqlite::Row<'_>) -> rusqlite::Result<
         settled_override_at: row.get("settledOverrideAt")?,
         snoozed_at: row.get("snoozedAt")?,
         snoozed_until: row.get("snoozedUntil")?,
+        completed_at: row.get("completedAt")?,
     })
 }
 
@@ -516,6 +518,7 @@ pub(crate) fn session_from_row(server_id: &str, row: SessionRow) -> DomainResult
     }
     insert_optional_trimmed_string(&mut session, "snoozedAt", row.snoozed_at);
     insert_optional_trimmed_string(&mut session, "snoozedUntil", row.snoozed_until);
+    insert_optional_trimmed_string(&mut session, "completedAt", row.completed_at);
     session.insert(
         "surface".to_string(),
         Value::String(resolve_surface(None, &launch_settings, &runtime_settings)),
@@ -684,6 +687,7 @@ pub(crate) fn session_insert_params(
         sql_optional_text(optional_string(object, "snoozedAt")),
         sql_optional_text(optional_string(object, "snoozedUntil")),
         sql_i64(bool_field(object, "isParked") as i64),
+        sql_optional_text(optional_string(object, "completedAt")),
     ];
     Ok(rusqlite::params_from_iter(values))
 }

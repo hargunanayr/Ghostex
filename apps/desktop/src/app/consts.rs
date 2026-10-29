@@ -409,6 +409,9 @@ pub(crate) const TITLEBAR_ICON_LAYOUT_SIDEBAR_LEFT_EXPAND: &str =
 
 pub(crate) const TITLEBAR_ICON_LAYOUT_BOARD_SPLIT: &str = "titlebar/layout-board-split.svg";
 
+/// The Board button beside Toggle sidebar (native_session_board/host.rs).
+pub(crate) const TITLEBAR_ICON_LAYOUT_KANBAN: &str = "titlebar/layout-kanban.svg";
+
 pub(crate) const TITLEBAR_ICON_LAYOUT_COLUMNS: &str = "titlebar/layout-columns.svg";
 
 pub(crate) const TITLEBAR_ICON_PANEL_BOTTOM: &str = "titlebar/panel-bottom.svg";

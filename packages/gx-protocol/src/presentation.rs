@@ -874,6 +874,15 @@ pub struct PresentationSession {
         skip_serializing_if = "is_false"
     )]
     pub is_draft: bool,
+    /// When the user marked the thread completed on the Board; cleared when its agent works again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<String>,
+    /// A Board task's prompt, cut for the card; present only while the task waits in Pending.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_task_preview: Option<String>,
+    /// When Start was pressed on a Board task that has not reached its agent yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_task_started_at: Option<String>,
 
     // Agent identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]

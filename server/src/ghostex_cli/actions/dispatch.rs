@@ -110,6 +110,10 @@ pub fn send_gxserver_cli_action(action: &str, payload: &Value, flags: &Flags) ->
             let params = with_resolved_gxserver_session_params(payload, flags)?;
             super::session_parking::set_parked(&params, flags)
         }
+        "completeSession" | "startSessionTask" => {
+            let params = with_resolved_gxserver_session_params(payload, flags)?;
+            rpc::call_gxserver_rpc(&format!("/api/{action}"), &params, flags)
+        }
         "pinSession" => {
             let mut object = payload.as_object().cloned().unwrap_or_default();
             set_or_remove(&mut object, "isPinned", payload.get("pinned").cloned());

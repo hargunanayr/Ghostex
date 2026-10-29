@@ -306,6 +306,10 @@ pub(crate) fn merge_session_update(
         let provider_state = normalize_zmx_provider_state(provider_state, &zmx_name);
         next.insert("providerState".to_string(), Value::Object(provider_state));
     }
+    update_optional_text_field(&mut next, input, crate::session_board::COMPLETED_AT_KEY);
+    if crate::session_board::clears_completion(current.get("runtimeSettings"), &runtime_settings) {
+        next.remove(crate::session_board::COMPLETED_AT_KEY);
+    }
     next.insert(
         "runtimeSettings".to_string(),
         Value::Object(runtime_settings),

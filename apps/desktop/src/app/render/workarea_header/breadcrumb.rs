@@ -103,6 +103,16 @@ impl GhostexGpuiApp {
                         .top(px(0.5))
                         .child(self.render_workarea_header_agents_toggle(None, cx)),
                 )
+                // The Board button follows them the same way (native_session_board/host.rs).
+                .when(self.session_board_enabled(), |this| {
+                    this.child(
+                        div()
+                            .relative()
+                            .ml(px(4.0))
+                            .top(px(0.5))
+                            .child(self.render_workarea_header_board_toggle(None, cx)),
+                    )
+                })
             })
             /*
             CDXC:Navigation 2026-08-19:

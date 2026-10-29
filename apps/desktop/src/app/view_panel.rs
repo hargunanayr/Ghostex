@@ -47,8 +47,12 @@ impl GhostexGpuiApp {
     /// sessions column, the column is on screen in a window of its own and every gate that reads
     /// this must say so, or the terminals and chats it just brought back would be reconciled as
     /// hidden the moment they appeared.
+    /// CDXC:SessionBoard 2026-10-28 WHY:
+    /// The Board is the third: it covers the whole workarea, so the column is off screen under it
+    /// whatever the panel shows (native_session_board/host.rs).
     pub(crate) fn agents_workspace_visible(&self) -> bool {
-        !self.view_panel_maximized() || self.floating_reveal_hosts_agents_column()
+        !self.session_board_showing()
+            && (!self.view_panel_maximized() || self.floating_reveal_hosts_agents_column())
     }
 
     /// CDXC:Workarea 2026-09-24 DECISION:

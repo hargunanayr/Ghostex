@@ -331,6 +331,16 @@ pub(crate) fn project_presentation_session(
     if session_is_draft(session) {
         output.insert("isDraft".to_string(), Value::Bool(true));
     }
+    // CDXC:SessionBoard 2026-10-28 WHY: every snapshot carries every session, so a Board task publishes its prompt cut for the card; the edit panel reads the whole prompt with /api/readSessionTask.
+    if let Some((preview, started_at)) = crate::session_board::pending_task_presentation(session) {
+        output.insert("pendingTaskPreview".to_string(), Value::String(preview));
+        insert_optional_string(&mut output, "pendingTaskStartedAt", started_at);
+    }
+    insert_optional_string(
+        &mut output,
+        "completedAt",
+        string_field(session, crate::session_board::COMPLETED_AT_KEY),
+    );
     output.insert("isFavorite".to_string(), Value::Bool(is_favorite(session)));
     /*
     CDXC:SessionTitles 2026-07-02-15:10:

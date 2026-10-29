@@ -711,8 +711,17 @@ impl GhostexGpuiApp {
         A chat page is visible exactly when its Agents pane is rendered, whatever the view panel
         shows, because that column is on screen in every view. This supersedes the 2026-08-02 rule
         that also enumerated the companion side pane's chat slots.
+        While the Board covers the workarea, the one chat on screen is its chat panel's, whatever
+        mode the thread's pane is in (native_session_board/chat_panel.rs).
         */
-        let visible_session_ids = if drag_active || !self.agents_workspace_visible() {
+        let visible_session_ids = if drag_active {
+            HashSet::new()
+        } else if self.session_board_showing() {
+            self.session_board_chat_target()
+                .map(|(_, session_id)| session_id)
+                .into_iter()
+                .collect::<HashSet<_>>()
+        } else if !self.agents_workspace_visible() {
             HashSet::new()
         } else {
             self.agents_workspace

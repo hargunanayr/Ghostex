@@ -13,7 +13,7 @@ impl DomainRepository<'_> {
     pub fn list_session_search_rows(&self) -> DomainResult<Vec<Value>> {
         let mut statement = self.db.prepare_cached(
             r#"
-                SELECT projectId, sessionId, kind, title, lifecycleState, zmxName, cwd, agentId, commandId, isPinned, isParked, isFavorite, restoredFromSessionId, restoredFromHistoryId, createdAt, updatedAt, lastActiveAt, sidebarOrder, sessionTag, settledAt, settledOverride, settledOverrideAt, snoozedAt, snoozedUntil,
+                SELECT projectId, sessionId, kind, title, lifecycleState, zmxName, cwd, agentId, commandId, isPinned, isParked, isFavorite, restoredFromSessionId, restoredFromHistoryId, createdAt, updatedAt, lastActiveAt, sidebarOrder, sessionTag, settledAt, settledOverride, settledOverrideAt, snoozedAt, snoozedUntil, completedAt,
                        providerStateJson,
                        CASE WHEN NOT json_valid(launchSettingsJson) THEN launchSettingsJson
                             WHEN json_type(launchSettingsJson) <> 'object' THEN launchSettingsJson

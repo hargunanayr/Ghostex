@@ -335,6 +335,7 @@ impl GhostexGpuiApp {
                 native_app_modal: None,
                 native_automate: None,
                 native_bot_feed: None,
+                native_session_board: Default::default(),
                 work_view: Default::default(),
                 new_thread_picker_window: None,
                 new_thread_picker: None,

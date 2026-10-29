@@ -142,8 +142,10 @@ impl GhostexGpuiApp {
             self.browser_surfaces.keys().copied().collect::<Vec<_>>(),
         );
 
+        // The Board covers the view panel the Browser is drawn in (native_session_board/host.rs).
+        let covered = self.session_board_showing();
         for (tab_id, surface) in &self.browser_surfaces {
-            let surface_visible = visible_tab_ids.contains(tab_id);
+            let surface_visible = !covered && visible_tab_ids.contains(tab_id);
             surface.update(cx, |surface, _| {
                 surface.set_visible(surface_visible);
             });

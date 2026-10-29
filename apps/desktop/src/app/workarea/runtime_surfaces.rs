@@ -96,6 +96,8 @@ impl GhostexGpuiApp {
             && !self.browser_tab_drag_active
             && !self.command_tab_drag_active
             && !self.workspace_tab_drag_active
+            // The Board covers the view panel (native_session_board/host.rs).
+            && !self.session_board_showing()
     }
 
     pub(crate) fn project_workarea_runtime_cef_surface_should_be_visible(

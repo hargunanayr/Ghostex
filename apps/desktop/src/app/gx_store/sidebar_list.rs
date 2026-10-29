@@ -554,6 +554,7 @@ impl GhostexGpuiApp {
         self.gx_store_leave_machine_outside_window_workspace(cx);
         self.keep_window_inside_workspace(cx);
         self.navigation_history_sidebar_changed(cx);
+        self.gx_store_session_board_store_changed(cx);
         // Every so often the same inputs are also built from scratch and the two lists compared:
         // this port's own cache invalidation, which has no second list to lean on since the page
         // was deleted (gx_store/sidebar_self_check.rs).

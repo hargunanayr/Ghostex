@@ -116,6 +116,7 @@ pub(super) fn parse_agent(rest: &[String], flags: &Flags) -> Value {
     set_or_remove(&mut map, "agentEffort", flag_json(flags, "effort"));
     set_or_remove(&mut map, "runOn", flag_json(flags, "runOn"));
     set_or_remove(&mut map, "prompt", flag_json(flags, "prompt"));
+    set_or_remove(&mut map, "task", flag_json(flags, "task"));
     Value::Object(map)
 }
 

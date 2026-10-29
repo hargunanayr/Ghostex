@@ -187,6 +187,28 @@ pub(super) fn create_gxserver_agent_session(payload: &Value, flags: &Flags) -> C
     if flags.truthy("deferStart") {
         params.insert("draft".to_string(), json!(true));
     }
+    // CDXC:SessionBoard 2026-10-28 SEE-ALSO: `--task` makes a Board task: a draft that waits in Pending with its prompt and no agent started, which `ghostex start-task` sends (server/src/session_board/pending_task.rs).
+    let task = match payload.get("task") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(task)) if !task.trim().is_empty() => Some(task.trim().to_string()),
+        Some(_) => {
+            return Err(CliError::Other(
+                "create-agent --task needs the task's prompt.".to_string(),
+            ))
+        }
+    };
+    if let Some(task) = task.as_deref() {
+        if payload.get("prompt").is_some_and(|prompt| !prompt.is_null()) {
+            return Err(CliError::Other(
+                "create-agent takes --task or --prompt, not both.".to_string(),
+            ));
+        }
+        params.insert("draft".to_string(), json!(true));
+        params.insert(
+            crate::session_board::PENDING_TASK_PROMPT_KEY.to_string(),
+            json!(task),
+        );
+    }
     // CDXC:Sessions 2026-10-09 SEE-ALSO: `--replace-empty-sessions` is the phone's new-session action; gxserver then closes the project's other fully empty sessions only when the `closeEmptySessionsOnNew` setting is on and the agent opens in Chat (server/src/empty_session_cleanup.rs). Agents and scripts leave it out.
     if flags.truthy("replaceEmptySessions") {
         params.insert(
@@ -240,7 +262,7 @@ pub(super) fn create_gxserver_agent_session(payload: &Value, flags: &Flags) -> C
         .or_else(|| payload.get("title").cloned());
     set_or_remove(&mut params, "title", title);
     let created = rpc::call_gxserver_rpc("/api/createAgentSession", &Value::Object(params), flags)?;
-    if flags.truthy("deferStart") {
+    if flags.truthy("deferStart") || task.is_some() {
         return Ok(created);
     }
     start_created_session_provider(created, flags)

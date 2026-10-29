@@ -126,7 +126,16 @@ impl GhostexGpuiApp {
             new_thread_picker_agents: None,
             agents_terminal_action_bar_account_page: None,
             remote_gxserver_connections: HashMap::new(),
-            sidebar_runtime_settings_snapshot: Default::default(),
+            // The page's `?settings=` object (README), so a setting-driven sidebar look can be tested too.
+            sidebar_runtime_settings_snapshot: crate::cef::SidebarRuntimeSettingsSnapshot {
+                saved_settings_json: serde_json::Value::Object(
+                    crate::shared_settings::shared_sidebar_settings_snapshot()
+                        .object()
+                        .clone(),
+                )
+                .to_string(),
+                ..Default::default()
+            },
             latest_sidebar_project_snapshot: None,
             project_switch_pending_requests: Vec::new(),
             quick_access: Default::default(),
@@ -176,6 +185,19 @@ impl GhostexGpuiApp {
         _cx: &mut Context<Self>,
     ) -> impl IntoElement {
         div()
+    }
+
+    /// The Board is the desktop's (native_session_board/), so the page offers no Board button.
+    pub(crate) fn session_board_enabled(&self) -> bool {
+        false
+    }
+
+    pub(crate) fn render_workarea_header_board_toggle(
+        &self,
+        _icon_color: Option<Hsla>,
+        _cx: &mut Context<Self>,
+    ) -> AnyElement {
+        div().into_any_element()
     }
 
     /// The bell is never shown here (`titlebar_notification_bell_visible`), so neither is its dropdown.

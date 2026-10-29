@@ -194,6 +194,11 @@ impl GhostexGpuiApp {
                     self.toggle_view_panel_fully_expanded(cx);
                     return;
                 }
+                // What the Board button beside Toggle sidebar does (native_session_board/host.rs).
+                if action_id == "toggleSessionBoard" {
+                    self.toggle_session_board(cx);
+                    return;
+                }
                 if action_id == "openExtensions" {
                     self.open_gpui_settings_extensions_page(Some(window), cx);
                     return;

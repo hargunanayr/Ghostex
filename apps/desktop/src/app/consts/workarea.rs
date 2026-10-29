@@ -215,6 +215,8 @@ pub(crate) const BROWSER_VIEW_TAB_HIDDEN_SETTINGS_KEY: &str = "browserViewTabHid
 
 pub(crate) const KANBAN_VIEW_TAB_HIDDEN_SETTINGS_KEY: &str = "kanbanViewTabHidden";
 
+pub(crate) const SESSION_BOARD_HIDDEN_SETTINGS_KEY: &str = "sessionBoardHidden";
+
 pub(crate) const AUTOMATE_VIEW_TAB_HIDDEN_SETTINGS_KEY: &str = "automateViewTabHidden";
 
 pub(crate) const BOTS_HIDDEN_SETTINGS_KEY: &str = "botsHidden";

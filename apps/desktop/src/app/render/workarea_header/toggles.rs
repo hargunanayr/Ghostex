@@ -192,13 +192,20 @@ impl GhostexGpuiApp {
     /// state). With the side panel closed the Agents Panel is the whole workarea and there is
     /// nothing to fold it behind, so the button is disabled the way Expand is, and says so; the
     /// "Open a view" picker counts as open (see `view_panel_maximized`).
+    ///
+    /// CDXC:SessionBoard 2026-10-28 DECISION:
+    /// User (Ryan): the Board is the alternative to the chat view, so while it covers the workarea
+    /// this button is the way back to the chats: it leaves the Board.
     pub(crate) fn render_workarea_header_agents_toggle(
         &self,
         icon_color: Option<gpui::Hsla>,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
-        let enabled = self.view_panel_open();
-        let tooltip = if enabled {
+        let board = self.session_board_showing();
+        let enabled = board || self.view_panel_open();
+        let tooltip = if board {
+            titlebar_tooltip_label("Back to chats", "toggleSessionBoard")
+        } else if enabled {
             titlebar_tooltip_label("Toggle Agents Panel", "expandViewPanel")
         } else {
             "Open a view to hide the Agents Panel".into()
@@ -216,7 +223,11 @@ impl GhostexGpuiApp {
                 cx.listener(|this, _, window, cx| {
                     window.prevent_default();
                     cx.stop_propagation();
-                    this.toggle_view_panel_maximized(cx);
+                    if this.session_board_showing() {
+                        this.leave_session_board(cx);
+                    } else {
+                        this.toggle_view_panel_maximized(cx);
+                    }
                 }),
             )
         })
@@ -224,6 +235,47 @@ impl GhostexGpuiApp {
             let in_sidebar = icon_color.is_some();
             move |window, cx| panel_toggle_tooltip(&tooltip, in_sidebar, window, cx)
         })
+    }
+
+    /// The Board button, right of the Agents Panel button wherever that one is drawn. It reads as
+    /// on while the Board covers the workarea, and Settings can hide it (`sessionBoardHidden`).
+    ///
+    /// CDXC:SessionBoard 2026-10-28 DECISION:
+    /// User (Ryan): the Board opens from the top left, next to Toggle sidebar, like PandaCode's board button, instead of from the view panel.
+    pub(crate) fn render_workarea_header_board_toggle(
+        &self,
+        icon_color: Option<gpui::Hsla>,
+        cx: &mut gpui::Context<Self>,
+    ) -> gpui::AnyElement {
+        if !self.session_board_enabled() {
+            return div().into_any_element();
+        }
+        let showing = self.session_board_showing();
+        let tooltip = titlebar_tooltip_label(
+            if showing { "Back to chats" } else { "Board" },
+            "toggleSessionBoard",
+        );
+        header_panel_toggle_button(
+            "ghostex-gpui-workarea-header-board-toggle",
+            TITLEBAR_ICON_LAYOUT_KANBAN,
+            0.0,
+            true,
+            icon_color,
+        )
+        .when(showing, |this| this.bg(titlebar_active_segment_color()))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, _, window, cx| {
+                window.prevent_default();
+                cx.stop_propagation();
+                this.toggle_session_board(cx);
+            }),
+        )
+        .managed_tooltip_with_placement(ManagedTooltipPlacement::Right, {
+            let in_sidebar = icon_color.is_some();
+            move |window, cx| panel_toggle_tooltip(&tooltip, in_sidebar, window, cx)
+        })
+        .into_any_element()
     }
 
     /// CDXC:CommandPane 2026-09-20 DECISION:

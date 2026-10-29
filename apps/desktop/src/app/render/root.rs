@@ -1360,8 +1360,16 @@ impl Render for GhostexGpuiApp {
                                     this.bg(workspace_column_background())
                                 }
                             })
-                            .child(self.render_workspace_with_command_pane(window, cx))
-                            .child(self.render_workarea_header(window, cx)),
+                            // The Board covers the whole column, its header row included
+                            // (native_session_board/host.rs).
+                            .map(|this| {
+                                if self.session_board_showing() {
+                                    this.child(self.render_session_board_workarea(window, cx))
+                                } else {
+                                    this.child(self.render_workspace_with_command_pane(window, cx))
+                                        .child(self.render_workarea_header(window, cx))
+                                }
+                            }),
                     )
                     // Collapsed, the reveal's hot zone lies over the workarea's left edge (the
                     // decision is on `floating_reveal_edge_want`); last child so it paints above.
