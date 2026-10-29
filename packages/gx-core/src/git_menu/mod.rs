@@ -24,7 +24,7 @@ mod worktree;
 
 pub use memo::{GitTtlMemo, GIT_HUB_MEMO_TTL_MS, GIT_MEMO_MAX_ENTRIES, GIT_STATE_MEMO_TTL_MS};
 pub use menu::{
-    disabled_reason, has_remote_commit_delta, menu_items, primary_action_state, titlebar_menu,
+    can_sync_remote, disabled_reason, has_remote_commit_delta, menu_items, primary_action_state, titlebar_menu,
     GitMenuItem, GitPrimaryActionState, TitlebarGitMenu, TitlebarGitMenuRow,
 };
 pub use plan::{

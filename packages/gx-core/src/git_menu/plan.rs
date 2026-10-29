@@ -4,7 +4,7 @@
 //! The decision is taken twice: once before the project's Git state is read (the two release
 //! workflows start an agent without looking at it) and once after, over the fresh state.
 
-use super::menu::has_remote_commit_delta;
+use super::menu::{can_sync_remote, has_remote_commit_delta};
 use super::state::{GitAction, GitPullRequestState, GitReviewAction, GitState};
 use super::text::{multicommit_release_prompt, release_only_prompt, sync_with_main_prompt};
 
@@ -50,7 +50,7 @@ const fn toast(
 /// A direct Git write the host runs inside the started/finished toasts (`runGitMutation`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GitMutation {
-    /// Pull fast-forward when the branch has an upstream, then push what is ahead.
+    /// Fetch, fast-forward or (when diverged) rebase onto the upstream, then push what is ahead.
     Sync,
     Push,
 }
@@ -137,12 +137,16 @@ pub fn plan_git_action_after_read(
                 prompt: sync_with_main_prompt(),
             }
         }),
-        GitAction::SyncRemote => Some(if !has_remote_commit_delta(state) {
+        GitAction::SyncRemote => Some(if !can_sync_remote(state) {
             GitActionStep::Toast(toast(Info, "Remote already synced", None))
         } else {
             GitActionStep::Mutation {
                 mutation: GitMutation::Sync,
-                started: "Syncing remote…",
+                started: if has_remote_commit_delta(state) {
+                    "Syncing remote…"
+                } else {
+                    "Checking for updates…"
+                },
                 finished: "Remote sync complete",
             }
         }),

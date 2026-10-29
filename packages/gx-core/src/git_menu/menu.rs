@@ -56,13 +56,14 @@ pub struct TitlebarGitMenu {
     pub sync_remote_disabled: bool,
 }
 
-/// `hasSidebarGitRemoteCommitDelta`.
-///
-/// CDXC:Git 2026-06-16-18:41:
-/// Remote sync availability and titlebar copy share one normalized ahead/behind check so a synced
-/// branch cannot run the sync action while the Commits row shows ↑0 ↓0.
+/// `hasSidebarGitRemoteCommitDelta`: the last fetch left the branch ahead of or behind its upstream.
 pub fn has_remote_commit_delta(state: &GitState) -> bool {
     state.behind_count.max(0) > 0 || state.ahead_count.max(0) > 0
+}
+
+/// CDXC:Git 2026-10-28 DECISION: The Git menu's sync row stays clickable on a branch with an upstream even while it shows ↑0 ↓0 (labelled "Check for updates"), because those counts only know the last fetch: a teammate's merge to main stayed invisible until something fetched, and the user does not want to `git pull` from a terminal. Clicking it fetches, then pulls and pushes what it finds. A branch with no upstream and nothing to sync stays disabled. This supersedes the 2026-06-16 rule that a synced branch could not run the sync action while the row showed ↑0 ↓0.
+pub fn can_sync_remote(state: &GitState) -> bool {
+    has_remote_commit_delta(state) || state.has_upstream
 }
 
 /// `getSidebarGitDisabledReason`.
@@ -264,6 +265,6 @@ pub fn titlebar_menu(state: &GitState) -> TitlebarGitMenu {
             })
             .collect(),
         sync_remote_disabled: disabled_reason(state, GitAction::SyncRemote).is_some()
-            || !has_remote_commit_delta(state),
+            || !can_sync_remote(state),
     }
 }

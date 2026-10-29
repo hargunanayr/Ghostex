@@ -306,6 +306,8 @@ pub(crate) fn titlebar_popup_git_commits_menu_row(
         TITLEBAR_ICON_GIT_COMPARE,
         if has_commits_to_sync {
             "Sync upstream".to_string()
+        } else if !disabled {
+            "Check for updates".to_string()
         } else {
             "No commits to sync".to_string()
         },

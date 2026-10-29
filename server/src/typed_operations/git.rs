@@ -512,13 +512,13 @@ pub(crate) fn build_git_command(
                 }))
                 .with_stdin(message)
         }
-        "pullFastForward" => {
-            /*
-            CDXC:Git 2026-06-19-14:38:
-            The titlebar remote-sync workflow must update the current branch only through Git's fast-forward pull contract. Rust keeps the typed operation to `git pull --ff-only` so merge, rebase, dirty-worktree, and divergent-history failures remain visible to callers instead of being hidden by fallback behavior.
-            */
-            ProcessCommand::new("git", vec!["pull", "--ff-only"], cwd)
+        "pullFastForward" => ProcessCommand::new("git", vec!["pull", "--ff-only"], cwd),
+        "fetch" => ProcessCommand::new("git", vec!["fetch"], cwd),
+        "mergeFastForwardUpstream" => {
+            ProcessCommand::new("git", vec!["merge", "--ff-only", "@{upstream}"], cwd)
         }
+        "rebaseUpstream" => ProcessCommand::new("git", vec!["rebase", "@{upstream}"], cwd),
+        "rebaseAbort" => ProcessCommand::new("git", vec!["rebase", "--abort"], cwd),
         "push" => ProcessCommand::new("git", vec!["push"], cwd),
         /*
         CDXC:Git 2026-06-24-17:47:
@@ -609,6 +609,7 @@ pub(crate) fn normalize_git_action(input: Option<&Value>) -> Result<String, Type
         | "diffNumstat"
         | "diffNumstatZ"
         | "discardFiles"
+        | "fetch"
         | "getOriginRemoteUrl"
         | "isInsideWorkTree"
         | "isUntrackedFile"
@@ -617,10 +618,13 @@ pub(crate) fn normalize_git_action(input: Option<&Value>) -> Result<String, Type
         | "listRemotes"
         | "listUntracked"
         | "merge"
+        | "mergeFastForwardUpstream"
         | "pullFastForward"
         | "push"
         | "pushSetUpstreamCurrent"
         | "pushSetUpstream"
+        | "rebaseAbort"
+        | "rebaseUpstream"
         | "remoteBranchExists"
         | "status"
         | "statusPorcelain"

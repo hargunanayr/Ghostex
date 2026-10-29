@@ -449,27 +449,102 @@ async fn push_with_facts(
     Ok(())
 }
 
-/// `syncCurrentBranchWithRemote`: fast-forward from the upstream, then push what is ahead; a
-/// branch with no upstream is pushed.
+/// `syncCurrentBranchWithRemote`: fetch, bring the branch up to its upstream, then push what is
+/// ahead; a branch with no upstream is pushed.
+///
+/// CDXC:Git 2026-10-28 DECISION: When the branch has diverged from its upstream (local commits not pushed yet while the remote moved on), Sync rebases the local commits onto the upstream and pushes them instead of refusing with "Could not pull branch." A branch that is only behind still fast-forwards. A rebase that hits conflicts is aborted so the repository is left as it was, and the toast names the conflicting files. This supersedes the 2026-06-19 rule that Sync only ever ran `git pull --ff-only`.
 async fn sync_current_branch(projects: &[Value], project_id: &str) -> Result<(), DomainStateError> {
     let facts = read_push_facts(projects, project_id).await?;
-    if facts.branch.is_none() {
+    let Some(branch) = facts.branch.clone() else {
         return Err(failure("Create and checkout a branch before syncing."));
-    }
+    };
     if !facts.has_upstream {
         return push_with_facts(projects, project_id, &facts).await;
     }
-    let pull = git(projects, project_id, "pullFastForward")
-        .await
-        .map_err(typed)?;
-    if exit_code(&pull) != 0 {
-        return Err(failure("Could not pull branch."));
+    let fetch = git(projects, project_id, "fetch").await.map_err(typed)?;
+    if exit_code(&fetch) != 0 {
+        return Err(git_failure("Could not fetch from the remote", &fetch));
+    }
+    let fetched = read_push_facts(projects, project_id).await?;
+    if fetched.behind > 0 {
+        if fetched.ahead == 0 {
+            let merge = git(projects, project_id, "mergeFastForwardUpstream")
+                .await
+                .map_err(typed)?;
+            if exit_code(&merge) != 0 {
+                return Err(git_failure("Could not pull branch", &merge));
+            }
+        } else {
+            rebase_onto_upstream(projects, project_id, &branch).await?;
+        }
     }
     let next = read_push_facts(projects, project_id).await?;
     if next.ahead > 0 {
         push_with_facts(projects, project_id, &next).await?;
     }
     Ok(())
+}
+
+async fn rebase_onto_upstream(
+    projects: &[Value],
+    project_id: &str,
+    branch: &str,
+) -> Result<(), DomainStateError> {
+    let rebase = git(projects, project_id, "rebaseUpstream")
+        .await
+        .map_err(typed)?;
+    if exit_code(&rebase) == 0 {
+        return Ok(());
+    }
+    let conflicts: Vec<&str> = stdout(&rebase)
+        .lines()
+        .chain(stderr(&rebase).lines())
+        .filter_map(|line| {
+            line.split_once("Merge conflict in ")
+                .map(|(_, path)| path.trim())
+        })
+        .collect();
+    if conflicts.is_empty() {
+        // Git refused before starting (uncommitted changes, for example) and left nothing behind.
+        return Err(git_failure(
+            &format!("Could not rebase {branch} onto the remote"),
+            &rebase,
+        ));
+    }
+    let abort = git(projects, project_id, "rebaseAbort")
+        .await
+        .map_err(typed)?;
+    if exit_code(&abort) != 0 {
+        return Err(git_failure(
+            &format!("Rebase of {branch} stopped on conflicts and could not be aborted; finish or abort it by hand"),
+            &abort,
+        ));
+    }
+    Err(failure(format!(
+        "Could not rebase {branch} onto the remote: conflicts in {}. Merge or rebase by hand, then sync again.",
+        conflicts.join(", ")
+    )))
+}
+
+fn stderr(result: &Value) -> &str {
+    result.get("stderr").and_then(Value::as_str).unwrap_or("")
+}
+
+/// A failure toast that carries Git's own first line of output, so the reason is visible.
+fn git_failure(summary: &str, result: &Value) -> DomainStateError {
+    let detail = stderr(result)
+        .lines()
+        .chain(stdout(result).lines())
+        .map(|line| {
+            line.trim()
+                .trim_start_matches("fatal: ")
+                .trim_start_matches("error: ")
+        })
+        .find(|line| !line.is_empty() && !line.starts_with("hint:"));
+    match detail {
+        Some(detail) => failure(format!("{summary}: {detail}")),
+        None => failure(format!("{summary}.")),
+    }
 }
 
 /// `isGpuiConfirmedOpenPullRequest`.

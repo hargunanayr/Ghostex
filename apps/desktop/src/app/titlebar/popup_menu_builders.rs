@@ -203,8 +203,7 @@ impl GhostexGpuiApp {
             move |_, _| titlebar_popup_git_changes_menu_row(additions, deletions)
         });
 
-        let commits_disabled =
-            state.sync_remote_disabled || (state.ahead_count == 0 && state.behind_count == 0);
+        let commits_disabled = state.sync_remote_disabled;
         menu = menu.menu_element_with_disabled(
             Box::new(RunGpuiTitlebarGitRemoteSync),
             commits_disabled,

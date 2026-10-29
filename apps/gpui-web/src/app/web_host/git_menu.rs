@@ -103,8 +103,7 @@ impl GhostexGpuiApp {
                     true,
                     cx,
                 ));
-                let sync_disabled = state.sync_remote_disabled
-                    || (state.ahead_count == 0 && state.behind_count == 0);
+                let sync_disabled = state.sync_remote_disabled;
                 rows.push(self.web_git_menu_row(
                     "web-git-commits".into(),
                     format!("{} ahead, {} behind", state.ahead_count, state.behind_count),
