@@ -464,7 +464,8 @@ pub(crate) fn modal_text_input(
 
 /// The shadcn textarea skin: the input skin with 12px vertical padding.
 /// `min_height` is the React `min-height`; `None` makes the editor fill the
-/// remaining column height (the fixed-frame editors).
+/// remaining column height (the fixed-frame editors). Either way the editor fills the box:
+/// a `TextareaState` without `auto_grow` lays out a single row on its own.
 pub(crate) fn modal_text_area(
     p: &ModalPalette,
     state: &gpui::Entity<TextareaState>,
@@ -510,7 +511,8 @@ pub(crate) fn modal_text_area_with_paste(
             div()
                 .w_full()
                 .min_w_0()
-                .when(min_height.is_none(), |this| this.flex_1().min_h_0())
+                .flex_1()
+                .min_h_0()
                 .child(
                     Textarea::new(state)
                         .with_size(ComponentSize::Small)
@@ -522,7 +524,7 @@ pub(crate) fn modal_text_area_with_paste(
                             this.on_paste(move |clipboard, window, cx| paste(clipboard, window, cx))
                         })
                         .w_full()
-                        .when(min_height.is_none(), |this| this.h_full())
+                        .h_full()
                         .px(px(0.0))
                         .py(px(0.0))
                         .text_size(px(14.0))
