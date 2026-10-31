@@ -46,15 +46,14 @@ pub fn document(state: &ChatState, context: &ChatContext, into: &mut Document) {
     if !background.is_null() {
         into.working_strip.presentation = None;
     }
-    into.chat_pills =
-        chat_pills::chat_pills(&threads_panel, &tasks_panel, &fleet_strip, &background);
-    // The ? question pill rides on the card, so a waiting question alone shows it.
-    into.working_card = working_card::working_card(
-        state,
-        &into.working_strip,
-        &into.chat_pills,
-        into.open_questions.count > 0,
+    into.chat_pills = chat_pills::chat_pills(
+        &into.open_questions,
+        &threads_panel,
+        &tasks_panel,
+        &fleet_strip,
+        &background,
     );
+    into.working_card = working_card::working_card(state, &into.working_strip, &into.chat_pills);
     into.agent_fleet_strip = Tri::Value(fleet_strip);
     into.agent_tasks_panel = Tri::Value(tasks_panel);
     into.coordinator_threads_panel = Tri::Value(threads_panel);
@@ -96,7 +95,7 @@ pub fn document(state: &ChatState, context: &ChatContext, into: &mut Document) {
                 state.session.coordinator_threads.as_ref(),
             ) {
                 crate::extras::welcome::wrap_new_session_welcome_title(
-                    "What should this orchestrator work on?",
+                    "What should this coordinator work on?",
                 )
             } else {
                 new_session_welcome_title(agent_name.as_deref())

@@ -76,8 +76,8 @@ use gpui::{
     FontWeight, Global, GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement,
     IntoElement, KeyContext, KeyDownEvent, KeyUpEvent, Keystroke, LayoutId, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, Pixels, Point, Render, RenderImage, Rgba, ScrollWheelEvent, ShapedLine,
-    SharedString, Size, StrikethroughStyle, Style, Styled, TextAlign, TextRun, UTF16Selection,
+    ParentElement, Pixels, Point, Render, RenderImage, Rgba, ScrollEvent, ShapedLine, SharedString,
+    Size, StrikethroughStyle, Style, Styled, TextAlign, TextRun, UTF16Selection,
     UnderlineStyle as GpuiUnderlineStyle, Window, canvas, div, fill, outline, point,
     prelude::FluentBuilder as _, px, size,
 };
@@ -98,7 +98,12 @@ use crate::terminal_wheel;
 
 gpui::actions!(
     ghostex_terminal,
-    [TerminalContextMenuCopy, TerminalContextMenuPaste]
+    [
+        TerminalContextMenuCopy,
+        TerminalContextMenuPaste,
+        TerminalCopyHotkey,
+        TerminalSelectAllHotkey
+    ]
 );
 
 /// The host's Edit menu actions the terminal answers. The host owns the menu,
@@ -1578,25 +1583,6 @@ impl TerminalView {
         scrollback in every program; without kitty flags the other keys send
         nothing, as in Ghostty.
         */
-        /*
-        CDXC:Terminal 2026-10-23 DECISION:
-        Cmd+A always selects the terminal, as in Ghostty, even in full-screen
-        editors like fresh or gte; Ctrl+A selects their text (user: "Always
-        select the terminal").
-        */
-        if cfg!(target_os = "macos")
-            && modifiers.platform
-            && !modifiers.control
-            && !modifiers.alt
-            && !modifiers.function
-            && !modifiers.shift
-            && keystroke.key == "a"
-        {
-            self.select_all(cx);
-            self.select_all_release_pending = true;
-            cx.stop_propagation();
-            return;
-        }
         if cfg!(target_os = "macos")
             && modifiers.platform
             && !modifiers.control
@@ -1628,8 +1614,32 @@ impl TerminalView {
             }
         }
 
-        // Clipboard shortcuts are app-owned; they never reach the PTY.
-        if modifiers.platform && !modifiers.control && !modifiers.alt && !modifiers.function {
+        // Ghostty's `ctrl+insert=copy_to_clipboard` on Windows and Linux, a fixed second key beside
+        // the Copy hotkey (`TerminalCopyHotkey`) as Shift+Insert is beside Paste.
+        if !cfg!(target_os = "macos")
+            && self.selection.is_some()
+            && modifiers.control
+            && !modifiers.shift
+            && !modifiers.platform
+            && !modifiers.alt
+            && !modifiers.function
+            && keystroke.key == "insert"
+        {
+            self.copy_selection(cx);
+            cx.stop_propagation();
+            return;
+        }
+
+        // Clipboard shortcuts are app-owned; they never reach the PTY. On macOS Cmd+C and Cmd+V
+        // are the Copy and Paste hotkeys (Settings > Hotkeys > Terminal focused), so a key moved
+        // or cleared there must not keep copying and pasting here; Windows and Linux keep Super+C
+        // and Super+V.
+        if !cfg!(target_os = "macos")
+            && modifiers.platform
+            && !modifiers.control
+            && !modifiers.alt
+            && !modifiers.function
+        {
             match keystroke.key.as_str() {
                 "c" if self.selection.is_some() => {
                     self.copy_selection(cx);
@@ -2162,7 +2172,7 @@ impl TerminalView {
         Cmd+click opens the link under the pointer (ghostty behavior) instead of starting a selection, and it is checked before mouse reporting the way ghostty's `mouseButtonCallback` handles a link before reporting, because a link click swallows the event. Codex's fullscreen view (its default since 0.157) captures the mouse for its whole session, so with the check after reporting every Cmd+click went to Codex, which opened the URL with the host's own opener and skipped Ghostex's link routing (browser pane, editor, remote sessions). A plain click still goes to the app. On Windows and Linux the modifier is Ctrl (`secondary()`), because `platform` there is the Windows/Super key; Cmd stays accepted so the web build still opens links from a Mac browser, where wasm reports Ctrl as secondary.
         */
         if event.button == MouseButton::Left
-            && (event.modifiers.secondary() || event.modifiers.platform)
+            && (event.modifiers.secondary(cx) || event.modifiers.platform)
         {
             let viewport_cell = self.grid_cell(event.position, origin);
             if let Some(link) = self
@@ -2223,6 +2233,23 @@ impl TerminalView {
             return;
         }
 
+        /*
+        CDXC:Terminal 2026-10-28 WHY:
+        On Linux a middle click pastes the primary selection, the text last selected in any app, as every Linux terminal does; Ghostex only pasted its own terminal's selection, and only with Copy on select turned on, so selecting a command in a browser and middle-clicking into a session did nothing. Linux reads the primary selection first and falls back to this terminal's own selection; other systems keep the setting-gated behavior.
+        */
+        #[cfg(target_os = "linux")]
+        if event.button == MouseButton::Middle {
+            let primary = cx
+                .read_from_primary()
+                .and_then(|item| item.text())
+                .filter(|text| !text.is_empty());
+            if let Some(text) = primary.or_else(|| self.selection_text()) {
+                let _ = self.model.send_paste(&text);
+                self.after_send_input(cx);
+                cx.stop_propagation();
+            }
+            return;
+        }
         if event.button == MouseButton::Middle && self.settings.selection_clipboard_enabled {
             if let Some(text) = self.selection_text() {
                 let _ = self.model.send_paste(&text);
@@ -2470,6 +2497,13 @@ impl TerminalView {
         if event.button == MouseButton::Left {
             self.reporting_drag = false;
             self.drag = None;
+            // The primary selection is what other Linux apps paste on a middle click (see handle_mouse_down).
+            #[cfg(target_os = "linux")]
+            if self.selection.is_some()
+                && let Some(text) = self.selection_text().filter(|text| !text.is_empty())
+            {
+                cx.write_to_primary(ClipboardItem::new_string(text));
+            }
             if self.settings.copy_on_select && self.selection.is_some() {
                 self.copy_selection(cx);
             }
@@ -2627,7 +2661,7 @@ impl TerminalView {
 
     fn handle_wheel(
         &mut self,
-        event: &ScrollWheelEvent,
+        event: &ScrollEvent,
         origin: Point<Pixels>,
         scale: f32,
         cx: &mut Context<Self>,
@@ -3194,9 +3228,7 @@ pub(crate) fn terminal_overlay_tooltip(label: &str, hotkey_action_id: &str) -> S
     }
 }
 
-/// Focus mode is bound in `main.rs` from a fixed chord instead of through the
-/// configurable hotkey map, so the bar's Maximize control names it with this
-/// pseudo action id and the label resolver answers with that same chord.
+/// Focus mode's hotkey id, which the bar's Maximize control names in its tooltip.
 pub(crate) const TERMINAL_OVERLAY_FOCUS_MODE_HOTKEY_ACTION_ID: &str = "toggleAgentsFocusMode";
 
 /// The effective (persisted-or-default) chord for an action, formatted for
@@ -3217,8 +3249,7 @@ pub(crate) fn terminal_overlay_hotkey_label(action_id: &str) -> Option<String> {
     */
     let default_key = match action_id {
         "renameActiveSession" => "cmd+r",
-        // `SLEEP_FOCUSED_SESSION_DEFAULT_KEY`, in the shared "+" chord syntax
-        // this resolver reads (that constant is in gpui keystroke syntax).
+        // The default of its second key (`sleepFocusedSessionSecondKey`), which the bar names.
         "sleepFocusedSession" => "alt+shift+s",
         "delayedSend" => "ctrl+shift+s",
         "closeAfterDone" => "",
@@ -3229,11 +3260,9 @@ pub(crate) fn terminal_overlay_hotkey_label(action_id: &str) -> Option<String> {
         "toggleChatView" => "alt+g",
         "stashPrompt" => "alt+s",
         "stashedPrompts" => "cmd+alt+s",
-        // Focus mode is bound in main.rs from a fixed chord rather than through
-        // the configurable hotkey map, so its label is fixed too.
         TERMINAL_OVERLAY_FOCUS_MODE_HOTKEY_ACTION_ID => "cmd+ctrl+f",
         "attachFileOrFolder" => "cmd+alt+p",
-        "exportTranscript" => "cmd+alt+e",
+        "exportTranscript" => "",
         "toggleAgentActions" => "cmd+alt+a",
         "scrollTerminalToTop" | "scrollTerminalToBottom" => "",
         _ => return None,
@@ -3250,6 +3279,7 @@ pub(crate) fn terminal_overlay_hotkey_label(action_id: &str) -> Option<String> {
             let retired: &[&str] = match action_id {
                 "forkSession" => &["ctrl+shift+f", "cmd+alt+f"],
                 "reloadSession" => &["ctrl+shift+r", "cmd+alt+r"],
+                "exportTranscript" => &["cmd+alt+e", "ctrl+alt+e", "cmd+alt+x"],
                 _ => &[],
             };
             !retired
@@ -3257,7 +3287,8 @@ pub(crate) fn terminal_overlay_hotkey_label(action_id: &str) -> Option<String> {
                 .any(|retired| key.trim().eq_ignore_ascii_case(retired))
         });
     let key = terminal_overlay_platform_hotkey(action_id, persisted_key.unwrap_or(default_key));
-    let key = key.trim();
+    let terminal_key = terminal_overlay_terminal_hotkey(&snapshot, action_id);
+    let key = terminal_key.as_deref().unwrap_or(key).trim();
     if key.is_empty() {
         return None;
     }
@@ -3269,28 +3300,56 @@ pub(crate) fn terminal_overlay_hotkey_label(action_id: &str) -> Option<String> {
     )
 }
 
-/// Mirrors the same-named cases of `gpui_platform_hotkey_for_action` in
-/// apps/desktop/src/app/hotkeys.rs, for the action ids this file labels.
-fn terminal_overlay_platform_hotkey<'a>(action_id: &str, key: &'a str) -> &'a str {
-    if cfg!(target_os = "macos") {
-        return key;
-    }
-    let defaults = match action_id {
-        "delayedSend" => Some(("ctrl+shift+s", "cmd+alt+s")),
-        "forkSession" => Some(("cmd+ctrl+shift+f", "cmd+alt+shift+f")),
-        "renameActiveSession" => Some(("cmd+r", "cmd+shift+r")),
-        "promptEditor" => Some(("ctrl+g", "cmd+shift+g")),
-        "stashedPrompts" => Some(("cmd+alt+s", "cmd+shift+s")),
-        _ => None,
+/// The bar sits on a terminal, so it names the Terminal focused key (`gpui_terminal_hotkey_key_in`
+/// in apps/desktop/src/app/hotkeys.rs, mirrored here because this file is also built without the
+/// `app` module). On macOS that key equals the normal one until the user records it, so the normal
+/// label stands unless `terminalHotkeys` holds a value. Sleep's label names its second key, the
+/// one a terminal keeps on Windows and Linux.
+fn terminal_overlay_terminal_hotkey(
+    snapshot: &crate::shared_settings::SharedSidebarSettingsSnapshot,
+    action_id: &str,
+) -> Option<String> {
+    use ghostex_settings_catalog::{Platform, customized_normal_hotkey, terminal_hotkey};
+    let action_id = match action_id {
+        "sleepFocusedSession" => "sleepFocusedSessionSecondKey",
+        other => other,
     };
-    match defaults {
-        Some((mac_default, windows_linux_default))
-            if key.trim().eq_ignore_ascii_case(mac_default) =>
-        {
-            windows_linux_default
-        }
-        _ => key,
+    let platform = Platform::current();
+    let saved_terminal = snapshot
+        .object()
+        .get(ghostex_settings_catalog::TERMINAL_HOTKEYS_SETTING_KEY)
+        .and_then(serde_json::Value::as_object)
+        .and_then(|hotkeys| hotkeys.get(action_id))
+        .and_then(serde_json::Value::as_str);
+    if platform == Platform::MacOs && saved_terminal.is_none() {
+        return None;
     }
+    let customized_normal = customized_normal_hotkey(
+        action_id,
+        snapshot
+            .object()
+            .get("hotkeys")
+            .and_then(serde_json::Value::as_object)
+            .and_then(|hotkeys| hotkeys.get(action_id))
+            .and_then(serde_json::Value::as_str),
+        platform,
+    );
+    terminal_hotkey(
+        action_id,
+        saved_terminal,
+        customized_normal.as_deref(),
+        platform,
+    )
+}
+
+/// The chord a saved key runs on for this platform (`gpui_platform_hotkey_for_action` in
+/// apps/desktop/src/app/hotkeys.rs), from the hotkey catalog both read.
+fn terminal_overlay_platform_hotkey<'a>(action_id: &str, key: &'a str) -> &'a str {
+    ghostex_settings_catalog::platform_hotkey(
+        action_id,
+        key,
+        ghostex_settings_catalog::Platform::current(),
+    )
 }
 
 fn terminal_scroll_button_glyph(edge: TerminalScrollEdge, light_theme: bool) -> impl IntoElement {
@@ -3610,6 +3669,50 @@ impl TerminalElement {
             window,
         );
         on_view_action(TypeId::of::<TerminalContextMenuPaste>(), paste, window);
+        // The Copy hotkey copies a selection; without one the key goes on to the program, like
+        // Ghostty's `performable` copy binding.
+        {
+            let entity = entity.clone();
+            window.on_action(
+                TypeId::of::<TerminalCopyHotkey>(),
+                move |_action, phase, _window, cx| {
+                    if phase != DispatchPhase::Bubble {
+                        return;
+                    }
+                    let copied = entity.update(cx, |view, cx| {
+                        view.selection.is_some() && {
+                            view.copy_selection(cx);
+                            true
+                        }
+                    });
+                    if !copied {
+                        cx.propagate();
+                    }
+                },
+            );
+        }
+        /*
+        CDXC:Terminal 2026-10-23 DECISION:
+        Cmd+A always selects the terminal, as in Ghostty, even in full-screen
+        editors like fresh or gte; Ctrl+A selects their text (user: "Always
+        select the terminal"). Cmd+A (Ctrl+Shift+A on Windows and Linux) is now the Select All
+        hotkey's default, which Settings > Hotkeys can change (CDXC:Hotkeys 2026-10-27 DECISION in
+        packages/settings-catalog/src/hotkey_definitions.rs).
+        */
+        {
+            let entity = entity.clone();
+            window.on_action(
+                TypeId::of::<TerminalSelectAllHotkey>(),
+                move |_action, phase, _window, cx| {
+                    if phase == DispatchPhase::Bubble {
+                        entity.update(cx, |view, cx| {
+                            view.select_all(cx);
+                            view.select_all_release_pending = true;
+                        });
+                    }
+                },
+            );
+        }
         // GPUI enables a menu item only while a handler for its action sits on the focus
         // path, so Copy is registered only while there is a selection to copy.
         let (edit_menu_actions, has_selection) = {
@@ -3692,7 +3795,7 @@ impl TerminalElement {
         window.on_mouse_event({
             let entity = entity.clone();
             let hitbox = hitbox.clone();
-            move |event: &ScrollWheelEvent, phase, window, cx| {
+            move |event: &ScrollEvent, phase, window, cx| {
                 if phase != DispatchPhase::Bubble || !hitbox.should_handle_scroll(window) {
                     return;
                 }

@@ -397,7 +397,11 @@ impl GhostexGpuiApp {
                 back the path instead of switching to a disabled workarea.
                 */
                 if !this.titlebar_mode_available(TitlebarMode::Source) {
-                    this.copy_path_for_disabled_project_workarea(&requested_path_text, "Code", cx);
+                    this.copy_path_for_disabled_project_workarea(
+                        &requested_path_text,
+                        "VS Code",
+                        cx,
+                    );
                     return;
                 }
                 this.switch_workarea_from_hotkey(TitlebarMode::Source, window, cx);

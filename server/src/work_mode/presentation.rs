@@ -14,8 +14,9 @@ pub(crate) struct WorkTargets {
     pub(crate) cwd: Option<String>,
     pub(crate) branch: Option<String>,
     pub(crate) linear_key: Option<u64>,
-    pub(crate) linear_issues: Vec<String>,
-    pub(crate) github_issues: Vec<u64>,
+    /// Every source's tickets, Linear's first: each source's hand-set ones, else what the branch
+    /// names.
+    pub(crate) tickets: Vec<LinkedTicket>,
     /// A PR number (as text) or URL, as `gh pr view` takes it.
     pub(crate) pull_request: Option<String>,
     /// The branch's own PR from the git probe, which also carries its state.
@@ -24,6 +25,34 @@ pub(crate) struct WorkTargets {
     /// A hand-set GitHub Project (`owner/number`); `None` = automatic, from the issues' and the
     /// PR's project items.
     pub(crate) github_project: Option<Option<String>>,
+}
+
+/// One ticket a session is linked to.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct LinkedTicket {
+    pub(crate) ticket: TicketRef,
+    /// Set by hand (`workLinks`), not read from the branch.
+    pub(crate) by_hand: bool,
+}
+
+impl WorkTargets {
+    /// One source's ticket ids, in link order.
+    pub(crate) fn ids_of(&self, source: WorkSourceId) -> Vec<String> {
+        self.tickets
+            .iter()
+            .filter(|linked| linked.ticket.source == source)
+            .map(|linked| linked.ticket.id.clone())
+            .collect()
+    }
+
+    /// The GitHub issue numbers, for the code host's reads, which share a call with the PR's.
+    pub(crate) fn github_issue_numbers(&self) -> Vec<u64> {
+        self.tickets
+            .iter()
+            .filter(|linked| linked.ticket.source == WorkSourceId::Github)
+            .filter_map(|linked| linked.ticket.id.parse().ok())
+            .collect()
+    }
 }
 
 /// Resolves a work-mode session's links: hand-set ones first, then what its branch names, then
@@ -39,25 +68,31 @@ pub(crate) fn work_targets(project: &Value, session: &Value) -> WorkTargets {
         work_branch(git.as_ref().and_then(|git| git.branch.as_deref())).map(str::to_string);
     let manual = manual_work_links(session);
     let linear_key = project_linear_key(project_id);
+    let scope = TicketScope {
+        project_id,
+        workspace_id: None,
+        cwd: cwd.as_deref(),
+        credentials: None,
+    };
+    let in_branch = |source: WorkSourceId| match branch.as_deref() {
+        Some(branch) => work_source(source).tickets_in_branch(&scope, branch),
+        None => Vec::new(),
+    };
 
-    let linear_issues = match manual.linear_issues {
-        Some(identifiers) => identifiers,
-        None => match (
-            branch.as_deref(),
-            linear_key.and_then(cached_linear_team_keys),
-        ) {
-            (Some(branch), Some(team_keys)) => linear_identifiers_in_branch(branch, &team_keys),
-            _ => Vec::new(),
-        },
-    };
-    let github_issues = match manual.github_issues {
-        Some(numbers) => numbers,
-        None => branch
-            .as_deref()
-            .and_then(github_issue_in_branch)
-            .into_iter()
-            .collect(),
-    };
+    let tickets: Vec<LinkedTicket> = WorkSourceId::BUILT_IN
+        .into_iter()
+        .flat_map(|source| {
+            let hand_set = manual.ticket_ids(source);
+            let by_hand = hand_set.is_some();
+            hand_set
+                .unwrap_or_else(|| in_branch(source))
+                .into_iter()
+                .map(move |id| LinkedTicket {
+                    ticket: TicketRef::new(source, id),
+                    by_hand,
+                })
+        })
+        .collect();
     let branch_pull_request = branch.as_ref().and_then(|_| {
         git.as_ref()
             .and_then(|git| git.pull_request.as_ref())
@@ -71,12 +106,14 @@ pub(crate) fn work_targets(project: &Value, session: &Value) -> WorkTargets {
             .map(|number| number.to_string())
             .or_else(|| {
                 let repo = cwd.as_deref().and_then(cached_work_repo);
-                linear_key.and_then(|key| {
-                    linear_issues.iter().find_map(|identifier| {
-                        cached_linear_issue(key, identifier).and_then(|issue| {
-                            ticket_pull_request_in_repo(&issue.pull_request_urls, repo.as_deref())
-                        })
-                    })
+                tickets.iter().find_map(|linked| {
+                    match work_source(linked.ticket.source).cached_ticket(&scope, &linked.ticket.id)
+                    {
+                        TicketRead::Found(ticket) => {
+                            ticket_pull_request_in_repo(&ticket.pull_request_urls, repo.as_deref())
+                        }
+                        TicketRead::NotFound | TicketRead::Unread => None,
+                    }
                 })
             }),
     };
@@ -84,8 +121,7 @@ pub(crate) fn work_targets(project: &Value, session: &Value) -> WorkTargets {
         cwd,
         branch,
         linear_key,
-        linear_issues,
-        github_issues,
+        tickets,
         pull_request,
         branch_pull_request,
         linear_project: manual.linear_project,
@@ -138,21 +174,26 @@ pub(crate) fn presentation_session_work(project: &Value, session: &Value) -> Opt
         output.insert("pullRequest".to_string(), pull_request);
     }
     // The menu's "Back to automatic" only means something when a link was set by hand.
-    if manual_work_links(session) != ManualWorkLinks::default() {
+    let manual = manual_work_links(session);
+    if manual != ManualWorkLinks::default() {
         output.insert("handSet".to_string(), json!(true));
     }
 
-    let issues: Vec<Option<LinearIssueInfo>> = targets
-        .linear_issues
+    let linear_identifiers = targets.ids_of(WorkSourceId::Linear);
+    let issues: Vec<Option<LinearIssueInfo>> = linear_identifiers
         .iter()
         .map(|identifier| {
-            targets
+            match targets
                 .linear_key
-                .and_then(|key| cached_linear_issue(key, identifier))
+                .map(|key| cached_linear_issue_read(key, identifier))
+            {
+                Some(LinearIssueRead::Found(info)) => Some(info),
+                Some(LinearIssueRead::NotFound) => Some(LinearIssueInfo::not_found(identifier)),
+                Some(LinearIssueRead::Unread) | None => None,
+            }
         })
         .collect();
-    let linear_issues: Vec<Value> = targets
-        .linear_issues
+    let linear_issues: Vec<Value> = linear_identifiers
         .iter()
         .zip(&issues)
         .map(|(identifier, info)| {
@@ -172,7 +213,7 @@ pub(crate) fn presentation_session_work(project: &Value, session: &Value) -> Opt
     }
 
     let github_issues: Vec<Value> = targets
-        .github_issues
+        .github_issue_numbers()
         .iter()
         .map(|number| {
             let mut issue = Map::new();
@@ -193,6 +234,32 @@ pub(crate) fn presentation_session_work(project: &Value, session: &Value) -> Opt
         output.insert("githubIssues".to_string(), Value::Array(github_issues));
     }
 
+    let scope = TicketScope {
+        project_id: project
+            .get("projectId")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+        workspace_id: None,
+        cwd: targets.cwd.as_deref(),
+        credentials: None,
+    };
+    let repo = targets.cwd.as_deref().and_then(cached_work_repo);
+    let tickets: Vec<Value> = targets
+        .tickets
+        .iter()
+        .map(|LinkedTicket { ticket, by_hand }| {
+            let read = work_source(ticket.source).cached_ticket(&scope, &ticket.id);
+            let mut link =
+                ticket_link_value(&ticket, repo.as_deref().unwrap_or(scope.project_id), &read);
+            link["source"] = json!(if *by_hand { "user" } else { "branch" });
+            link["sourceLabel"] = json!(if *by_hand { "You added" } else { "From branch" });
+            link
+        })
+        .collect();
+    if !tickets.is_empty() {
+        output.insert("tickets".to_string(), Value::Array(tickets));
+    }
+
     // CDXC:WorkMode 2026-10-09 DECISION:
     // User: the card shows the project kind of the workspace's primary tracker: a Linear project for Linear, a GitHub Project for GitHub (crate::work_mode::tracker).
     let tracker = cached_project_work_tracker(
@@ -202,7 +269,7 @@ pub(crate) fn presentation_session_work(project: &Value, session: &Value) -> Opt
             .unwrap_or_default(),
     );
     let linear_project = match &targets.linear_project {
-        _ if tracker != WorkTracker::Linear => None,
+        _ if tracker != WorkSourceId::Linear => None,
         Some(Some(name)) => Some(json!({ "name": name })),
         Some(None) => None,
         None => issues.iter().flatten().find_map(|issue| {
@@ -217,7 +284,7 @@ pub(crate) fn presentation_session_work(project: &Value, session: &Value) -> Opt
     if let Some(linear_project) = linear_project {
         output.insert("linearProject".to_string(), linear_project);
     }
-    if tracker == WorkTracker::Github {
+    if tracker == WorkSourceId::Github {
         if let Some(github_project) = session_github_project(&targets) {
             output.insert(
                 "githubProject".to_string(),
@@ -248,9 +315,8 @@ pub(crate) fn session_github_project(targets: &WorkTargets) -> Option<GithubProj
         None => {
             let cwd = targets.cwd.as_deref()?;
             targets
-                .github_issues
-                .iter()
-                .copied()
+                .github_issue_numbers()
+                .into_iter()
                 .chain(
                     targets
                         .pull_request

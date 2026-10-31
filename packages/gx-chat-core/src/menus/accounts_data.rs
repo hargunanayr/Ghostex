@@ -71,6 +71,8 @@ pub struct Account {
     /// `resetCredits` as the template string writes it, or absent.
     pub reset_credits: Option<String>,
     pub usage_error: Option<String>,
+    /// Why gxserver stopped offering this login (its organization disabled subscription access).
+    pub disabled_reason: Option<String>,
 }
 
 impl Account {
@@ -101,6 +103,7 @@ impl Account {
                 .and_then(|object| object.get("resetCredits"))
                 .and_then(js_number_or_text),
             usage_error: text("usageError").filter(|error| !error.is_empty()),
+            disabled_reason: text("disabledReason").filter(|reason| !reason.is_empty()),
         }
     }
 }

@@ -278,12 +278,6 @@ impl NativeChatView {
         let frame = self.composer_frame(cx);
         let collapsed = frame.collapsed;
         if frame.running && !maximized {
-            #[cfg(target_arch = "wasm32")]
-            crate::app::helpers::indicator_animation::redraw_probe(format!(
-                "raf {}:{}",
-                file!(),
-                line!()
-            ));
             window.request_animation_frame();
         }
         let input = self.input.as_ref().unwrap().clone();
@@ -378,10 +372,22 @@ impl NativeChatView {
         if let Some(card) = self.render_composer_not_ready(p, cx) {
             waiting.push(super::suggestions::stack_member(card, &stack_top).into_any_element());
         } else if let Some(error) = self.snapshot["operationError"].as_str() {
+            // An answer only the terminal can take (gxserver's `ANSWER_IN_TERMINAL`) offers the way there.
+            let open_terminal =
+                (self.snapshot["operationErrorCode"] == "answerInTerminal").then(|| {
+                    div().flex().mt(px(6.0 * p.scale)).child(self.chat_button(
+                        "answer-in-terminal".into(),
+                        "Open terminal".into(),
+                        json!({"type":"switchToTerminal"}),
+                        p,
+                        cx,
+                    ))
+                });
             waiting.push(
                 div()
                     .text_color(gpui::rgb(0xef9999))
                     .child(error.to_string())
+                    .children(open_terminal)
                     .child(super::suggestions::stack_marker(&stack_top))
                     .into_any_element(),
             );
@@ -414,6 +420,7 @@ impl NativeChatView {
             waiting.push(card.into_any_element());
         }
         self.sync_files_links_menu(window, cx);
+        self.sync_resource_modal_menu(window, cx);
         if maximized && let Some(suggestions) = self.inline_suggestions(window, cx) {
             let height =
                 super::suggestions::suggestion_panel_height(&self.snapshot["suggestions"], s);
@@ -607,6 +614,10 @@ impl NativeChatView {
         if !maximized && let Some(run_location) = self.render_run_location(p, cx) {
             waiting.push(run_location.into_any_element());
         }
+        // The worktree tray sits last, right on top of the box it is attached to.
+        if !maximized && let Some(tray) = self.render_worktree_tray(p, cx) {
+            waiting.push(tray);
+        }
         // The box's own lead-in on top of the stack's 8px gap.
         let lead_in = if !waiting.is_empty() {
             0.0
@@ -617,6 +628,13 @@ impl NativeChatView {
         };
         footer = footer.children(waiting);
         // CDXC:SessionChat 2026-09-18 WHY: React's inline composer had a zero-height notification section before its field, contributing one grid gap even while idle. Reserve that same gap here when nothing stacks above the box.
+        // The chat's pills ride in a strip along the box's top edge, inside its border
+        // (pills_strip.rs); what the box holds under it is unchanged.
+        let pills_strip = if maximized {
+            None
+        } else {
+            self.render_pills_strip(p, cx)
+        };
         footer = footer.child(
             div()
                 .relative()
@@ -630,16 +648,26 @@ impl NativeChatView {
                 .border_1()
                 .border_color(p.composer_border)
                 .bg(p.composer_background)
-                .px(px(16.0 * s))
-                .py(px(padding_block))
                 .when(maximized, |this| this.flex_1().min_h_0())
-                .when_some(frame.height.filter(|_| !maximized), |this, height| {
-                    this.h(px(height)).overflow_hidden()
-                })
-                .child(content)
-                // Dictate's pill floats just above the microphone, over the text field
-                // (dictation.rs), drawn last so it is on top.
-                .children(self.render_dictation_pill(p, cx)),
+                .children(pills_strip)
+                .child(
+                    div()
+                        .relative()
+                        .flex()
+                        .flex_col()
+                        .w_full()
+                        .min_w_0()
+                        .px(px(16.0 * s))
+                        .py(px(padding_block))
+                        .when(maximized, |this| this.flex_1().min_h_0())
+                        .when_some(frame.height.filter(|_| !maximized), |this, height| {
+                            this.h(px(height)).overflow_hidden()
+                        })
+                        .child(content)
+                        // Dictate's pill floats just above the microphone, over the text field
+                        // (dictation.rs), drawn last so it is on top.
+                        .children(self.render_dictation_pill(p, cx)),
+                ),
         );
         if self.status_line_reserved() {
             footer = footer.child(self.render_context_status(p, cx));

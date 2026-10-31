@@ -26,19 +26,45 @@ impl GhostexGpuiApp {
     /// The modal palette for the current appearance and sidebar theme, frosted under window glass,
     /// where the modal's window blurs what is behind it (`open_native_app_modal`).
     pub(crate) fn gpui_native_modal_palette(&self) -> ModalPalette {
+        let palette = self.gpui_native_modal_solid_palette();
+        if !window_glass_active() {
+            return palette;
+        }
+        palette.frosted(frosted_modal_fill(palette.surface.into()).into())
+    }
+
+    /// The palette of a form dialog (Send Bug / Feedback, Add Project, Rename and the like): under
+    /// window glass the Accounts & limits popover's thinner frost (CDXC:AppModal 2026-10-29 on
+    /// `frosted_dialog_fill`).
+    pub(crate) fn gpui_native_dialog_palette(&self) -> ModalPalette {
+        let palette = self.gpui_native_modal_solid_palette();
+        if !window_glass_active() {
+            return palette;
+        }
+        palette.frosted_dialog(frosted_dialog_fill(palette.surface.into()).into())
+    }
+
+    /// The palette of a large panel (Settings and its pages, the Agents Hub, the New Thread
+    /// picker): the dialogs' frost and washes over the darker panel tint (`frosted_panel_fill`).
+    pub(crate) fn gpui_native_panel_palette(&self) -> ModalPalette {
+        let palette = self.gpui_native_modal_solid_palette();
+        if !window_glass_active() {
+            return palette;
+        }
+        palette.frosted_dialog(frosted_panel_fill(palette.surface.into()).into())
+    }
+
+    /// The modal palette for the current appearance and sidebar theme with glass off.
+    fn gpui_native_modal_solid_palette(&self) -> ModalPalette {
         let settings = shared_settings::shared_sidebar_settings_snapshot();
-        let palette = ModalPalette::resolve(
+        ModalPalette::resolve(
             CHROME_LIGHT_APPEARANCE.load(std::sync::atomic::Ordering::Relaxed),
             settings
                 .object()
                 .get("sidebarTheme")
                 .and_then(serde_json::Value::as_str),
         )
-        .tinted(titlebar_background().into());
-        if !window_glass_active() {
-            return palette;
-        }
-        palette.frosted(frosted_modal_fill(palette.surface.into()).into())
+        .tinted(titlebar_background().into())
     }
 
     /// Opens `kind` as a native window whose content is built by `build`.
@@ -258,7 +284,7 @@ impl GhostexGpuiApp {
                 self.open_gpui_settings_modal(kind, open_message, cx);
             }
             GpuiAppModalKind::Feedback => {
-                self.open_gpui_feedback_modal(cx);
+                self.open_gpui_feedback_modal(false, cx);
             }
             GpuiAppModalKind::CreateLinearTicket => {
                 self.open_gpui_create_linear_ticket_modal(open_message, cx);

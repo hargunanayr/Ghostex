@@ -444,11 +444,18 @@ pub(crate) mod message {
         json!({ "type": "openWorkspaceProjectInFinderForGroup", "groupId": group_id })
     }
 
-    pub(crate) fn open_project_in_target(group_id: &str, target_id: &str) -> Value {
+    /// `target_label` names the app in the warning a remote project gets when the target cannot
+    /// open a folder on another computer.
+    pub(crate) fn open_project_in_target(
+        group_id: &str,
+        target_id: &str,
+        target_label: &str,
+    ) -> Value {
         json!({
             "type": "openWorkspaceProjectInTargetForGroup",
             "groupId": group_id,
             "targetId": target_id,
+            "targetLabel": target_label,
         })
     }
 

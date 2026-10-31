@@ -81,6 +81,57 @@ pub fn handle(state: &mut ChatState, action: &UserAction, context: &ChatContext)
         ActionKind::PreviousQuestion => {
             effects.extend(crate::questions::open_questions::previous(state, context));
         }
+        ActionKind::JumpToQuestion => {
+            let id = action
+                .param("id")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            effects.extend(crate::questions::open_questions::jump_to_id(
+                state, context, id,
+            ));
+        }
+        ActionKind::QuestionListFilter => {
+            let filter = action
+                .param("filter")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            crate::questions::open_questions::pick_filter(state, filter);
+        }
+        ActionKind::OpenResource => {
+            let id = action
+                .param("id")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            effects.extend(crate::questions::open_questions::open_resource(state, context, id));
+        }
+        ActionKind::CloseResource => crate::questions::resource_modal::close(state),
+        ActionKind::GoToResource => {
+            let id = action
+                .param("id")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            effects.extend(crate::questions::resource_modal::go_to(state, context, id));
+        }
+        ActionKind::QuestionListMore => crate::questions::open_questions::more(state),
+        ActionKind::QuestionListReset => crate::questions::open_questions::reset_pages(state),
+        ActionKind::QuestionForLater => {
+            let id = action
+                .param("id")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let later = action
+                .param("later")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            effects.extend(crate::questions::later::set(state, id, later));
+        }
+        ActionKind::QuestionRemove => {
+            let id = action
+                .param("id")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            effects.extend(crate::questions::later::remove(state, id));
+        }
         ActionKind::FormNotes => {
             let id = action
                 .param("form")

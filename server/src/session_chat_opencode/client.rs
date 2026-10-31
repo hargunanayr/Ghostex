@@ -63,10 +63,11 @@ impl Client {
         Ok(Self {
             url: url.trim_end_matches('/').to_string(),
             authorization: format!("Basic {}", STANDARD.encode(format!("opencode:{password}"))),
-            agent: ureq::AgentBuilder::new()
-                .timeout(Duration::from_secs(5))
-                .redirects(0)
-                .build(),
+            agent: crate::http_agent::config()
+                .timeout_global(Some(Duration::from_secs(5)))
+                .max_redirects(0)
+                .build()
+                .into(),
         })
     }
 
@@ -76,42 +77,88 @@ impl Client {
         path: &str,
         body: Option<Value>,
     ) -> Result<Value, DomainStateError> {
-        let mut request = self
-            .agent
-            .request(method, &format!("{}{path}", self.url))
-            .set("Authorization", &self.authorization);
-        if method == "POST" && path.ends_with("/shell") {
-            request = request.timeout(Duration::from_secs(3600));
-        }
+        let request = ureq::http::Request::builder()
+            .method(method)
+            .uri(format!("{}{path}", self.url))
+            .header("Authorization", &self.authorization);
+        let long = method == "POST" && path.ends_with("/shell");
         let response = match body {
-            Some(body) => request.send_json(body),
-            None => request.call(),
-        }
-        .map_err(|failure| match failure {
-            ureq::Error::Status(status, _) => {
-                error(format!("OpenCode rejected the request (HTTP {status})."))
-            }
-            _ => error("Could not reach the OpenCode service."),
-        })?;
+            Some(body) => self.run(
+                request
+                    .header("Content-Type", "application/json")
+                    .body(body.to_string()),
+                long,
+            ),
+            None => self.run(request.body(()), long),
+        }?;
         if response.status() == 204 {
             return Ok(Value::Null);
         }
-        response
-            .into_json()
+        crate::http_agent::read_json(response)
+            .map_err(|_| error("OpenCode returned an invalid response."))
+    }
+
+    /// Sends a request built with a method chosen at run time; `long` lifts the time limit to an hour.
+    fn run(
+        &self,
+        request: Result<ureq::http::Request<impl ureq::AsSendBody>, ureq::http::Error>,
+        long: bool,
+    ) -> Result<ureq::http::Response<ureq::Body>, DomainStateError> {
+        let request = request.map_err(|_| error("Invalid OpenCode request."))?;
+        let mut config = self.agent.configure_request(request);
+        if long {
+            config = config.timeout_global(Some(Duration::from_secs(3600)));
+        }
+        self.agent
+            .run(config.build())
+            .map_err(|failure| match failure {
+                ureq::Error::StatusCode(status) => {
+                    error(format!("OpenCode rejected the request (HTTP {status})."))
+                }
+                _ => error("Could not reach the OpenCode service."),
+            })
+    }
+
+    /// A request answered for `directory` (`x-opencode-directory`): the service's shells and MCP
+    /// servers are per project folder, and without it the service uses its own folder's (a
+    /// `DELETE /api/shell/<id>` of another folder's shell then answers 204 and stops nothing).
+    pub(crate) fn request_in(
+        &self,
+        method: &str,
+        path: &str,
+        directory: &str,
+    ) -> Result<Value, DomainStateError> {
+        let response = self.run(
+            ureq::http::Request::builder()
+                .method(method)
+                .uri(format!("{}{path}", self.url))
+                .header("Authorization", &self.authorization)
+                .header("x-opencode-directory", directory)
+                .body(()),
+            false,
+        )?;
+        if response.status() == 204 {
+            return Ok(Value::Null);
+        }
+        crate::http_agent::read_json(response)
             .map_err(|_| error("OpenCode returned an invalid response."))
     }
 
     /// `/api/event` stays open for as long as the service runs, so it gets no read timeout.
-    pub(crate) fn event_stream(&self) -> Result<ureq::Response, DomainStateError> {
-        ureq::AgentBuilder::new()
-            .timeout_connect(Duration::from_secs(5))
-            .redirects(0)
-            .build()
-            .get(&format!("{}/api/event", self.url))
-            .set("Authorization", &self.authorization)
-            .set("Accept", "text/event-stream")
-            .call()
-            .map_err(|_| error("Could not reach the OpenCode service."))
+    pub(crate) fn event_stream(
+        &self,
+    ) -> Result<ureq::http::Response<ureq::Body>, DomainStateError> {
+        ureq::Agent::from(
+            crate::http_agent::config()
+                .timeout_connect(Some(Duration::from_secs(5)))
+                .max_redirects(0)
+                .build(),
+        )
+        .get(format!("{}/api/event", self.url))
+        .header("Authorization", &self.authorization)
+        .header("Accept", "text/event-stream")
+        .call()
+        .map_err(|_| error("Could not reach the OpenCode service."))
     }
 
     pub(crate) fn session(

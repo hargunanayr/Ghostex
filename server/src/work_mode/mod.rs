@@ -38,9 +38,14 @@ mod project;
 mod pull_request_tickets;
 mod refresh;
 mod settings;
+mod source;
+mod source_github;
+mod source_linear;
 mod start_pull_request;
 mod start_work;
 mod team_flow;
+#[cfg(test)]
+mod tests;
 mod tracker;
 
 pub(crate) use branch::*;
@@ -66,6 +71,9 @@ pub(crate) use project::*;
 pub(crate) use pull_request_tickets::*;
 pub(crate) use refresh::*;
 pub(crate) use settings::*;
+pub(crate) use source::*;
+pub(crate) use source_github::*;
+pub(crate) use source_linear::*;
 pub(crate) use start_pull_request::*;
 pub(crate) use start_work::*;
 pub(crate) use team_flow::*;

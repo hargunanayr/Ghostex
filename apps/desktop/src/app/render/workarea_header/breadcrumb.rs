@@ -200,8 +200,7 @@ impl GhostexGpuiApp {
                                 .text_color(titlebar_text_color())
                                 .child(title),
                         )
-                    })
-                    .children(self.render_workarea_header_session_links(compact, cx)),
+                    }),
             )
     }
 }

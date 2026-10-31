@@ -1,7 +1,7 @@
 //! A prompt's delivery state. A user bubble still waiting for the agent's terminal shows a
 //! spinner, and one the agent queued behind its running turn shows a play button, both left of the
 //! bubble at its bottom. A failed send gets the daemon's own sentence above the bubble,
-//! with Retry and Remove beside it. An inter-agent card keeps the older "Waiting for agent…" line.
+//! with Retry and Remove beside it, and a send gxserver has held a minute says why there. An inter-agent card keeps the older "Waiting for agent…" line.
 //! Ported from React's `session-chat-startup-send-status.tsx`; it acts on the queue
 //! row the send became, so Retry and Remove are the queue's own operations.
 
@@ -32,7 +32,10 @@ impl NativeChatView {
         }
         let s = p.scale;
         let failed = delivery["state"] == "failed";
-        if !failed && !waiting_line {
+        // Why gxserver still holds it, once it has waited about a minute; shown on every waiting
+        // send, beside the spinner a user bubble already has.
+        let reason = text(delivery, "waitReason");
+        if !failed && !waiting_line && reason.is_empty() {
             return None;
         }
         let prompt_id = delivery["promptId"].clone();
@@ -43,6 +46,8 @@ impl NativeChatView {
             } else {
                 message
             }
+        } else if !reason.is_empty() {
+            reason
         } else {
             "Waiting for agent…".to_string()
         };

@@ -162,12 +162,36 @@ pub(crate) struct GpuiAppToast {
 pub(crate) enum GpuiAppToastAction {
     /// Settings > Accounts, on this agent's accounts (`claude`, `codex`) when one is named.
     OpenAccounts { provider: Option<String> },
+    /// Settings > Extensions, where views are turned on.
+    OpenViewSettings,
+    /// The release page of the update a failed AppImage update was installing (Linux).
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    OpenUpdateDownloadPage,
+    /// A fixed native project-path bridge payload a planned toast carries
+    /// (`ghostex_gx_core::ToastButton`), such as Copy Path on a remote project.
+    NativeProjectPathAction {
+        label: String,
+        payload: serde_json::Value,
+    },
+    /// A command run in a new terminal split right of `pane_id`, such as a terminal extension's
+    /// Install with Homebrew. `pane_id` is the Agents workspace pane (`WorkspacePaneId`).
+    RunInNewTerminal {
+        label: String,
+        title: String,
+        command: String,
+        pane_id: u64,
+    },
 }
 
 impl GpuiAppToastAction {
-    pub(crate) fn label(&self) -> &'static str {
+    pub(crate) fn label(&self) -> &str {
         match self {
             Self::OpenAccounts { .. } => "Open Accounts",
+            Self::OpenViewSettings => "Open Settings",
+            Self::OpenUpdateDownloadPage => "Open download page",
+            Self::NativeProjectPathAction { label, .. } | Self::RunInNewTerminal { label, .. } => {
+                label
+            }
         }
     }
 }
@@ -549,7 +573,7 @@ impl GpuiAppToastWindow {
         ink: Hsla,
     ) -> AnyElement {
         let app = self.app.clone();
-        let label = action.label();
+        let label = action.label().to_string();
         div()
             .id(format!("toast-action-{toast_id}"))
             .mt(px(6.0))

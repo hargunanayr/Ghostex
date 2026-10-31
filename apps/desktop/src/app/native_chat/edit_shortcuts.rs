@@ -329,6 +329,7 @@ impl NativeChatView {
                 self.search_input
                     .iter()
                     .chain(self.files_links_input.iter())
+                    .chain(self.draft_project_picker_input())
                     .chain(
                         self.terminal_picker_input
                             .iter()
@@ -448,6 +449,10 @@ impl NativeChatView {
         if let Some(search) = self.search_input.clone() {
             return self.background_key_into(&search, keystroke, window, cx);
         }
+        // The tray's project search takes what is typed while it is open, like the find bar.
+        if let Some(search) = self.draft_project_picker_input().cloned() {
+            return self.background_key_into(&search, keystroke, window, cx);
+        }
         let Some(input) = self.input.clone() else {
             return false;
         };
@@ -558,6 +563,11 @@ impl NativeChatView {
             .chain(self.async_answer_input.iter().map(|(_, input)| input))
             .map(|input| input.focus_handle(cx))
             .chain(self.search_input.iter().map(|input| input.focus_handle(cx)))
+            .chain(
+                self.draft_project_picker_input()
+                    .into_iter()
+                    .map(|input| input.focus_handle(cx)),
+            )
             .chain(
                 self.files_links_input
                     .iter()

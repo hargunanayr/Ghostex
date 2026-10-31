@@ -28,22 +28,23 @@ pub(super) async fn call(
     let token = state.auth_token.clone();
     let body = json!({"params": params, "protocolVersion": GXSERVER_PROTOCOL_VERSION});
     tokio::task::spawn_blocking(move || {
-        let outcome = ureq::post(&url)
-            .set("authorization", &format!("Bearer {token}"))
-            .set("content-type", "application/json")
-            .set(
+        let outcome = crate::http_agent::answering_agent()
+            .post(&url)
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/json")
+            .header(
                 "x-gxserver-protocol-version",
-                &GXSERVER_PROTOCOL_VERSION.to_string(),
+                GXSERVER_PROTOCOL_VERSION.to_string(),
             )
-            .timeout(timeout)
-            .send_string(&body.to_string());
+            .config()
+            .timeout_global(Some(timeout))
+            .build()
+            .send(body.to_string());
         let response = match outcome {
             Ok(response) => response,
-            Err(ureq::Error::Status(_, response)) => response,
-            Err(error) => return Err(format!("gxserver did not answer: {}", error.kind())),
+            Err(error) => return Err(format!("gxserver did not answer: {error}")),
         };
-        let body: Value = response
-            .into_json()
+        let body: Value = crate::http_agent::read_json(response)
             .map_err(|error| format!("gxserver sent an unreadable answer: {error}"))?;
         if body.get("ok").and_then(Value::as_bool) == Some(true) {
             Ok(body.get("result").cloned().unwrap_or(Value::Null))

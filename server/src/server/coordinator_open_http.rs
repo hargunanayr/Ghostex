@@ -67,7 +67,7 @@ fn open_thread(
     let thread = read_thread(db, project_id, session_id)?
         .filter(|thread| thread.coordinator_key() == coordinator)
         .ok_or_else(|| {
-            DomainStateError::not_found("That session is not a thread of this orchestrator.")
+            DomainStateError::not_found("That session is not a thread of this coordinator.")
         })?;
     let session = repository
         .get_session(&thread.project_id, &thread.session_id)?
@@ -85,7 +85,7 @@ fn open_thread(
         );
         if !woken.response.status().is_success() {
             return Err(DomainStateError::corrupt_state(
-                "The thread's session could not be resumed. Try `ghostex orchestrator reopen` for it.",
+                "The thread's session could not be resumed. Try `ghostex coordinator reopen` for it.",
             ));
         }
     }

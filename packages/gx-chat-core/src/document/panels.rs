@@ -28,7 +28,8 @@ pub struct WorkingStrip {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkingCard {
-    /// The row above the composer shows the card.
+    /// The row above the composer shows the card: it has a working (or worked) line. The pills
+    /// show in the chat box's strip whether or not the card does.
     pub visible: bool,
     /// `working`, `worked` (the turn ended and its Worked line shows) or `idle`.
     pub phase: String,
@@ -43,10 +44,14 @@ pub struct WorkingCard {
     /// A live activity's clock and progress (compaction): `elapsedLabel`, `tokens`, `percent`,
     /// `indeterminate`, `hint`, as `workingStrip.presentation` carried them.
     pub activity: Option<Value>,
-    /// The pill ids (`chatPills`) on the card, in the pills' order.
+    /// The pill ids (`chatPills`) for the chat box's pill strip, in the pills' order.
     pub pills: Vec<String>,
     /// What a screen reader says for the card.
     pub aria_label: String,
+    /// A tool label in runs for the two-row top row, its file paths shortened (`dim` folders);
+    /// empty for any other label (extras/working_card_label.rs).
+    #[serde(default)]
+    pub label_parts: Vec<crate::extras::working_card_label::WorkingCardLabelPart>,
 }
 
 /// One pill on the working card (`extras::chat_pills`): a panel folded into a pill that opens a
@@ -59,11 +64,13 @@ pub struct ChatPill {
     pub label: String,
     /// The number after the label ("3", "4/9"), or "" for none.
     pub count: String,
-    /// Something in the menu needs the user (a thread waiting on an approval): an amber dot.
-    pub attention: bool,
+    /// What in the menu waits on the user: `approval` (a thread needs an approval: the sidebar's red
+    /// approval dot), `question` (a thread waits on an answer: the sidebar's pink question dot), or
+    /// "" for nothing.
+    pub waiting: String,
     /// A subagent or thread in the menu is working: the ? pill's amber corner dot, pulsing.
     pub running: bool,
-    /// The panel's muted detail ("2 working · 212 threads"), the menu's header line.
+    /// The panel's muted detail ("2 active · 212 total"), the menu's header line.
     pub meta: String,
     pub aria_label: String,
 }

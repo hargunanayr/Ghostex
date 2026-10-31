@@ -40,6 +40,12 @@ pub fn rpc_settled(
     if let Some(effects) = crate::questions::forms::rpc_settled(state, request_id, outcome) {
         return Some(effects);
     }
+    if let Some(effects) = crate::questions::later::rpc_settled(state, request_id, outcome) {
+        return Some(effects);
+    }
+    if let Some(effects) = crate::questions::resource_modal::rpc_settled(state, request_id, outcome) {
+        return Some(effects);
+    }
     if state
         .questions
         .answer_request

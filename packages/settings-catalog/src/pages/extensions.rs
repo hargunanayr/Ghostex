@@ -8,7 +8,7 @@ use crate::Platform;
 pub(crate) fn page(platform: Platform) -> Page {
     Page {
         id: "extensions",
-        title: "Store",
+        title: "Extensions",
         sections: vec![
             view_order(platform),
             official(platform),
@@ -41,7 +41,7 @@ pub(crate) fn official(platform: Platform) -> Section {
         row("posthog", "PostHog", "Explore product analytics and session replays. Choose a home URL for each project or worktree."),
         row("custom-website", "Custom Website", "Keep any website beside your work. Choose a home URL for each project or worktree."),
         row("storybook", "Storybook", "Build, browse, and annotate your project’s components without a persistent development server. Appears only in projects with Storybook."),
-        row("code", "Code editor", "Explore, edit, and search your project in a familiar, full-featured workspace without ever leaving Ghostex."),
+        row("code", "VS Code", "Explore, edit, and search your project in a familiar, full-featured workspace without ever leaving Ghostex."),
         row("browser", "Browser", "Open websites alongside your project and keep useful pages organized without leaving Ghostex."),
         row("kanban", "Kanban", "Plan upcoming work and track task progress at a glance."),
         row("sessionBoard", "Board", "Every thread of the Space on one board: Pending, In progress, Review and Completed, with tasks you start later. Opened from the Board button at the top left."),
@@ -49,6 +49,7 @@ pub(crate) fn official(platform: Platform) -> Section {
         row("bots", "Bots", "Swap the sidebar to your Hermes agents: one row each, with a new session one click away. Needs the Hermes CLI."),
         row("botAutomations", "Bot automations", "A feed of every Hermes cron run, one channel per job, opened from the Bots sidebar. Needs Bots."),
         row("docs", "Files", "Browse your project’s notes, plans, and reference files together in one focused reading space."),
+        row("changes", "Changes", "Review what changed, comment on lines for your agent, revert a hunk, and commit, all beside your sessions."),
         row("terminal", "Terminal", "A command terminal beside your sessions, with its own tabs and splits, that works like the Commands pane but lives in the view panel."),
         row("tips", "Tips & Tricks", "A panel of short tips for getting more out of Ghostex, opened from the ⋯ menu."),
         row("notifications", "Notifications", "A bell in the sidebar's top row that lists what your agents finished or need from you."),
@@ -65,7 +66,6 @@ pub(crate) fn official(platform: Platform) -> Section {
         row("osIntegration", "OS Integration", "Make Ghostex your default editor, terminal-link handler and script runner, and check how this computer opens its files and links."),
         row("debugging", "Debugging", "The Debugging page in Settings: debug UI controls and the diagnostic logs you turn on while reproducing an issue."),
         row("extensionsButton", "Extensions", "An entry in the work area header’s ⋯ menu that lists your installed extensions."),
-        row("cef", "Chromium runtime (CEF)", "Install, reinstall or uninstall the optional web runtime used by the Browser, the Code view, website and extension views, and HTML files in Files."),
     ];
     rows.retain(|row| crate::built_in_extensions::available_on(row.key, platform));
     section("official", "Built-in", rows)
@@ -74,10 +74,10 @@ pub(crate) fn official(platform: Platform) -> Section {
 pub(crate) fn store() -> Section {
     section(
         "store",
-        "Extensions Store",
+        "Get more",
         vec![row(
             "store",
-            "Extension store",
+            "Get more extensions",
             "Browse audited extensions, install them, and manage what is already installed.",
         )],
     )

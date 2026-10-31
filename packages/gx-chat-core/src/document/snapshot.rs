@@ -71,6 +71,9 @@ pub struct Document {
     /// A draft's Run on row (`menus/run_location.rs`), absent when the row is hidden. Family e.
     #[serde(default, skip_serializing_if = "Tri::is_absent")]
     pub run_location: Tri<Value>,
+    /// A draft's worktree tray (`menus/draft_worktree.rs`), absent when it is hidden. Family e.
+    #[serde(default, skip_serializing_if = "Tri::is_absent")]
+    pub worktree_tray: Tri<Value>,
     /// The session's own launch agent id, never the transcript family.
     pub session_agent_id: Tri<String>,
     pub error: Tri<String>,
@@ -86,6 +89,10 @@ pub struct Document {
     /// so their cards say so (`transcript::open_questions::withdrawn_pages`).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub withdrawn_pages: BTreeMap<String, crate::transcript::open_questions::WithdrawnPage>,
+    /// The question pages and forms put off "For later" that still wait for answers, so their
+    /// cards say so and offer "Back to unanswered" (`questions::later`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub later_questions: Vec<String>,
     /// Per completed-work row: the read is in flight, or it failed and offers a retry.
     pub deferred_work: BTreeMap<String, DeferredWorkRow>,
     /// Claude Code workflow runs drawn as cards, by Workflow call id
@@ -143,6 +150,10 @@ pub struct Document {
     /// The question forms (```questions blocks) by id, with the reader's picks or the sent answers
     /// (`questions/forms.rs`); the transcript's Markdown names each by id where it is drawn.
     pub question_forms: BTreeMap<String, Value>,
+    /// The form or chart a Resources row opened in the floating modal, or `null`
+    /// (`questions/resource_modal.rs`); a form's picks are in `questionForms` under its id.
+    #[serde(default)]
+    pub resource_modal: Value,
     /// The Previous question pill and the jumps to a question (`questions/open_questions.rs`).
     #[serde(default)]
     pub open_questions: crate::questions::open_questions::OpenQuestions,
@@ -244,6 +255,8 @@ pub struct Document {
     pub summary_mode: bool,
     /// The user's verbose override, or `null` to follow the setting.
     pub verbose_override: Option<bool>,
+    /// The user's Simple override for this chat, or `null` to follow the setting.
+    pub simple_override: Option<bool>,
     pub empty_state: EmptyState,
     pub new_session_welcome: Option<NewSessionWelcome>,
     /// `blank`, `indicator` or `retry` while the transcript loads; `null` otherwise.

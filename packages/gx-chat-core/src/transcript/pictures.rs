@@ -205,6 +205,7 @@ mod tests {
                 work: vec![message("w", vec![file("/work.png")], "")],
                 outcome: vec![],
                 latest_reply: true,
+                cards: vec![],
             },
             TranscriptItem::Message {
                 message: message("a2", vec![], "```md\n![not a picture](/code.png)\n```"),

@@ -140,6 +140,8 @@ mod space_editor;
 mod space_sleep;
 mod space_switch;
 pub(crate) mod terminal_lifecycle;
+pub(crate) mod unified_new_session;
+pub(crate) mod unified_sidebar;
 mod work_links;
 mod work_mode;
 mod workspace_groups;
@@ -163,10 +165,12 @@ pub(crate) use agentbox::{
 pub(crate) use capture_targets::CaptureTargetProject;
 pub(crate) use client_storage_init::initialize_client_storage_at_start;
 pub(crate) use host::GxStoreHost;
-pub(crate) use primary_launcher::read_primary_agent_launcher_id;
+pub(crate) use primary_launcher::{
+    read_agent_choices, read_primary_agent_launcher_id, try_read_agent_choices, write_agent_choices,
+};
 #[allow(unused_imports)] // the first callers arrive with the runtime port's family commits
 pub(crate) use rpc::{gx_rpc, gx_rpc_with_timeout};
-pub(crate) use session_board::{BoardAgentOption, BoardModelOption};
 #[allow(unused_imports)]
 pub(crate) use rpc_types::GxRpcError;
+pub(crate) use session_board::{BoardAgentOption, BoardModelOption};
 pub(crate) use workspace_groups::note_native_host_message_dropped;

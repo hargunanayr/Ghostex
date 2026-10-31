@@ -330,7 +330,9 @@ pub(crate) fn project_editor_auto_sleep_duration(
         }
         TitlebarMode::Agents
         | TitlebarMode::Terminal
-        | TitlebarMode::BotFeed | TitlebarMode::GhostOverview
+        | TitlebarMode::BotFeed
+        | TitlebarMode::GhostOverview
+        | TitlebarMode::Changes
         | TitlebarMode::Work
         | TitlebarMode::Extension(_) => {
             return None;

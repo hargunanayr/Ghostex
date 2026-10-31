@@ -194,13 +194,13 @@ impl GhostexGpuiApp {
                             .when(
                                 !content.bots_mode && frame.rail && !content.ghosts.is_empty(),
                                 |column| {
-                                    column
-                                        .child(rail_rule(None, appearance))
-                                        .children(content.ghosts.iter().map(|ghost| {
+                                    column.child(rail_rule(None, appearance)).children(
+                                        content.ghosts.iter().map(|ghost| {
                                             self.render_native_sidebar_ghost_rail_avatar(
                                                 ghost, appearance, cx,
                                             )
-                                        }))
+                                        }),
+                                    )
                                 },
                             )
                             .when(!frame.pinned_agents.is_empty(), |column| {

@@ -59,7 +59,10 @@ pub(crate) fn pending_task_presentation(session: &Value) -> Option<(String, Opti
     let prompt = pending_task_prompt(session)?;
     let collapsed = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
     let preview = if collapsed.chars().count() > TASK_PREVIEW_CHARS {
-        let mut cut = collapsed.chars().take(TASK_PREVIEW_CHARS).collect::<String>();
+        let mut cut = collapsed
+            .chars()
+            .take(TASK_PREVIEW_CHARS)
+            .collect::<String>();
         cut.push('…');
         cut
     } else {
@@ -161,7 +164,10 @@ pub(crate) fn rollback_session_task_start(
         return Ok(());
     };
     let mut runtime_settings = object_field(&session, "runtimeSettings");
-    if runtime_settings.remove(PENDING_TASK_STARTED_AT_KEY).is_some() {
+    if runtime_settings
+        .remove(PENDING_TASK_STARTED_AT_KEY)
+        .is_some()
+    {
         repository.update_session(&runtime_update(project_id, session_id, runtime_settings))?;
     }
     Ok(())

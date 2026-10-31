@@ -43,7 +43,9 @@ pub(super) fn run(parsed: &ParsedArgs) -> CliResult<()> {
         }
         "read" | "remove" => {
             let id = parsed.rest.get(1).cloned().ok_or_else(|| {
-                CliError::Other(format!("artifact {action} needs a document id from artifact list."))
+                CliError::Other(format!(
+                    "artifact {action} needs a document id from artifact list."
+                ))
             })?;
             let result = call_gxserver_rpc(
                 "/api/ghostArtifacts",
@@ -78,7 +80,13 @@ fn write(parsed: &ParsedArgs, ghost: &serde_json::Value) -> CliResult<()> {
     let (text, title, page, block, url) = match kind.as_str() {
         "html" => {
             let page = publish_html_file(&path, title.as_deref(), true, &flags)?;
-            (page.source, page.title, Some(page.id), Some(page.block), Some(page.url))
+            (
+                page.source,
+                page.title,
+                Some(page.id),
+                Some(page.block),
+                Some(page.url),
+            )
         }
         "markdown" => {
             let text = std::fs::read_to_string(&path).map_err(|error| {
@@ -89,11 +97,7 @@ fn write(parsed: &ParsedArgs, ghost: &serde_json::Value) -> CliResult<()> {
             })?;
             (text, title, None, None, None)
         }
-        _ => {
-            return Err(CliError::Other(
-                "--kind is html or markdown.".into(),
-            ))
-        }
+        _ => return Err(CliError::Other("--kind is html or markdown.".into())),
     };
     let stored = call_gxserver_rpc(
         "/api/ghostArtifacts",

@@ -25,10 +25,8 @@ pub(super) async fn route_ghosts_http(
         let closer = state.clone();
         let body = body_json.clone();
         let deleting = endpoint_path == "/api/deleteGhost";
-        let _ = tokio::task::spawn_blocking(move || {
-            close_ghost_sessions(&closer, &body, deleting)
-        })
-        .await;
+        let _ = tokio::task::spawn_blocking(move || close_ghost_sessions(&closer, &body, deleting))
+            .await;
     }
     Ok(handle_domain_http(
         &state,
@@ -44,7 +42,9 @@ pub(super) async fn route_ghosts_http(
                 params,
             )?;
             for (project_id, delta_type) in &output.changed_projects {
-                schedule_presentation_project_delta(&state, db, repository, project_id, delta_type)?;
+                schedule_presentation_project_delta(
+                    &state, db, repository, project_id, delta_type,
+                )?;
             }
             for (project_id, session_id) in &output.changed_sessions {
                 if repository.get_session(project_id, session_id)?.is_some() {

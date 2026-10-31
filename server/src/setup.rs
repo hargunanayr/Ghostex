@@ -133,10 +133,9 @@ fn run_setup_unix(options: &SetupOptions) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
     let release_dir = &options.release_dir;
-    let release_gxserver = release_dir.join("bin").join("gxserver");
-    if !release_gxserver.is_file() {
+    if let Some(tool) = release_missing_tool(release_dir) {
         return Err(anyhow!(
-            "Release directory {} does not contain bin/gxserver.",
+            "Release directory {} does not contain a working bin/{tool}, so the current install was left as it is.",
             release_dir.display()
         ));
     }
@@ -160,18 +159,7 @@ fn run_setup_unix(options: &SetupOptions) -> Result<()> {
 
     stop_existing_gxserver(&package_link);
 
-    /*
-    A pre-symlink install layout kept the package as a real directory; move it
-    aside instead of deleting so a broken upgrade can be recovered by hand.
-    */
-    if package_link.symlink_metadata().is_ok() && !package_link.is_symlink() {
-        let backup = options
-            .install_root
-            .join(format!("package.backup.{release_name}"));
-        fs::rename(&package_link, &backup)
-            .with_context(|| format!("move previous package directory to {}", backup.display()))?;
-    }
-    replace_symlink(release_dir, &package_link)?;
+    activate_release_package(&options.install_root, release_dir, &release_name)?;
 
     let local_bin = local_bin_dir();
     if let Some(local_bin) = &local_bin {
@@ -220,6 +208,39 @@ fn run_setup_unix(options: &SetupOptions) -> Result<()> {
     }
     println!("gxserver setup complete: {}", release_dir.display());
     Ok(())
+}
+
+/// The first program the release cannot run without that is missing or a dangling link
+/// (`is_file` follows links). Checked before anything stops or moves.
+///
+/// CDXC:RemoteMachines 2026-10-31 WHY: the tool loop in `run_setup_unix` skips a program it cannot
+/// find, so a release without a working zmx activated and its machine read connected until a
+/// session failed (GitHub #360).
+#[cfg(unix)]
+fn release_missing_tool(release_dir: &Path) -> Option<&'static str> {
+    REMOTE_TOOL_NAMES
+        .into_iter()
+        .find(|tool| !release_dir.join("bin").join(tool).is_file())
+}
+
+/// Points `package` at the release.
+#[cfg(unix)]
+fn activate_release_package(
+    install_root: &Path,
+    release_dir: &Path,
+    release_name: &str,
+) -> Result<()> {
+    let package_link = install_root.join("package");
+    /*
+    A pre-symlink install layout kept the package as a real directory; move it
+    aside instead of deleting so a broken upgrade can be recovered by hand.
+    */
+    if package_link.symlink_metadata().is_ok() && !package_link.is_symlink() {
+        let backup = install_root.join(format!("package.backup.{release_name}"));
+        fs::rename(&package_link, &backup)
+            .with_context(|| format!("move previous package directory to {}", backup.display()))?;
+    }
+    replace_symlink(release_dir, &package_link)
 }
 
 #[cfg(unix)]
@@ -473,6 +494,42 @@ fn is_pid_alive(pid: u32) -> bool {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    /// The report's install, a real package directory with a dangling `zmx` link, repaired by a
+    /// whole release: the broken one is kept aside and `package` runs the new one. A release that
+    /// is itself broken is refused before anything moves. Never calls `run_setup_unix`, whose
+    /// listener stop would reach this computer's own gxserver.
+    #[test]
+    fn a_broken_package_directory_is_replaced_and_a_broken_release_is_refused() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        let tools = |dir: &Path, zmx_link: Option<&str>| {
+            fs::create_dir_all(dir.join("bin")).expect("bin");
+            fs::write(dir.join("bin/gxserver"), "").expect("gxserver");
+            symlink("gxserver", dir.join("bin/ghostex")).expect("ghostex");
+            match zmx_link {
+                Some(target) => symlink(target, dir.join("bin/zmx")).expect("zmx link"),
+                None => fs::write(dir.join("bin/zmx"), "").expect("zmx"),
+            }
+        };
+        tools(&root.join("package"), Some("../../bin/zmx"));
+        assert_eq!(release_missing_tool(&root.join("package")), Some("zmx"));
+
+        let broken_release = root.join("releases/release-broken");
+        tools(&broken_release, Some("../../bin/zmx"));
+        assert_eq!(release_missing_tool(&broken_release), Some("zmx"));
+
+        let release = root.join("releases/release-good");
+        tools(&release, None);
+        assert_eq!(release_missing_tool(&release), None);
+        activate_release_package(root, &release, "release-good").expect("activate");
+        assert!(root.join("package").is_symlink());
+        assert!(root.join("package/bin/zmx").is_file());
+        assert!(root
+            .join("package.backup.release-good/bin/zmx")
+            .is_symlink());
+    }
 
     #[test]
     fn command_matching_requires_gxserver_markers() {

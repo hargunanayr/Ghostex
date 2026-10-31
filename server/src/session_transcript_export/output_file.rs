@@ -136,6 +136,17 @@ pub(crate) async fn handle_export_session_transcript_http(
         .get("includeReasoning")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    /*
+    CDXC:TranscriptExport 2026-10-25 WHY:
+    Advanced Handoff can start the follow-up session on ANOTHER computer, where this machine's
+    path means nothing. `includeMarkdown` answers the file's text as well, so the client can
+    carry it to the target machine (`saveSessionChatAttachment` there) without a
+    machine-to-machine path. Absent, the answer is unchanged.
+    */
+    let include_markdown = params
+        .get("includeMarkdown")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
 
     let resolved = (|| {
         let db = open_gxserver_database(&state.paths).map_err(|error| DomainStateError {
@@ -227,6 +238,24 @@ pub(crate) async fn handle_export_session_transcript_http(
     result.insert("parsedEntries".to_string(), json!(outcome.parsed_entries));
     if let Some(agent) = response_agent.as_deref() {
         result.insert("agent".to_string(), json!(agent));
+    }
+    if include_markdown {
+        let path = outcome.path.clone();
+        match tokio::task::spawn_blocking(move || fs::read_to_string(path)).await {
+            Ok(Ok(markdown)) => {
+                result.insert("markdown".to_string(), json!(markdown));
+            }
+            _ => {
+                return domain_error_response(
+                    endpoint_path,
+                    request_id,
+                    DomainStateError {
+                        code: "internalError",
+                        message: "The exported transcript could not be read back.".to_string(),
+                    },
+                )
+            }
+        }
     }
     routed_json(
         Some(endpoint_path),

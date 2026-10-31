@@ -5,10 +5,10 @@
 use std::time::Duration;
 
 use ghostex_gx_core::session_board::{
-    BoardCard, SessionBoardView, build_session_board, close_completed_message,
-    complete_all_params, complete_params, read_task_params, start_task_params,
-    update_task_params, with_board_task, COMPLETE_SESSIONS_ENDPOINT, COMPLETE_SESSION_ENDPOINT,
-    READ_SESSION_TASK_ENDPOINT, START_SESSION_TASK_ENDPOINT, UPDATE_SESSION_TASK_ENDPOINT,
+    BoardCard, COMPLETE_SESSION_ENDPOINT, COMPLETE_SESSIONS_ENDPOINT, READ_SESSION_TASK_ENDPOINT,
+    START_SESSION_TASK_ENDPOINT, SessionBoardView, UPDATE_SESSION_TASK_ENDPOINT,
+    build_session_board, close_completed_message, complete_all_params, complete_params,
+    read_task_params, start_task_params, update_task_params, with_board_task,
 };
 use ghostex_gx_core::{
     MachineId, first_prompt_title_runtime_settings, local_agent_launch_params,
@@ -358,7 +358,14 @@ impl GhostexGpuiApp {
         prompt: &str,
         cx: &mut gpui::Context<Self>,
     ) -> gpui::Task<Result<Value, String>> {
-        let machine = match self.gx_store.sidebar_list.last_inputs.ui.selected_machine_id.as_str() {
+        let machine = match self
+            .gx_store
+            .sidebar_list
+            .last_inputs
+            .ui
+            .selected_machine_id
+            .as_str()
+        {
             ghostex_gx_core::LOCAL_MACHINE_ID => MachineId::Local,
             machine_id => MachineId::Remote(machine_id.to_string()),
         };

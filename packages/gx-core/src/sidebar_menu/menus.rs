@@ -213,6 +213,7 @@ impl<'a> SidebarMenus<'a> {
                 .as_ref()
                 .and_then(|project| project.git_remote_origin_url.as_deref()),
             server_id: self.server_id.clone(),
+            agent_place: super::AgentChoicePlace::for_group(self.view, group),
         }
     }
 
@@ -258,6 +259,21 @@ impl<'a> SidebarMenus<'a> {
         let (group, session) = self.find_row(sidebar_session_id)?;
         let menu_group = self.menu_group(group);
         Some(session::session_hover_submenu(
+            &self.session_input(&menu_group, &session.row, &[], None),
+            action,
+        ))
+    }
+
+    /// The submenu of one of a row's actions whatever the hover strip shows
+    /// (`session::session_action_submenu`). `None` when the list does not draw the row.
+    pub fn row_action_submenu(
+        &self,
+        sidebar_session_id: &str,
+        action: HoverAction,
+    ) -> Option<Vec<MenuItem>> {
+        let (group, session) = self.find_row(sidebar_session_id)?;
+        let menu_group = self.menu_group(group);
+        Some(session::session_action_submenu(
             &self.session_input(&menu_group, &session.row, &[], None),
             action,
         ))

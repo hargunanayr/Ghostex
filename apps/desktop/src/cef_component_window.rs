@@ -404,23 +404,22 @@ pub(crate) enum CefRuntimeReadiness {
 
 /// Points this process at the CEF runtime to use (the one next to the app, `GHOSTEX_CEF_DIR`, or
 /// the component store's current version) and reports whether one was found. A cheap path check:
-/// the full verification runs in `verified_cef_runtime_readiness` when CEF starts.
+/// the full verification runs in `verified_cef_runtime_readiness` when CEF starts. On Linux a
+/// folder outside the component store also has to hold this build's CEF.
 pub(crate) fn configure_cef_framework_path_for_process() -> bool {
+    #[cfg(target_os = "linux")]
+    let runtime_dir = match linux_cef_runtime_source_for_process().0 {
+        LinuxCefRuntimeSource::Folder(runtime_dir) => Some(runtime_dir),
+        LinuxCefRuntimeSource::Component => installed_cef_component_dir(),
+    };
+    #[cfg(not(target_os = "linux"))]
     let runtime_dir = bundled_cef_runtime_dir()
         .or_else(|| {
             let configured = env::var_os(CEF_RUNTIME_DIR_ENV).map(PathBuf::from)?;
             verify_cef_runtime_dir(&configured).ok()?;
             Some(configured)
         })
-        .or_else(|| {
-            let store = on_demand_component_store().ok().flatten()?;
-            let component = store.component(CEF_COMPONENT)?;
-            if component.component_version != expected_cef_component_version() {
-                return None;
-            }
-            let installed = store.query_current(CEF_COMPONENT).ok()?;
-            installed.installed.then_some(installed.path)
-        });
+        .or_else(installed_cef_component_dir);
     let found = runtime_dir.is_some();
     unsafe {
         if let Some(runtime_dir) = runtime_dir {
@@ -439,15 +438,39 @@ pub(crate) fn configure_cef_framework_path_for_process() -> bool {
     found
 }
 
+/// The component store's current CEF, when it is installed and is the version this build needs.
+fn installed_cef_component_dir() -> Option<PathBuf> {
+    let store = on_demand_component_store().ok().flatten()?;
+    let component = store.component(CEF_COMPONENT)?;
+    if component.component_version != expected_cef_component_version() {
+        return None;
+    }
+    let installed = store.query_current(CEF_COMPONENT).ok()?;
+    installed.installed.then_some(installed.path)
+}
+
 pub(crate) fn verified_cef_runtime_readiness() -> Result<CefRuntimeReadiness, String> {
-    if let Some(runtime_dir) = bundled_cef_runtime_dir() {
-        verify_cef_runtime_dir(&runtime_dir)?;
-        return Ok(CefRuntimeReadiness::Ready);
+    #[cfg(target_os = "linux")]
+    {
+        let (source, skipped) = linux_cef_runtime_source_for_process();
+        return linux_cef_runtime_readiness(source, &skipped, component_cef_runtime_readiness);
     }
-    if let Some(runtime_dir) = env::var_os(CEF_RUNTIME_DIR_ENV).map(PathBuf::from) {
-        verify_cef_runtime_dir(&runtime_dir)?;
-        return Ok(CefRuntimeReadiness::Ready);
+    #[cfg(not(target_os = "linux"))]
+    {
+        if let Some(runtime_dir) = bundled_cef_runtime_dir() {
+            verify_cef_runtime_dir(&runtime_dir)?;
+            return Ok(CefRuntimeReadiness::Ready);
+        }
+        if let Some(runtime_dir) = env::var_os(CEF_RUNTIME_DIR_ENV).map(PathBuf::from) {
+            verify_cef_runtime_dir(&runtime_dir)?;
+            return Ok(CefRuntimeReadiness::Ready);
+        }
+        component_cef_runtime_readiness()
     }
+}
+
+/// Whether the sealed CEF component is installed and verified, or still has to be downloaded.
+fn component_cef_runtime_readiness() -> Result<CefRuntimeReadiness, String> {
     let store = on_demand_component_store()?
         .ok_or_else(|| "The sealed CEF component manifest is unavailable.".to_string())?;
     let component = store.component(CEF_COMPONENT).ok_or_else(|| {
@@ -554,7 +577,121 @@ pub(crate) fn uninstall_cef_component() -> Result<bool, String> {
 /// bundles made without on-demand components), which Uninstall cannot remove.
 #[allow(dead_code)] // not used by the ghostex-gpui-cef-bootstrap binary
 pub(crate) fn cef_runtime_is_bundled() -> bool {
+    #[cfg(target_os = "linux")]
+    return bundled_cef_runtime_dir()
+        .is_some_and(|dir| cef_runtime_folder_matches_build(&dir, expected_cef_version()).is_ok());
+    #[cfg(not(target_os = "linux"))]
     bundled_cef_runtime_dir().is_some()
+}
+
+/// Where a Linux process takes its CEF runtime from.
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug, PartialEq)]
+enum LinuxCefRuntimeSource {
+    /// A runtime folder beside the app or named by `GHOSTEX_CEF_DIR` that holds this build's CEF.
+    Folder(PathBuf),
+    /// No such folder: the sealed component is used, or downloaded first.
+    Component,
+}
+
+/// The first of `candidates` that is a complete runtime folder of the CEF this build was compiled
+/// against, and why each folder before it was skipped.
+///
+/// CDXC:CefRuntime 2026-10-27 WHY:
+/// Linux links libcef.so at load time, and the bootstrap puts the chosen folder on `LD_LIBRARY_PATH`, so whatever folder wins here is the libcef the runtime runs. Any libcef.so beside the executable used to win with no version check, ahead of the component store; a CEF 154 payload left in /opt/ghostex by an older flat install then aborted every launch of 10.36.0 (CEF 156) with SIGTRAP (GitHub #339). A folder outside the component store is now used only when its libcef.so is this build's exact CEF (read without loading it, `cef_library_version.rs`); any other is skipped, so release builds fall through to the sealed component, and a build without one reports the mismatch. Component folders are named by their version and checked by digest, so they are not read again.
+#[cfg(any(target_os = "linux", test))]
+fn linux_cef_runtime_source(
+    candidates: impl IntoIterator<Item = PathBuf>,
+    expected_version: &str,
+) -> (LinuxCefRuntimeSource, Vec<String>) {
+    let mut skipped = Vec::new();
+    for runtime_dir in candidates {
+        if skipped.iter().any(|(dir, _)| dir == &runtime_dir) {
+            continue;
+        }
+        match verify_cef_runtime_files(&runtime_dir)
+            .and_then(|()| cef_runtime_folder_matches_build(&runtime_dir, expected_version))
+        {
+            Ok(()) => {
+                return (
+                    LinuxCefRuntimeSource::Folder(runtime_dir),
+                    skipped.into_iter().map(|(_, reason)| reason).collect(),
+                );
+            }
+            Err(reason) => skipped.push((runtime_dir, reason)),
+        }
+    }
+    (
+        LinuxCefRuntimeSource::Component,
+        skipped.into_iter().map(|(_, reason)| reason).collect(),
+    )
+}
+
+/// `linux_cef_runtime_source` for this process: the folder beside the executable, then
+/// `GHOSTEX_CEF_DIR`. Each skipped folder is reported on stderr once per process.
+#[cfg(target_os = "linux")]
+fn linux_cef_runtime_source_for_process() -> (LinuxCefRuntimeSource, Vec<String>) {
+    static REPORTED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    let candidates = bundled_cef_runtime_dir()
+        .into_iter()
+        .chain(env::var_os(CEF_RUNTIME_DIR_ENV).map(PathBuf::from));
+    let (source, skipped) = linux_cef_runtime_source(candidates, expected_cef_version());
+    if let Ok(mut reported) = REPORTED.lock() {
+        for reason in &skipped {
+            if !reported.contains(reason) {
+                eprintln!("Ghostex: skipping a Chromium runtime: {reason}");
+                reported.push(reason.clone());
+            }
+        }
+    }
+    (source, skipped)
+}
+
+/// Readiness once the source is known: a matching folder is ready; otherwise the component decides,
+/// and when it cannot, the error also names every folder that was skipped.
+#[cfg(any(target_os = "linux", test))]
+fn linux_cef_runtime_readiness(
+    source: LinuxCefRuntimeSource,
+    skipped: &[String],
+    component_readiness: impl FnOnce() -> Result<CefRuntimeReadiness, String>,
+) -> Result<CefRuntimeReadiness, String> {
+    match source {
+        LinuxCefRuntimeSource::Folder(_) => Ok(CefRuntimeReadiness::Ready),
+        LinuxCefRuntimeSource::Component => component_readiness().map_err(|reason| {
+            skipped
+                .iter()
+                .map(String::as_str)
+                .chain(std::iter::once(reason.as_str()))
+                .collect::<Vec<_>>()
+                .join(" ")
+        }),
+    }
+}
+
+/// Whether the libcef.so in `runtime_dir` is the CEF build this app was compiled against.
+#[cfg(any(target_os = "linux", test))]
+fn cef_runtime_folder_matches_build(
+    runtime_dir: &Path,
+    expected_version: &str,
+) -> Result<(), String> {
+    let library = runtime_dir.join("libcef.so");
+    match crate::cef_library_version::libcef_build_version(&library)? {
+        Some(found) if found == expected_version => Ok(()),
+        Some(found) => Err(format!(
+            "{} is CEF {found}, but this build of Ghostex needs CEF {expected_version}.",
+            library.display()
+        )),
+        None => Err(format!(
+            "{} does not name its CEF version, so it cannot be checked against CEF {expected_version}.",
+            library.display()
+        )),
+    }
+}
+
+/// The CEF build this app was compiled against, as `cef_version_full()` reports it.
+#[cfg(any(target_os = "linux", test))]
+fn expected_cef_version() -> &'static str {
+    env!("GHOSTEX_CEF_VERSION")
 }
 
 fn bundled_cef_runtime_dir() -> Option<PathBuf> {
@@ -586,12 +723,9 @@ fn bundled_cef_runtime_dir() -> Option<PathBuf> {
         .then(|| executable_dir.to_path_buf());
 }
 
-fn verify_cef_runtime_dir(runtime_dir: &Path) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    let library_path = runtime_dir.join(CEF_FRAMEWORK_EXECUTABLE_RELATIVE_PATH);
-    #[cfg(target_os = "windows")]
-    let library_path = runtime_dir.join("libcef.dll");
-    #[cfg(target_os = "linux")]
+/// The files a Linux CEF runtime folder needs, checked by path only.
+#[cfg(any(target_os = "linux", test))]
+fn verify_cef_runtime_files(runtime_dir: &Path) -> Result<(), String> {
     let library_path = runtime_dir.join("libcef.so");
     if !library_path.is_file() {
         return Err(format!(
@@ -599,7 +733,32 @@ fn verify_cef_runtime_dir(runtime_dir: &Path) -> Result<(), String> {
             library_path.display()
         ));
     }
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    for required in [runtime_dir.join("icudtl.dat"), runtime_dir.join("locales")] {
+        if !required.exists() {
+            return Err(format!(
+                "The verified CEF component is missing a required runtime resource at {}.",
+                required.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn verify_cef_runtime_dir(runtime_dir: &Path) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    verify_cef_runtime_files(runtime_dir)?;
+    #[cfg(target_os = "macos")]
+    let library_path = runtime_dir.join(CEF_FRAMEWORK_EXECUTABLE_RELATIVE_PATH);
+    #[cfg(target_os = "windows")]
+    let library_path = runtime_dir.join("libcef.dll");
+    #[cfg(not(target_os = "linux"))]
+    if !library_path.is_file() {
+        return Err(format!(
+            "The verified CEF component is missing its runtime library at {}.",
+            library_path.display()
+        ));
+    }
+    #[cfg(target_os = "windows")]
     for required in [runtime_dir.join("icudtl.dat"), runtime_dir.join("locales")] {
         if !required.exists() {
             return Err(format!(
@@ -677,4 +836,131 @@ fn expected_cef_component_version() -> String {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const BUILD_CEF: &str = "156.0.14+g4fa4ab5+chromium-156.0.8078.48";
+    const OLD_CEF: &str = "154.0.26+ge72305f+chromium-154.0.8037.58";
+
+    /// A folder of test runtime folders, removed when the test ends.
+    struct TestRoot(PathBuf);
+
+    impl TestRoot {
+        fn new(name: &str) -> Self {
+            let root = env::temp_dir().join(format!(
+                "ghostex-cef-runtime-choice-{}-{name}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).expect("create the test root");
+            Self(root)
+        }
+
+        /// A complete Linux CEF runtime folder whose libcef.so is `version`.
+        fn runtime(&self, name: &str, version: &str) -> PathBuf {
+            let runtime_dir = self.0.join(name);
+            std::fs::create_dir_all(runtime_dir.join("locales")).expect("create locales");
+            std::fs::write(runtime_dir.join("icudtl.dat"), b"icu").expect("write icudtl.dat");
+            std::fs::write(
+                runtime_dir.join("libcef.so"),
+                crate::cef_library_version::fake_elf_library(format!("\0{version}\0").as_bytes()),
+            )
+            .expect("write libcef.so");
+            runtime_dir
+        }
+    }
+
+    impl Drop for TestRoot {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn a_stray_libcef_of_another_cef_beside_the_app_is_skipped_for_the_component() {
+        let root = TestRoot::new("stray");
+        let stray = root.runtime("opt-ghostex", OLD_CEF);
+        let (source, skipped) = linux_cef_runtime_source([stray.clone()], BUILD_CEF);
+        assert_eq!(source, LinuxCefRuntimeSource::Component);
+        assert_eq!(skipped.len(), 1);
+        assert!(skipped[0].contains(OLD_CEF) && skipped[0].contains(BUILD_CEF));
+        assert!(skipped[0].contains(&stray.join("libcef.so").display().to_string()));
+        let readiness = linux_cef_runtime_readiness(source, &skipped, || {
+            Ok(CefRuntimeReadiness::InstallRequired {
+                version: "156.0.14-g4fa4ab5-chromium-156.0.8078.48-stripped".to_string(),
+            })
+        });
+        assert!(matches!(
+            readiness,
+            Ok(CefRuntimeReadiness::InstallRequired { .. })
+        ));
+    }
+
+    #[test]
+    fn a_bundled_runtime_of_this_builds_cef_is_used() {
+        let root = TestRoot::new("bundled");
+        let bundled = root.runtime("app", BUILD_CEF);
+        let configured = root.runtime("configured", BUILD_CEF);
+        let (source, skipped) = linux_cef_runtime_source([bundled.clone(), configured], BUILD_CEF);
+        assert_eq!(source, LinuxCefRuntimeSource::Folder(bundled));
+        assert!(skipped.is_empty());
+    }
+
+    #[test]
+    fn the_component_the_bootstrap_chose_wins_over_a_stray_beside_the_app() {
+        let root = TestRoot::new("component");
+        let stray = root.runtime("opt-ghostex", OLD_CEF);
+        let component = root.runtime("components/cef/156", BUILD_CEF);
+        let (source, skipped) = linux_cef_runtime_source([stray, component.clone()], BUILD_CEF);
+        assert_eq!(source, LinuxCefRuntimeSource::Folder(component));
+        assert_eq!(skipped.len(), 1);
+    }
+
+    #[test]
+    fn an_incomplete_or_unversioned_runtime_folder_is_skipped() {
+        let root = TestRoot::new("incomplete");
+        let incomplete = root.runtime("incomplete", BUILD_CEF);
+        std::fs::remove_file(incomplete.join("icudtl.dat")).unwrap();
+        let unversioned = root.runtime("unversioned", "");
+        let (source, skipped) = linux_cef_runtime_source([incomplete, unversioned], BUILD_CEF);
+        assert_eq!(source, LinuxCefRuntimeSource::Component);
+        assert_eq!(skipped.len(), 2);
+        assert!(skipped[0].contains("icudtl.dat"));
+        assert!(skipped[1].contains("does not name its CEF version"));
+    }
+
+    #[test]
+    fn without_a_usable_cef_the_error_names_the_skipped_runtime_and_the_component() {
+        let root = TestRoot::new("none");
+        let stray = root.runtime("opt-ghostex", OLD_CEF);
+        let (source, skipped) = linux_cef_runtime_source([stray], BUILD_CEF);
+        let error = linux_cef_runtime_readiness(source, &skipped, || {
+            Err("The sealed CEF component manifest is unavailable.".to_string())
+        })
+        .err()
+        .expect("no usable CEF must be an error");
+        assert!(error.contains(OLD_CEF), "{error}");
+        assert!(error.ends_with("The sealed CEF component manifest is unavailable."));
+
+        let (source, skipped) = linux_cef_runtime_source(Vec::<PathBuf>::new(), BUILD_CEF);
+        let error = linux_cef_runtime_readiness(source, &skipped, || {
+            Err("The sealed CEF component manifest is unavailable.".to_string())
+        })
+        .err()
+        .expect("no CEF at all must be an error");
+        assert_eq!(error, "The sealed CEF component manifest is unavailable.");
+    }
+
+    #[test]
+    fn this_build_expects_the_cef_its_bindings_name() {
+        let expected = expected_cef_version();
+        assert!(
+            expected_cef_component_version().starts_with(&expected.replace('+', "-")),
+            "{expected} vs {}",
+            expected_cef_component_version()
+        );
+    }
 }

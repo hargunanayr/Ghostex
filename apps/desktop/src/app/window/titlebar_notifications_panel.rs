@@ -813,10 +813,12 @@ impl GpuiTitlebarReadingPanel {
             .border_color(if unread {
                 rgb(accent).opacity(0.30)
             } else {
-                chrome_ink().opacity(0.10)
+                resource_card_border()
             })
             .bg(if unread {
                 rgb(accent).opacity(0.05)
+            } else if window_glass_active() {
+                resource_glass_washes().panel
             } else {
                 chrome_ink().opacity(0.025)
             })
@@ -828,6 +830,8 @@ impl GpuiTitlebarReadingPanel {
                 this.opacity(1.0)
                     .bg(if unread {
                         rgb(accent).opacity(0.10)
+                    } else if window_glass_active() {
+                        resource_glass_washes().raised
                     } else {
                         chrome_ink().opacity(0.05)
                     })

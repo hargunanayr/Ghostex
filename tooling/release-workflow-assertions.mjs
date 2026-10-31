@@ -846,10 +846,10 @@ export function warmCacheWorkflowAssertions() {
         }
         const concurrency =
           document.concurrency && typeof document.concurrency === 'object' ? document.concurrency : {};
-        if (concurrency.group !== WARM_CACHE_CONCURRENCY_GROUP || concurrency['cancel-in-progress'] !== true) {
+        if (concurrency.group !== WARM_CACHE_CONCURRENCY_GROUP || concurrency['cancel-in-progress'] !== false) {
           return regressed(
             REGRESSION_VALUE,
-            `concurrency is ${JSON.stringify(document.concurrency)}; expected group ${WARM_CACHE_CONCURRENCY_GROUP} with cancel-in-progress: true so back-to-back pushes do not pile up runners.`
+            `concurrency is ${JSON.stringify(document.concurrency)}; expected group ${WARM_CACHE_CONCURRENCY_GROUP} with cancel-in-progress: false, so the running warm build finishes (Windows takes 21 to 37 minutes) and only the newest waiting push queues behind it.`
           );
         }
         const permissions = document.permissions;

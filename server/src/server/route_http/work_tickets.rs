@@ -6,9 +6,9 @@ use serde_json::{json, Map, Value};
 use crate::domain::DomainStateError;
 use crate::protocol::rpc_success;
 use crate::work_mode::{
-    create_linear_issue, default_linear_team_id, list_linear_projects, list_linear_teams,
-    project_linear_api_key, project_linear_identifiers, resolve_work_mode_project,
-    start_work_on_ticket, NewLinearTicket,
+    default_linear_team_id, list_linear_projects, list_linear_teams, project_linear_identifiers,
+    resolve_work_mode_project, start_work_on_ticket, work_source, TicketDraft, TicketScope,
+    WorkCredentials, WorkSourceId,
 };
 
 use super::super::work_mode_sync::spawn_work_mode_refresh;
@@ -84,10 +84,12 @@ pub(super) async fn route_work_tickets_http(
     })
 }
 
+/// The project a request names, its Linear key, and the credentials that key was read from, so
+/// one request uses one key throughout.
 fn project_linear_key(
     state: &AppState,
     params: &Map<String, Value>,
-) -> Result<(String, String), DomainStateError> {
+) -> Result<(Value, String, String, WorkCredentials), DomainStateError> {
     let db = open_gxserver_database(&state.paths).map_err(|error| DomainStateError {
         code: "internalError",
         message: format!("SQLite gxserver state error: {error}"),
@@ -97,17 +99,23 @@ fn project_linear_key(
         params,
     )?;
     let project_id = value_text(&project, "projectId")?;
-    let api_key = project_linear_api_key(state, &project).ok_or_else(|| {
-        DomainStateError::bad_request(
-            "Set a Linear API key first (Settings, or ghostex issues linear-key).",
+    let credentials = WorkCredentials::new(&state.paths);
+    let api_key = credentials
+        .linear_api_key(
+            project.get("projectId").and_then(Value::as_str),
+            crate::workspaces::stored_project_workspace_id(&project),
         )
-    })?;
-    Ok((project_id, api_key))
+        .ok_or_else(|| {
+            DomainStateError::bad_request(
+                "Set a Linear API key first (Settings, or ghostex issues linear-key).",
+            )
+        })?;
+    Ok((project, project_id, api_key, credentials))
 }
 
 /// `{ teams: [{ id, key, name }], defaultTeamId }`.
 fn linear_teams(state: &AppState, params: &Map<String, Value>) -> Result<Value, DomainStateError> {
-    let (project_id, api_key) = project_linear_key(state, params)?;
+    let (_, project_id, api_key, _) = project_linear_key(state, params)?;
     let teams = list_linear_teams(&api_key).map_err(DomainStateError::bad_request)?;
     let used = project_linear_identifiers(state, &project_id)?;
     Ok(json!({
@@ -121,7 +129,7 @@ fn linear_projects(
     state: &AppState,
     params: &Map<String, Value>,
 ) -> Result<Value, DomainStateError> {
-    let (_, api_key) = project_linear_key(state, params)?;
+    let (_, _, api_key, _) = project_linear_key(state, params)?;
     let team_id = text(params, "teamId");
     let projects = list_linear_projects(&api_key, team_id.as_deref())
         .map_err(DomainStateError::bad_request)?;
@@ -134,7 +142,7 @@ fn create_linear_ticket(
     state: &AppState,
     params: &Map<String, Value>,
 ) -> Result<Value, DomainStateError> {
-    let (project_id, api_key) = project_linear_key(state, params)?;
+    let (project, project_id, api_key, credentials) = project_linear_key(state, params)?;
     let title = text(params, "title")
         .ok_or_else(|| DomainStateError::bad_request("A ticket needs a title."))?;
     let team_id = match text(params, "teamId") {
@@ -148,22 +156,31 @@ fn create_linear_ticket(
         }
     };
     let description = text(params, "description");
-    let linear_project_id = text(params, "linearProjectId");
-    let ticket = create_linear_issue(
-        &api_key,
-        &NewLinearTicket {
-            team_id: &team_id,
-            title: &title,
-            description: description.as_deref(),
-            linear_project_id: linear_project_id.as_deref(),
-            assign_to_me: params.get("assignToMe").and_then(Value::as_bool) != Some(false),
-        },
-    )
-    .map_err(DomainStateError::bad_request)?;
+    let mut extra = Map::new();
+    extra.insert("teamId".to_string(), json!(team_id));
+    if let Some(linear_project_id) = text(params, "linearProjectId") {
+        extra.insert("linearProjectId".to_string(), json!(linear_project_id));
+    }
+    let created = work_source(WorkSourceId::Linear)
+        .create(
+            &TicketScope {
+                project_id: &project_id,
+                workspace_id: crate::workspaces::stored_project_workspace_id(&project),
+                cwd: None,
+                credentials: Some(&credentials),
+            },
+            &TicketDraft {
+                title: &title,
+                description: description.as_deref(),
+                assign_to_me: params.get("assignToMe").and_then(Value::as_bool) != Some(false),
+                extra: &extra,
+            },
+        )
+        .map_err(DomainStateError::bad_request)?;
     Ok(json!({
-        "identifier": ticket.identifier,
-        "url": ticket.url,
-        "branchName": ticket.branch_name,
+        "identifier": created.ticket.id,
+        "url": created.url,
+        "branchName": created.branch_name,
     }))
 }
 

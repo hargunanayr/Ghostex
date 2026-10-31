@@ -124,7 +124,10 @@ fn next_basic_cron(now: chrono::DateTime<Utc>, expression: &str) -> Option<Strin
                 .map(|date| date.to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
         }
     }
-    let minute = parts[0].parse::<u32>().ok().filter(|minute| *minute <= 59)?;
+    let minute = parts[0]
+        .parse::<u32>()
+        .ok()
+        .filter(|minute| *minute <= 59)?;
     if parts[1..] == ["*", "*", "*", "*"] {
         return next_hourly(now, minute);
     }

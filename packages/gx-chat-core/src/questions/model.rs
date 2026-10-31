@@ -125,6 +125,10 @@ pub struct TerminalNotice {
     pub conversation_lock: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dialog: Option<TerminalDialog>,
+    /// The whole plan Claude's "Ready to code?" asks to approve, as Markdown from its plan file
+    /// (server/src/session_chat_claude_plan.rs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actions: Option<Vec<TerminalNoticeAction>>,
     /// Answerable picker rows, in screen order. Absent means the card only describes a state.

@@ -16,7 +16,10 @@ use std::collections::HashMap;
 /// The projects a Ghost can hold: every project of this computer but Ghost homes, bots and
 /// projects closed to Recent. Grouped ones come first, by project group in sidebar order; the rest
 /// follow by name.
-fn holdable_projects(listed: &Value, places: &HashMap<String, ProjectPlace>) -> Vec<GhostModalProject> {
+fn holdable_projects(
+    listed: &Value,
+    places: &HashMap<String, ProjectPlace>,
+) -> Vec<GhostModalProject> {
     let mut projects = listed["projects"]
         .as_array()
         .into_iter()
@@ -72,10 +75,16 @@ impl GhostexGpuiApp {
     }
 
     /// The sidebar's + on the Ghosts section.
-    pub(crate) fn open_new_ghost_modal(&mut self, _window: &mut Window, cx: &mut gpui::Context<Self>) {
+    pub(crate) fn open_new_ghost_modal(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
         let agents = self.ghost_modal_agents();
         cx.spawn(async move |this, cx| {
-            let listed = gx_rpc(None, "/api/listProjects", json!({})).await.unwrap_or_default();
+            let listed = gx_rpc(None, "/api/listProjects", json!({}))
+                .await
+                .unwrap_or_default();
             let _ = this.update(cx, |app, cx| {
                 let config = GhostModalConfig {
                     ghost: None,
@@ -107,7 +116,9 @@ impl GhostexGpuiApp {
             )
             .await
             .unwrap_or_default();
-            let listed = gx_rpc(None, "/api/listProjects", json!({})).await.unwrap_or_default();
+            let listed = gx_rpc(None, "/api/listProjects", json!({}))
+                .await
+                .unwrap_or_default();
             let _ = this.update(cx, |app, cx| {
                 let ghost = match ghost {
                     Ok(value) => value["ghost"].clone(),
@@ -164,7 +175,14 @@ impl GhostexGpuiApp {
                 self.release_native_app_modal_window(GpuiAppModalKind::Ghost, cx);
                 return;
             }
-            GhostModalCommand::Create { name, mascot, color, agent_id, project_ids, reply } => {
+            GhostModalCommand::Create {
+                name,
+                mascot,
+                color,
+                agent_id,
+                project_ids,
+                reply,
+            } => {
                 let hud = self.gx_store_launch_hud();
                 let Some(agent) = resolve_sidebar_agent(hud.as_deref(), &agent_id) else {
                     reply.finish(Err("That agent is no longer configured.".to_string()), cx);
@@ -181,7 +199,13 @@ impl GhostexGpuiApp {
                 self.create_ghost_from_modal(params, reply, cx);
                 return;
             }
-            GhostModalCommand::SaveGeneral { name, mascot, color, project_ids, reply } => (
+            GhostModalCommand::SaveGeneral {
+                name,
+                mascot,
+                color,
+                project_ids,
+                reply,
+            } => (
                 "/api/updateGhost",
                 json!({
                     "ghostId": ghost,
@@ -192,12 +216,21 @@ impl GhostexGpuiApp {
                 }),
                 reply,
             ),
-            GhostModalCommand::SaveFile { file, text, expected_hash, reply } => (
+            GhostModalCommand::SaveFile {
+                file,
+                text,
+                expected_hash,
+                reply,
+            } => (
                 "/api/writeGhostFile",
                 json!({ "ghostId": ghost, "file": file, "text": text, "expectedHash": expected_hash }),
                 reply,
             ),
-            GhostModalCommand::Skill { action, name, reply } => (
+            GhostModalCommand::Skill {
+                action,
+                name,
+                reply,
+            } => (
                 "/api/ghostSkills",
                 json!({ "ghostId": ghost, "action": action, "name": name }),
                 reply,
@@ -246,9 +279,18 @@ impl GhostexGpuiApp {
                 .map_err(|error| error.message);
             let session = created.as_ref().ok().map(|created| {
                 (
-                    created["ghost"]["ghostId"].as_str().unwrap_or_default().to_string(),
-                    created["session"]["projectId"].as_str().unwrap_or_default().to_string(),
-                    created["session"]["sessionId"].as_str().unwrap_or_default().to_string(),
+                    created["ghost"]["ghostId"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string(),
+                    created["session"]["projectId"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string(),
+                    created["session"]["sessionId"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string(),
                 )
             });
             if let Some((_, project_id, session_id)) = &session {

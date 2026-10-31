@@ -508,28 +508,23 @@ pub(crate) fn modal_text_area_with_paste(
         .bg(hsla(p.raised))
         .when(disabled, |this| this.opacity(0.5))
         .child(
-            div()
-                .w_full()
-                .min_w_0()
-                .flex_1()
-                .min_h_0()
-                .child(
-                    Textarea::new(state)
-                        .with_size(ComponentSize::Small)
-                        .appearance(false)
-                        .bordered(false)
-                        .focus_bordered(false)
-                        .disabled(disabled)
-                        .when_some(paste, |this, paste| {
-                            this.on_paste(move |clipboard, window, cx| paste(clipboard, window, cx))
-                        })
-                        .w_full()
-                        .h_full()
-                        .px(px(0.0))
-                        .py(px(0.0))
-                        .text_size(px(14.0))
-                        .text_color(hsla(p.foreground)),
-                ),
+            div().w_full().min_w_0().flex_1().min_h_0().child(
+                Textarea::new(state)
+                    .with_size(ComponentSize::Small)
+                    .appearance(false)
+                    .bordered(false)
+                    .focus_bordered(false)
+                    .disabled(disabled)
+                    .when_some(paste, |this, paste| {
+                        this.on_paste(move |clipboard, window, cx| paste(clipboard, window, cx))
+                    })
+                    .w_full()
+                    .h_full()
+                    .px(px(0.0))
+                    .py(px(0.0))
+                    .text_size(px(14.0))
+                    .text_color(hsla(p.foreground)),
+            ),
         )
         .into_any_element()
 }

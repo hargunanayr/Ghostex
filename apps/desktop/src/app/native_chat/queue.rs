@@ -296,6 +296,23 @@ impl NativeChatView {
                     }))
                 })
                 .child(line)
+                // Why gxserver still holds the row, once it has waited about a minute.
+                .when_some(
+                    prompt["waitReason"]
+                        .as_str()
+                        .filter(|reason| !failed && !reason.is_empty())
+                        .map(str::to_string),
+                    |this, reason| {
+                        this.child(
+                            div()
+                                .pl(px(22.0 * s))
+                                .pb(px(4.0 * s))
+                                .text_size(px(11.0 * s))
+                                .line_height(px(16.0 * s))
+                                .child(reason),
+                        )
+                    },
+                )
         });
         Some(
             div()

@@ -6,7 +6,7 @@
 //! the pickers, the image viewer), changes size together.
 
 use super::state::NativeChatView;
-use gpui::{App, Context, KeyBinding, Task, Window};
+use gpui::{App, Context, Task, Window};
 use std::cell::Cell;
 use std::time::Duration;
 
@@ -73,10 +73,30 @@ pub(super) fn register(cx: &mut App) {
     let mut bindings = Vec::new();
     for context in ["NativeChat", "NativeChat > Input"] {
         let chord = super::keyboard::primary_chord;
-        bindings.push(KeyBinding::new(&chord("="), ChatZoomIn, Some(context)));
-        bindings.push(KeyBinding::new(&chord("+"), ChatZoomIn, Some(context)));
-        bindings.push(KeyBinding::new(&chord("-"), ChatZoomOut, Some(context)));
-        bindings.push(KeyBinding::new(&chord("0"), ChatZoomReset, Some(context)));
+        bindings.push(crate::app::hotkeys::gpui_runtime_key_binding(
+            &chord("="),
+            ChatZoomIn,
+            Some(context),
+            cx,
+        ));
+        bindings.push(crate::app::hotkeys::gpui_runtime_key_binding(
+            &chord("+"),
+            ChatZoomIn,
+            Some(context),
+            cx,
+        ));
+        bindings.push(crate::app::hotkeys::gpui_runtime_key_binding(
+            &chord("-"),
+            ChatZoomOut,
+            Some(context),
+            cx,
+        ));
+        bindings.push(crate::app::hotkeys::gpui_runtime_key_binding(
+            &chord("0"),
+            ChatZoomReset,
+            Some(context),
+            cx,
+        ));
     }
     cx.bind_keys(bindings);
 }

@@ -477,14 +477,14 @@ pub(crate) fn render_playbook_sheet<V: HasOrchestratorPlaybook>(
     };
     let (title, description, default_name) = match &project_id {
         None => (
-            "Orchestrator playbook".to_string(),
-            "How every orchestrator works: the ghostex-orchestrator skill's text. Orchestrators, existing ones too, follow an edited playbook from their next guide read. A project can have its own in Settings > Projects.".to_string(),
+            "Coordinator playbook".to_string(),
+            "How every coordinator works: the ghostex-orchestrator skill's text. Coordinators, existing ones too, follow an edited playbook from their next guide read. A project can have its own in Settings > Projects.".to_string(),
             "Ghostex's playbook",
         ),
         Some(_) => (
-            format!("Orchestrator playbook for {name}"),
+            format!("Coordinator playbook for {name}"),
             format!(
-                "Orchestrators in {name} and all of its worktrees follow this instead of the playbook for all projects.{}",
+                "Coordinators in {name} and all of its worktrees follow this instead of the playbook for all projects.{}",
                 if scope.is_worktree {
                     " This is a worktree, so this edits its project's playbook."
                 } else {
@@ -514,7 +514,7 @@ pub(crate) fn render_playbook_sheet<V: HasOrchestratorPlaybook>(
         body.push(note(
             p,
             format!(
-                "This edited playbook is off: orchestrators follow {} until you turn it on with the switch on its row.",
+                "This edited playbook is off: coordinators follow {} until you turn it on with the switch on its row.",
                 default_name.to_lowercase()
             ),
         ));
@@ -523,7 +523,7 @@ pub(crate) fn render_playbook_sheet<V: HasOrchestratorPlaybook>(
         body.push(note(
             p,
             format!(
-                "{default_name} changed since this copy was saved. Reset to Default takes the new one; to keep your edits, ask an agent to merge `ghostex orchestrator playbook{} --default` into this copy.",
+                "{default_name} changed since this copy was saved. Reset to Default takes the new one; to keep your edits, ask an agent to merge `ghostex coordinator playbook{} --default` into this copy.",
                 if project_id.is_some() { " --this-project" } else { "" }
             ),
         ));

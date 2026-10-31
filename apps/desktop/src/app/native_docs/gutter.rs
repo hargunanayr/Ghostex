@@ -145,7 +145,7 @@ pub(crate) fn render(
                     .flex()
                     .items_center()
                     .justify_end()
-                    .text_size(px(12.))
+                    .text_size(px(crate::ui_fonts::FILES_LINE_NUMBER_SIZE))
                     .text_color(if current { body } else { muted })
                     .child((index + 1).to_string())
             })

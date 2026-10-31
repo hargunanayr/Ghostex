@@ -1,5 +1,6 @@
-//! The commit review dialog: the request a review is opened with, the draft the dialog draws, and
-//! the check that a confirmed selection only names files that review listed.
+//! A Git review: the request a commit, push or pull request is confirmed under, the draft the
+//! fork's Commit dialog draws, and the check that a confirmed selection only names files that
+//! review listed.
 
 use serde_json::{json, Value};
 

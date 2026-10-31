@@ -76,9 +76,14 @@ pub(crate) async fn starting_session_refusal(
         &outcome,
         "The session's zmx daemon was not running when the message was sent.",
     );
-    // A wake that failed for a reason time can fix holds the message like a starting agent: the
-    // queue scheduler wakes the session again until it is up (`wake_session_holding_startup_send`).
-    Some(match outcome {
+    Some(wake_refusal(outcome))
+}
+
+/// What a send that woke the session answers. A wake that failed for a reason time can fix holds
+/// the message like a starting agent: the queue scheduler wakes the session again until it is up
+/// (`wake_session_holding_startup_send`).
+fn wake_refusal(outcome: WakeOutcome) -> DomainStateError {
+    match outcome {
         WakeOutcome::Blocked(reason) => DomainStateError {
             code: "dependencyUnavailable",
             message: format!(
@@ -89,7 +94,85 @@ pub(crate) async fn starting_session_refusal(
         WakeOutcome::AlreadyWaking | WakeOutcome::Failed(_) => {
             starting("The session is asleep; Ghostex keeps waking it until it starts.")
         }
-    })
+    }
+}
+
+/// CDXC:SessionChat 2026-10-29 DECISION:
+/// User: "a chat session's terminal was sleeping, and i answered inline html fully then sent to agent. but nothing happened. it stayed sleeping and my answer wasn't sent (until i woke that terminal up manually by switching to terminal and clicking resume). pls fix this and other similar cases". Every way of sending to a sleeping session wakes it and delivers, not only Enter in the chat (2026-09-25 decision above): answers from a page or a ```questions form, a queued message, `ghostex agents send --queue`, Send now and Retry on a row. Those go into the chat queue as ordinary rows, and the queue scheduler left an ordinary row in a sleeping session waiting for a stop that never came; only a startup send woke it. Now the scheduler turns the head row of a sleeping session into a startup send (drawn in the transcript as on its way) and wakes the session; the row goes out once the woken agent's input box is up, and a wake that cannot succeed marks it Not sent with the reason, keeping its text for Retry. A queue delivery that finds the daemon gone wakes it the same way (`queued_delivery_wake_refusal`), and Retry wakes at once (`wake_for_retried_message`). Rows older than `STARTUP_SEND_WAKE_MAX_AGE_HOURS` (2026-10-12 WHY below) and the rows of a closed session do not wake it on their own; Retry still does.
+/// SEE-ALSO: session_chat_queue_runtime/scheduler.rs (the sleeping-session branch), session_chat_queue_runtime/send.rs (queue deliveries), session_chat_queue_runtime/endpoints.rs (Retry).
+pub(crate) fn wakes_sleeping_session_for(created_at: &str) -> bool {
+    let cutoff = chrono::Utc::now() - chrono::Duration::hours(STARTUP_SEND_WAKE_MAX_AGE_HOURS);
+    chrono::DateTime::parse_from_rfc3339(created_at).is_ok_and(|created| created >= cutoff)
+}
+
+/// A queued row's delivery (the scheduler, Send now, a Slack request) that finds the session's zmx
+/// daemon gone wakes it; `None` when the daemon is up or its screen was read.
+pub(crate) async fn queued_delivery_wake_refusal(
+    state: &AppState,
+    target: &SessionChatSendTarget,
+    detection: &SessionChatTerminalDetection,
+) -> Option<DomainStateError> {
+    if detection.captured || !provider_missing(state, &target.project_id, &target.session_id).await
+    {
+        return None;
+    }
+    let outcome = wake_session(state, &target.project_id, &target.session_id).await;
+    record_wake(
+        state,
+        &target.project_id,
+        &target.session_id,
+        &outcome,
+        "The session's zmx daemon was not running when a queued message was delivered.",
+    );
+    Some(wake_refusal(outcome))
+}
+
+/// Retry on a Not sent row of a session whose daemon is gone: the row waits as a startup send and
+/// the session is woken now, whatever the row's age, because the user just asked again.
+pub(crate) fn wake_for_retried_message(
+    state: &AppState,
+    project_id: &str,
+    session_id: &str,
+    prompt_id: &str,
+) {
+    let state = state.clone();
+    let project_id = project_id.to_string();
+    let session_id = session_id.to_string();
+    let prompt_id = prompt_id.to_string();
+    tokio::spawn(async move {
+        if !provider_missing(&state, &project_id, &session_id).await {
+            return;
+        }
+        if crate::session_chat_queue::hold_queued_prompt_for_wake(
+            &state.paths,
+            &project_id,
+            &session_id,
+            &prompt_id,
+        ) {
+            crate::session_chat_queue_runtime::broadcast_session_chat_queue_state(
+                &state,
+                &project_id,
+                &session_id,
+            );
+        }
+        let outcome = wake_session(&state, &project_id, &session_id).await;
+        record_wake(
+            &state,
+            &project_id,
+            &session_id,
+            &outcome,
+            "A message was retried while the session's zmx daemon was not running.",
+        );
+        if let WakeOutcome::Blocked(reason) = outcome {
+            fail_held_message(
+                &state,
+                &project_id,
+                &session_id,
+                &prompt_id,
+                &format!("The session cannot be woken: {reason}."),
+            );
+        }
+    });
 }
 
 /// What one `/api/wakeSession` from this module came to.

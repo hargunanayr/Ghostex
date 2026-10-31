@@ -15,7 +15,9 @@ use super::files::{
     GHOST_SOUL_FILE,
 };
 use super::memory::{apply_memory_action, list_topics};
-use super::records::{list_ghosts, read_ghost, read_ghost_by_home_project, write_ghost, GhostRecord};
+use super::records::{
+    list_ghosts, read_ghost, read_ghost_by_home_project, write_ghost, GhostRecord,
+};
 use super::skills::{
     add_ghost_skill_from_global, list_ghost_skills, remove_ghost_skill, write_ghost_skill,
 };
@@ -78,7 +80,9 @@ pub fn require_ghost(
             ))
         }
     };
-    ghost.ok_or_else(|| DomainStateError::not_found("That is not a Ghost. List them with ghostex ghost list."))
+    ghost.ok_or_else(|| {
+        DomainStateError::not_found("That is not a Ghost. List them with ghostex ghost list.")
+    })
 }
 
 /// A thread a Ghost links must be in one of its projects, or in its own home.
@@ -191,7 +195,8 @@ pub fn handle_ghost_endpoint(
                     .is_some()
                 {
                     repository.update_session(&session)?;
-                    changed_sessions.push((ghost.home_project_id.clone(), ghost.chat_session_id.clone()));
+                    changed_sessions
+                        .push((ghost.home_project_id.clone(), ghost.chat_session_id.clone()));
                 }
             }
             Ok(GhostEndpointOutput {
@@ -214,9 +219,13 @@ pub fn handle_ghost_endpoint(
         }
         "/api/writeGhostFile" => {
             let ghost = require_ghost(db, params)?;
-            let file = text(params, "file")
-                .ok_or_else(|| DomainStateError::bad_request("Name the file (SOUL.md or MEMORY.md)."))?;
-            let body = params.get("text").and_then(Value::as_str).unwrap_or_default();
+            let file = text(params, "file").ok_or_else(|| {
+                DomainStateError::bad_request("Name the file (SOUL.md or MEMORY.md).")
+            })?;
+            let body = params
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             let hash = write_ghost_file(
                 paths,
                 &ghost.ghost_id,
@@ -225,7 +234,9 @@ pub fn handle_ghost_endpoint(
                 text(params, "expectedHash").as_deref(),
             )?;
             refresh_ghost_context(paths, db, repository, &ghost)?;
-            Ok(GhostEndpointOutput::result(json!({ "ok": true, "hash": hash })))
+            Ok(GhostEndpointOutput::result(
+                json!({ "ok": true, "hash": hash }),
+            ))
         }
         "/api/ghostMemory" => {
             let ghost = require_ghost(db, params)?;
@@ -254,7 +265,10 @@ pub fn handle_ghost_endpoint(
                     paths,
                     &ghost.ghost_id,
                     &name,
-                    params.get("skillMd").and_then(Value::as_str).unwrap_or_default(),
+                    params
+                        .get("skillMd")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
                 )?,
                 "remove" => remove_ghost_skill(paths, &ghost.ghost_id, &name)?,
                 _ => {
@@ -263,7 +277,10 @@ pub fn handle_ghost_endpoint(
                     ))
                 }
             }
-            Ok(GhostEndpointOutput::result(list_ghost_skills(paths, &ghost.ghost_id)))
+            Ok(GhostEndpointOutput::result(list_ghost_skills(
+                paths,
+                &ghost.ghost_id,
+            )))
         }
         "/api/ghostArtifacts" => {
             let ghost = require_ghost(db, params)?;
@@ -282,7 +299,10 @@ pub fn handle_ghost_endpoint(
                             kind: text(params, "kind").as_deref().unwrap_or("markdown"),
                             title: text(params, "title").as_deref().unwrap_or_default(),
                             summary: text(params, "summary").as_deref().unwrap_or_default(),
-                            text: params.get("text").and_then(Value::as_str).unwrap_or_default(),
+                            text: params
+                                .get("text")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default(),
                             visual_page_id: text(params, "visualPageId").as_deref(),
                             url: text(params, "url").as_deref(),
                         },

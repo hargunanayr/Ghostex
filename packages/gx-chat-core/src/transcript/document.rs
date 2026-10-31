@@ -6,7 +6,7 @@
 //! rewind sheet).
 
 use ghostex_gx_protocol::Tri;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::document::Document;
 use crate::state::{ChatContext, ChatState, RewindRequest};
@@ -71,6 +71,7 @@ pub fn document(state: &ChatState, context: &ChatContext, into: &mut Document) {
     let view = &state.transcript_view;
     into.summary_mode = view.summary_mode;
     into.verbose_override = view.verbose_override;
+    into.simple_override = view.simple_override;
     let askers;
     (into.final_ids, into.answered_pages, askers) = if view.items.is_empty() {
         let projection = presentation::build(state, context);

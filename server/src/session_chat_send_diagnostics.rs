@@ -15,6 +15,7 @@ static WRITER: Mutex<()> = Mutex::new(());
 /// CDXC:SessionChat 2026-09-16 DECISION:
 /// User: always log the reason a send failed and the terminal's last page so a reported local time can identify the failure.
 /// Keep this content-bearing diagnostic separate from the redacted support log; draft-save failures also prevent Send from reaching the terminal.
+/// CDXC:SessionChat 2026-10-29 WHY: GitHub #350: a refused question answer was logged nowhere, so the Windows screen whose highlight could not be read was lost; answers are logged with the screen like sends.
 pub(crate) async fn record_response(
     state: &AppState,
     request_id: &str,
@@ -28,6 +29,7 @@ pub(crate) async fn record_response(
                 | "/api/setSessionChatDraft"
                 | "/api/queueSessionChatPrompt"
                 | "/api/sendSessionChatQueuedPrompt"
+                | "/api/answerSessionChatPrompt"
         )
     ) {
         return;

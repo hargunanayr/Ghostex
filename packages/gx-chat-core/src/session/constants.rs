@@ -23,6 +23,19 @@ pub const NOT_FOUND_RETRY_WINDOW_MS: f64 = 60_000.0;
 /// SEE-ALSO: packages/gx-core/src/sidebar_view/daemon_wait.rs (`DAEMON_RETRY_INTERVAL_MS`), packages/gx-chat-core/src/extras/document.rs (`transcript_skeleton`), packages/gx-chat-client/src/wire.rs.
 pub const UNREACHABLE_RETRY_DELAY_MS: u64 = 2_000;
 
+/// The session reads' retry ladder while the service is not answering: the user's 2 s for the
+/// first ten seconds (a restarting gxserver is back inside that), then backing off to 15 s.
+///
+/// CDXC:SessionChat 2026-10-31 WHY:
+/// GitHub #361: a remote machine whose tunnel was down or crawling logged 1,355 failed
+/// `readSessionChat` calls in an hour, one every 2 s per open remote chat, each one more load on
+/// the link that was already failing. The 2026-10-08 decision above is kept for the first ten
+/// seconds, which covers a gxserver restart (about 2 s); after that the retries back off, and the
+/// next one still comes within 15 s of the service answering again. Any answer starts the ladder
+/// over. Question sends keep their own flat [`UNREACHABLE_RETRY_DELAY_MS`].
+pub const UNREACHABLE_RETRY_DELAYS_MS: [u64; 8] =
+    [2_000, 2_000, 2_000, 2_000, 2_000, 4_000, 8_000, 15_000];
+
 /// A resync read answers from a stream position captured before it, so frames landing while it is
 /// in flight can outrun its result. One paced follow-up covers those bytes; the cap stops a
 /// continuously streaming turn from turning follow-ups into a read loop.
@@ -120,6 +133,14 @@ pub fn not_found_retry_delay_ms(attempt: u32) -> u64 {
         .get(attempt as usize)
         .copied()
         .unwrap_or(NOT_FOUND_RETRY_FIXED_DELAY_MS)
+}
+
+/// The unanswered-read retry delay for `attempt`, zero-based; the last step repeats.
+pub fn unreachable_retry_delay_ms(attempt: u32) -> u64 {
+    UNREACHABLE_RETRY_DELAYS_MS
+        .get(attempt as usize)
+        .copied()
+        .unwrap_or(UNREACHABLE_RETRY_DELAYS_MS[UNREACHABLE_RETRY_DELAYS_MS.len() - 1])
 }
 
 /// The resync retry delay for `attempt`, zero-based.

@@ -86,9 +86,9 @@ Keep comments focused on user-facing requirements delivered and high-level
 technical approach. Do not require humans to read the agent transcript to know
 what changed.
 
-## Dispatch A Bead To A Worker Session (Orchestrators)
+## Dispatch A Bead To A Worker Session (Coordinators)
 
-This section is for orchestrators and dispatchers deciding who works a bead,
+This section is for coordinators and dispatchers deciding who works a bead,
 not for an agent that is already doing the bead's work.
 
 To dispatch a bead through Ghostex, run:

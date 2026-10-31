@@ -16,7 +16,10 @@
 //!
 //! CDXC:RemotePairing 2026-10-24 DECISION:
 //! User: "let's please not show the real qr here", "this is so when im in settings we dont show my real QR until i click on "Show QR" which opens it in a pop up", "also pls make that pop up that shows qr bigger by 20%", "make qr 20% bigger more so text above it is 1 line pls and qr is bigger", and "I want this area to look better also please".
-//! The Connect a phone panel never encodes or draws the pairing payload: it shows a placeholder tile drawn without the data (corner markers and a hidden-eye badge) and a Show QR button. The popup is the only place the real QR renders (the Tailscale card uses the same tile, button and popup for its code), now at 360px (250px grown 20% twice), drawn at that size rather than scaled, in a sheet wide enough that the instruction above it stays on one line. The panel's explanation is a short numbered list beside the tile.
+//! The Connect a phone panel never encodes or draws the pairing payload: it shows a placeholder tile drawn without the data (corner markers and a hidden-eye badge) and a Show QR button. The popup is the only place the real QR renders (the Tailscale card uses the same tile, button and popup for its code), drawn at its size rather than scaled, in a sheet wide enough that the instruction above it stays on one line. The panel's explanation is a short numbered list beside the tile. (2026-10-27: 432px, one more 20% step from 360px, so an Android scanner gets larger modules; see CDXC:RemotePairing 2026-10-27 in fields/qr.rs.)
+//!
+//! CDXC:RemotePairing 2026-10-27 WHY:
+//! The phone's Paste a pairing code sheet tells the user to click Copy as text on the computer, and testers found no such button. Copy as text sits under Show QR on the card and under the QR in the popup, and copies the bare `ghostex-ec1:`/`ghostex-ts1:` code (gxserver's `text`), not the link the QR carries: every phone app and every computer reads the bare code, including phones from before the link (10.32 and older), whose scanner calls the link "not a Ghostex code". The button reads Copied for a moment after a click, like the other copy buttons on this page.
 use super::super::super::super::native_modal_kit::*;
 use super::super::super::fields::{
     ButtonSize, ButtonVariant, icon, qr_code, settings_button_sized, settings_icon,
@@ -400,8 +403,12 @@ pub(super) fn qr_pending(t: &RemoteTokens, size: f32, message: &'static str) -> 
 
 /// Side of the placeholder tile in the Connect a phone panel.
 pub(super) const QR_PLACEHOLDER_SIZE: f32 = 132.0;
-/// Side of the real QR in the Show QR dialog: the old 250px grown 20% twice (250 × 1.2 × 1.2).
-const QR_PREVIEW_SIZE: f32 = 360.0;
+/// Side of the real QR in the Show QR dialog: the old 250px grown 20% three times, or less when
+/// the window is too short for it and the rest of the sheet.
+const QR_PREVIEW_SIZE: f32 = 432.0;
+/// The Show QR sheet's height without its QR (padding, heading, instruction, name, footnote and
+/// Copy as text), plus a margin to the window's edges.
+const QR_PREVIEW_CHROME_HEIGHT: f32 = 240.0;
 /// Width of the Show QR dialog: wide enough for the scan instruction on one line.
 const QR_PREVIEW_SHEET_WIDTH: f32 = 520.0;
 
@@ -459,14 +466,55 @@ fn qr_placeholder(t: &RemoteTokens) -> AnyElement {
         .into_any_element()
 }
 
-/// The placeholder tile with its Show QR button, which opens `card`'s pairing code in the Show QR
-/// dialog. Shared by the Easy Connect phone panel and the Tailscale card.
-pub(super) fn hidden_qr(
+/// `card`'s bare pairing code (gxserver's `text`), what Copy as text puts on the clipboard.
+fn pairing_text(tab: &RemoteTab, card: PathCard) -> Option<String> {
+    let pairing = tab.pairing.as_ref()?;
+    let text = match card {
+        PathCard::EasyConnect => pairing.easy_connect.as_ref()?.text.clone(),
+        PathCard::Tailscale => pairing.tailscale.as_ref()?.text.clone(),
+    };
+    (!text.is_empty()).then_some(text)
+}
+
+/// Copy as text: copies `card`'s bare code and reads Copied with a check for a moment.
+fn copy_text_button(
+    tab: &RemoteTab,
     t: &RemoteTokens,
     id: &'static str,
     card: PathCard,
     cx: &mut Context<RemoteTab>,
+) -> Option<AnyElement> {
+    let text = pairing_text(tab, card)?;
+    let copied = tab.copied.contains(id);
+    Some(settings_button_sized(
+        &t.p,
+        id,
+        if copied { "Copied" } else { "Copy as text" },
+        Some(if copied {
+            ICON_CIRCLE_CHECK_FILLED
+        } else {
+            ICON_COPY
+        }),
+        ButtonVariant::Outline,
+        ButtonSize::Sm,
+        false,
+        None,
+        move |tab: &mut RemoteTab, _window, cx| tab.copy(id.into(), text.clone(), cx),
+        cx,
+    ))
+}
+
+/// The placeholder tile with its Show QR button, which opens `card`'s pairing code in the Show QR
+/// dialog, and Copy as text under it. Shared by the Easy Connect phone panel and the Tailscale card.
+pub(super) fn hidden_qr(
+    tab: &RemoteTab,
+    t: &RemoteTokens,
+    id: &'static str,
+    copy_id: &'static str,
+    card: PathCard,
+    cx: &mut Context<RemoteTab>,
 ) -> AnyElement {
+    let copy = copy_text_button(tab, t, copy_id, card, cx);
     v_flex()
         .w(px(QR_PLACEHOLDER_SIZE))
         .items_center()
@@ -488,6 +536,7 @@ pub(super) fn hidden_qr(
             },
             cx,
         ))
+        .children(copy)
         .into_any_element()
 }
 
@@ -497,7 +546,14 @@ fn phone_panel(tab: &mut RemoteTab, t: &RemoteTokens, cx: &mut Context<RemoteTab
         .as_ref()
         .and_then(|pairing| pairing.easy_connect.clone());
     let left = match &code {
-        Some(_) => hidden_qr(t, "remote-show-qr", PathCard::EasyConnect, cx),
+        Some(_) => hidden_qr(
+            tab,
+            t,
+            "remote-show-qr",
+            "remote-copy-text",
+            PathCard::EasyConnect,
+            cx,
+        ),
         None => qr_pending(t, QR_PLACEHOLDER_SIZE, "Waiting for the address…"),
     };
     let mut steps: Vec<Vec<(&str, Emph)>> = vec![
@@ -511,7 +567,12 @@ fn phone_panel(tab: &mut RemoteTab, t: &RemoteTokens, cx: &mut Context<RemoteTab
         vec![
             ("Click ", Emph::Plain),
             ("Show QR", Emph::Strong),
-            (" here and point the phone at it.", Emph::Plain),
+            (
+                " here and point the phone at it. If it can’t scan, click ",
+                Emph::Plain,
+            ),
+            ("Copy as text", Emph::Strong),
+            (" and paste the code on the phone.", Emph::Plain),
         ],
     ];
     if let Some(code) = &code {
@@ -660,7 +721,8 @@ fn computer_panel(
         .child(list);
     if let Some(code) = &code {
         let copied = tab.copied.contains("remote-copy-code");
-        let payload = code.payload.clone();
+        // The bare code: every computer's Easy Connect code field reads it, older ones not the link.
+        let payload = code.text.clone();
         let leading_icon = if copied {
             ICON_CIRCLE_CHECK_FILLED
         } else {
@@ -796,6 +858,11 @@ pub(super) fn qr_preview_dialog(
         }
     };
     let grid = tab.qr_for(tailscale, &payload);
+    let copy = copy_text_button(tab, t, "remote-qr-copy-text", card, cx);
+    let qr_size = QR_PREVIEW_SIZE
+        .min(window.viewport_size().height.as_f32() - QR_PREVIEW_CHROME_HEIGHT)
+        .max(QR_PLACEHOLDER_SIZE)
+        .floor();
     let colors = dialog_colors(t);
     let close = |tab: &mut RemoteTab, _window: &mut Window, cx: &mut Context<RemoteTab>| {
         tab.qr_preview = None;
@@ -879,7 +946,7 @@ pub(super) fn qr_preview_dialog(
             h_flex()
                 .w_full()
                 .justify_center()
-                .child(qr_code(grid.as_ref(), QR_PREVIEW_SIZE)),
+                .child(qr_code(grid.as_ref(), qr_size)),
         )
         .child(
             v_flex()
@@ -894,7 +961,8 @@ pub(super) fn qr_preview_dialog(
                         .line_height(px(18.57))
                         .text_color(hsla(colors.muted))
                         .child(footnote),
-                ),
+                )
+                .children(copy.map(|button| div().pt(px(8.0)).child(button))),
         )
         .into_any_element();
     Some(dialog_overlay(

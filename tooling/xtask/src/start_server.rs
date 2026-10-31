@@ -211,7 +211,7 @@ pub fn run(args: &[String]) -> Res<i32> {
         let running = after
             .map(|health| format!("running {}", gxserver::build_identity_of(&health)))
             .unwrap_or_else(|| "unreachable".into());
-        bail!("gxserver did not come back with the new build ({running}). See ~/.local/state/ghostex/logs/gxserver/macos-launch.log.");
+        bail!("gxserver did not come back with the new build ({running}). See ~/.local/state/ghostex/logs/gxserver/launch.log.");
     };
     step(&format!("gxserver pid {} runs {expected}.", pid_of(after)));
     println!("The app keeps running; its outer code signature is stale until the next `cargo xtask start`.");

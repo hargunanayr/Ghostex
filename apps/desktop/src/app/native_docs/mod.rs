@@ -33,6 +33,7 @@ pub(crate) mod notes_view;
 pub(crate) mod notes_windows;
 pub(crate) mod open_externally;
 pub(crate) mod open_file;
+pub(crate) mod open_file_tabs;
 pub(crate) mod palette;
 pub(crate) mod picture_viewer;
 pub(crate) mod picture_zoom;

@@ -93,7 +93,15 @@ pub(crate) async fn wait_for_account_ready(
         if let Some(identity) = observation {
             saw_agent = true;
             match identity {
-                Some(identity) if identity == expected_identity => {
+                Some(identity)
+                    if super::launch::agent_provider(agent, None).is_some_and(|provider| {
+                        super::codex_identity::identity_matches(
+                            provider,
+                            expected_identity,
+                            &identity,
+                        )
+                    }) =>
+                {
                     if let Some(screen) = capture_session_terminal_text(zmx_name).await {
                         // A resumed transcript can repaint the old account's usage limit. The switch already suppresses that replay.
                         let notice = classify_session_chat_terminal_notice(Some(agent), &screen)

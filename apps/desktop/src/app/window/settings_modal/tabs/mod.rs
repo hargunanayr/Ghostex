@@ -11,6 +11,7 @@ pub(crate) mod extensions;
 pub(crate) mod general;
 pub(crate) mod hotkeys;
 pub(crate) mod integrations;
+pub(crate) mod machine_picker;
 pub(crate) mod open_forms;
 pub(crate) mod open_targets;
 pub(crate) mod orchestrator_playbook;
@@ -20,6 +21,7 @@ pub(crate) mod remote;
 pub(crate) mod theme;
 pub(crate) mod voice_agent;
 pub(crate) mod voice_agent_history;
+pub(crate) mod windows_link_notice;
 pub(crate) mod workspaces;
 
 use super::model::SettingsTabId;
@@ -34,8 +36,13 @@ pub(crate) fn settings_tab_view(
     cx: &mut App,
 ) -> AnyView {
     match tab {
-        SettingsTabId::General => cx
-            .new(|cx| general::GeneralTab::new(store.clone(), window, cx))
+        SettingsTabId::Chat
+        | SettingsTabId::Sidebar
+        | SettingsTabId::Terminal
+        | SettingsTabId::Notifications
+        | SettingsTabId::FilesLinks
+        | SettingsTabId::PowerSleep => cx
+            .new(|cx| general::GeneralTab::new(store.clone(), tab, window, cx))
             .into(),
         SettingsTabId::Remote => remote::remote_tab_view(store, window, cx),
         SettingsTabId::Projects => projects::projects_tab_view(store, window, cx),

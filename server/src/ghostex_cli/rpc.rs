@@ -304,22 +304,19 @@ pub fn request_gxserver_envelope(
     let outcome = crate::http_client::wait_out_server_starting(
         Instant::now() + Duration::from_millis(timeout_ms.max(0.0) as u64),
         |remaining| {
-            ureq::post(&format!("{}{}", target.base_url, pathname))
-                .set("authorization", &format!("Bearer {}", target.token))
-                .set("content-type", "application/json")
-                .set(
+            crate::http_agent::answering_agent()
+                .post(format!("{}{}", target.base_url, pathname))
+                .header("authorization", format!("Bearer {}", target.token))
+                .header("content-type", "application/json")
+                .header(
                     GXSERVER_PROTOCOL_HEADER,
-                    &GXSERVER_PROTOCOL_VERSION.to_string(),
+                    GXSERVER_PROTOCOL_VERSION.to_string(),
                 )
-                .timeout(remaining.max(Duration::from_millis(1)))
-                .send_string(&body_text)
-                .map(|response| (true, response.status(), read_json_body(response)))
-                .or_else(|error| match error {
-                    ureq::Error::Status(status, response) => {
-                        Ok((false, status, read_json_body(response)))
-                    }
-                    error => Err(error),
-                })
+                .config()
+                .timeout_global(Some(remaining.max(Duration::from_millis(1))))
+                .build()
+                .send(body_text.as_str())
+                .map(status_and_json_body)
         },
         starting_retry_after,
     );
@@ -376,9 +373,20 @@ fn starting_retry_after(
     }
 }
 
-fn read_json_body(response: ureq::Response) -> Option<Value> {
+/// Whether the status is a success, the status, and the JSON body.
+fn status_and_json_body(response: ureq::http::Response<ureq::Body>) -> (bool, u16, Option<Value>) {
+    let status = response.status().as_u16();
+    (
+        (200..400).contains(&status),
+        status,
+        read_json_body(response),
+    )
+}
+
+fn read_json_body(response: ureq::http::Response<ureq::Body>) -> Option<Value> {
     let mut text = String::new();
     response
+        .into_body()
         .into_reader()
         .take(32 * 1024 * 1024)
         .read_to_string(&mut text)
@@ -386,21 +394,12 @@ fn read_json_body(response: ureq::Response) -> Option<Value> {
     parse_json_value(&text)
 }
 
-/// A request gxserver accepted but did not answer in time. ureq reports a failed connect as
-/// `ConnectionFailed`; a timeout while waiting for the answer is an `Io` error.
+/// A request gxserver accepted but did not answer in time. A refused connection is an `Io` error
+/// and an unresolvable name `HostNotFound`; only a timeout outside the resolve and connect steps
+/// counts. The time limit is the request's global one, so a connect that hangs until the limit
+/// also reads as a timeout (on loopback, where gxserver listens, a connect never hangs).
 fn timed_out_after_connecting(error: &ureq::Error) -> bool {
-    let ureq::Error::Transport(transport) = error else {
-        return false;
-    };
-    transport.kind() == ureq::ErrorKind::Io
-        && std::error::Error::source(transport)
-            .and_then(|source| source.downcast_ref::<std::io::Error>())
-            .is_some_and(|io| {
-                matches!(
-                    io.kind(),
-                    std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
-                )
-            })
+    matches!(error, ureq::Error::Timeout(_)) && !crate::http_agent::never_connected(error)
 }
 
 /// CDXC:Cli 2026-10-05 WHY:
@@ -657,24 +656,21 @@ pub fn fetch_gxserver_health(target: &Target, timeout_ms: u64) -> CliResult<Opti
     let outcome = crate::http_client::wait_out_server_starting(
         Instant::now() + Duration::from_millis(timeout_ms),
         |remaining| {
-            ureq::get(&format!(
-                "{}/api/health/server?protocolVersion={GXSERVER_PROTOCOL_VERSION}",
-                target.base_url
-            ))
-            .set("authorization", &format!("Bearer {}", target.token))
-            .set(
-                GXSERVER_PROTOCOL_HEADER,
-                &GXSERVER_PROTOCOL_VERSION.to_string(),
-            )
-            .timeout(remaining.max(Duration::from_millis(1)))
-            .call()
-            .map(|response| (true, response.status(), read_json_body(response)))
-            .or_else(|error| match error {
-                ureq::Error::Status(status, response) => {
-                    Ok((false, status, read_json_body(response)))
-                }
-                error => Err(error),
-            })
+            crate::http_agent::answering_agent()
+                .get(format!(
+                    "{}/api/health/server?protocolVersion={GXSERVER_PROTOCOL_VERSION}",
+                    target.base_url
+                ))
+                .header("authorization", format!("Bearer {}", target.token))
+                .header(
+                    GXSERVER_PROTOCOL_HEADER,
+                    GXSERVER_PROTOCOL_VERSION.to_string(),
+                )
+                .config()
+                .timeout_global(Some(remaining.max(Duration::from_millis(1))))
+                .build()
+                .call()
+                .map(status_and_json_body)
         },
         starting_retry_after,
     );

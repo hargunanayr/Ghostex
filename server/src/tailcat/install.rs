@@ -9,7 +9,6 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 
 use crate::paths::GxserverPaths;
 
@@ -170,14 +169,16 @@ fn go_arch() -> Result<&'static str> {
 
 fn download_toolchain(directory: &Path) -> Result<PathBuf> {
     progress("Downloading the tools needed to install Easy Connect…");
-    let agent = ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(180))
-        .build();
-    let releases: Vec<GoRelease> = agent
-        .get("https://go.dev/dl/?mode=json")
-        .call()
-        .context("read the Go download catalog")?
-        .into_json()?;
+    let agent: ureq::Agent = crate::http_agent::config()
+        .timeout_global(Some(Duration::from_secs(180)))
+        .build()
+        .into();
+    let releases: Vec<GoRelease> = crate::http_agent::read_json(
+        agent
+            .get("https://go.dev/dl/?mode=json")
+            .call()
+            .context("read the Go download catalog")?,
+    )?;
     let arch = go_arch()?;
     let archive = releases
         .into_iter()
@@ -199,14 +200,13 @@ fn download_toolchain(directory: &Path) -> Result<PathBuf> {
         .context("download the Go build tools")?;
     let mut file = File::create(&archive_path)?;
     std::io::copy(
-        &mut response.into_reader().take(200 * 1024 * 1024),
+        &mut response.into_body().into_reader().take(200 * 1024 * 1024),
         &mut file,
     )?;
     drop(file);
-    let mut file = File::open(&archive_path)?;
-    let mut digest = Sha256::new();
-    std::io::copy(&mut file, &mut digest)?;
-    if format!("{:x}", digest.finalize()) != archive.sha256 {
+    let digest =
+        crate::managed_tools::download::sha256_file(&archive_path).map_err(anyhow::Error::msg)?;
+    if digest != archive.sha256 {
         bail!("the Go build tools failed checksum verification; try installing again");
     }
     progress("Preparing the Easy Connect build tools…");

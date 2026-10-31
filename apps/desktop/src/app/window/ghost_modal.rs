@@ -185,22 +185,24 @@ impl GpuiGhostModalWindow {
                 .placeholder("An emoji, or leave empty for its initial")
                 .default_value(text(&ghost, "mascot"))
         });
-        let project_search_input = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("Search projects or groups")
-        });
-        let soul_input = cx.new(|cx| {
-            TextareaState::new(window, cx).default_value(text(&ghost["soul"], "text"))
-        });
-        let memory_input = cx.new(|cx| {
-            TextareaState::new(window, cx).default_value(text(&ghost["memory"], "text"))
-        });
-        let notify_on_change = |cx: &mut Context<Self>, input: &Entity<InputState>, window: &mut Window| {
-            cx.subscribe_in(input, window, |_: &mut Self, _, event: &InputEvent, _, cx| {
-                if matches!(event, InputEvent::Change) {
-                    cx.notify();
-                }
-            })
-        };
+        let project_search_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Search projects or groups"));
+        let soul_input =
+            cx.new(|cx| TextareaState::new(window, cx).default_value(text(&ghost["soul"], "text")));
+        let memory_input = cx
+            .new(|cx| TextareaState::new(window, cx).default_value(text(&ghost["memory"], "text")));
+        let notify_on_change =
+            |cx: &mut Context<Self>, input: &Entity<InputState>, window: &mut Window| {
+                cx.subscribe_in(
+                    input,
+                    window,
+                    |_: &mut Self, _, event: &InputEvent, _, cx| {
+                        if matches!(event, InputEvent::Change) {
+                            cx.notify();
+                        }
+                    },
+                )
+            };
         let subscriptions = vec![
             notify_on_change(cx, &name_input, window),
             notify_on_change(cx, &mascot_input, window),
@@ -266,7 +268,12 @@ impl GpuiGhostModalWindow {
     }
 
     /// gxserver's answer to the pending save.
-    fn finish(&mut self, result: Result<Value, String>, window: &mut Window, cx: &mut Context<Self>) {
+    fn finish(
+        &mut self,
+        result: Result<Value, String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let pending = self.pending.take();
         match result {
             Err(message) => self.error = Some(message),
@@ -286,7 +293,9 @@ impl GpuiGhostModalWindow {
                 Some(Pending::Skill) => self.skills = value,
                 Some(Pending::General) => self.notice = Some("Saved.".into()),
                 Some(Pending::Reset) => {
-                    self.notice = Some("The Ghost starts a new conversation; its Soul and Memory stay.".into())
+                    self.notice = Some(
+                        "The Ghost starts a new conversation; its Soul and Memory stay.".into(),
+                    )
                 }
                 None => {}
             },
@@ -318,13 +327,26 @@ impl GpuiGhostModalWindow {
                     let agent_id = agent.agent_id.clone();
                     self.send(
                         Pending::Create,
-                        GhostModalCommand::Create { name, mascot, color, agent_id, project_ids, reply },
+                        GhostModalCommand::Create {
+                            name,
+                            mascot,
+                            color,
+                            agent_id,
+                            project_ids,
+                            reply,
+                        },
                         cx,
                     );
                 } else {
                     self.send(
                         Pending::General,
-                        GhostModalCommand::SaveGeneral { name, mascot, color, project_ids, reply },
+                        GhostModalCommand::SaveGeneral {
+                            name,
+                            mascot,
+                            color,
+                            project_ids,
+                            reply,
+                        },
                         cx,
                     );
                 }
@@ -334,7 +356,12 @@ impl GpuiGhostModalWindow {
                 let expected_hash = self.soul_hash.clone();
                 self.send(
                     Pending::Soul,
-                    GhostModalCommand::SaveFile { file: "SOUL.md", text, expected_hash, reply },
+                    GhostModalCommand::SaveFile {
+                        file: "SOUL.md",
+                        text,
+                        expected_hash,
+                        reply,
+                    },
                     cx,
                 );
             }
@@ -343,7 +370,12 @@ impl GpuiGhostModalWindow {
                 let expected_hash = self.memory_hash.clone();
                 self.send(
                     Pending::Memory,
-                    GhostModalCommand::SaveFile { file: "MEMORY.md", text, expected_hash, reply },
+                    GhostModalCommand::SaveFile {
+                        file: "MEMORY.md",
+                        text,
+                        expected_hash,
+                        reply,
+                    },
                     cx,
                 );
             }
@@ -351,12 +383,26 @@ impl GpuiGhostModalWindow {
         }
     }
 
-    fn skill(&mut self, action: &'static str, name: String, window: &mut Window, cx: &mut Context<Self>) {
+    fn skill(
+        &mut self,
+        action: &'static str,
+        name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.pending.is_some() {
             return;
         }
         let reply = self.reply(window, cx);
-        self.send(Pending::Skill, GhostModalCommand::Skill { action, name, reply }, cx);
+        self.send(
+            Pending::Skill,
+            GhostModalCommand::Skill {
+                action,
+                name,
+                reply,
+            },
+            cx,
+        );
     }
 
     fn danger(&mut self, which: Pending, window: &mut Window, cx: &mut Context<Self>) {
@@ -406,7 +452,11 @@ impl GpuiGhostModalWindow {
                     .bg(gpui::rgb(hex))
                     .cursor_pointer()
                     .border_2()
-                    .border_color(if selected { hsla(p.foreground) } else { gpui::transparent_black() })
+                    .border_color(if selected {
+                        hsla(p.foreground)
+                    } else {
+                        gpui::transparent_black()
+                    })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.color = choice.to_string();
                         cx.notify();
@@ -422,7 +472,12 @@ impl GpuiGhostModalWindow {
             .min_h_0()
             .overflow_y_scroll()
             .gap(px(2.0));
-        let query = self.project_search_input.read(cx).value().trim().to_lowercase();
+        let query = self
+            .project_search_input
+            .read(cx)
+            .value()
+            .trim()
+            .to_lowercase();
         let shown: Vec<&GhostModalProject> = self
             .projects
             .iter()
@@ -436,21 +491,24 @@ impl GpuiGhostModalWindow {
         if self.projects.is_empty() {
             projects = projects.child(modal_hint(&p, "No projects yet. Add one to Ghostex first."));
         } else if shown.is_empty() {
-            projects = projects.child(modal_hint(&p, format!("No project or group matches \u{201c}{query}\u{201d}.")));
+            projects = projects.child(modal_hint(
+                &p,
+                format!("No project or group matches \u{201c}{query}\u{201d}."),
+            ));
         }
-        let grouped = self.projects.iter().any(|project| !project.group.is_empty());
+        let grouped = self
+            .projects
+            .iter()
+            .any(|project| !project.group.is_empty());
         for project in shown {
             let color = u32::from_str_radix(project.group_color.trim_start_matches('#'), 16).ok();
             // "Group - Project", as the sidebar nests it; a project in no group shows its name.
             let mut label = h_flex().flex_1().min_w_0().gap(px(7.0)).text_size(px(13.5));
             if grouped {
-                label = label.child(
-                    div()
-                        .size(px(7.0))
-                        .rounded_full()
-                        .flex_shrink_0()
-                        .bg(color.map_or(hsla(p.muted).opacity(0.35), |hex| gpui::rgb(hex).into())),
-                );
+                label =
+                    label.child(div().size(px(7.0)).rounded_full().flex_shrink_0().bg(
+                        color.map_or(hsla(p.muted).opacity(0.35), |hex| gpui::rgb(hex).into()),
+                    ));
             }
             if !project.group.is_empty() {
                 label = label.child(
@@ -471,7 +529,10 @@ impl GpuiGhostModalWindow {
             let project_id = project.project_id.clone();
             projects = projects.child(
                 h_flex()
-                    .id(SharedString::from(format!("ghost-project-{}", project.project_id)))
+                    .id(SharedString::from(format!(
+                        "ghost-project-{}",
+                        project.project_id
+                    )))
                     .w_full()
                     .px(px(10.0))
                     .py(px(6.0))
@@ -479,8 +540,10 @@ impl GpuiGhostModalWindow {
                     .cursor_pointer()
                     .hover(move |this| this.bg(hsla(p.raised_hover)))
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Some(index) =
-                            this.selected_projects.iter().position(|id| *id == project_id)
+                        if let Some(index) = this
+                            .selected_projects
+                            .iter()
+                            .position(|id| *id == project_id)
                         {
                             this.selected_projects.remove(index);
                         } else {
@@ -553,9 +616,18 @@ impl GpuiGhostModalWindow {
                 .min_h_0()
                 .gap(px(6.0))
                 .child(modal_section_title(&p, projects_title))
-                .child(modal_hint(&p, "It can open threads in these, and sees their sessions and files."))
+                .child(modal_hint(
+                    &p,
+                    "It can open threads in these, and sees their sessions and files.",
+                ))
                 .when(!self.projects.is_empty(), |this| {
-                    this.child(modal_text_input(&p, &self.project_search_input, false, window, cx))
+                    this.child(modal_text_input(
+                        &p,
+                        &self.project_search_input,
+                        false,
+                        window,
+                        cx,
+                    ))
                 })
                 .child(projects),
         );
@@ -614,13 +686,25 @@ impl GpuiGhostModalWindow {
             .min_h_0()
             .gap(px(8.0))
             .child(modal_hint(&p, hint))
-            .child(modal_text_area(&p, state, Some(380.0), self.pending.is_some(), window, cx))
+            .child(modal_text_area(
+                &p,
+                state,
+                Some(380.0),
+                self.pending.is_some(),
+                window,
+                cx,
+            ))
             .into_any_element()
     }
 
     fn render_skills(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = self.palette;
-        let row = |name: String, description: String, label: &'static str, action: &'static str, index: usize, cx: &mut Context<Self>| {
+        let row = |name: String,
+                   description: String,
+                   label: &'static str,
+                   action: &'static str,
+                   index: usize,
+                   cx: &mut Context<Self>| {
             h_flex()
                 .w_full()
                 .gap(px(10.0))
@@ -632,7 +716,12 @@ impl GpuiGhostModalWindow {
                     v_flex()
                         .flex_1()
                         .min_w_0()
-                        .child(div().text_size(px(13.5)).text_color(p.foreground).child(name.clone()))
+                        .child(
+                            div()
+                                .text_size(px(13.5))
+                                .text_color(p.foreground)
+                                .child(name.clone()),
+                        )
                         .when(!description.is_empty(), |this| {
                             this.child(
                                 div()
@@ -663,16 +752,38 @@ impl GpuiGhostModalWindow {
                 )
         };
         let mut own = v_flex().gap(px(4.0));
-        let own_rows = self.skills["skills"].as_array().cloned().unwrap_or_default();
+        let own_rows = self.skills["skills"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
         if own_rows.is_empty() {
             own = own.child(modal_hint(&p, "None yet. Add one of your installed skills below; only this Ghost will see its copy."));
         }
         for (index, skill) in own_rows.iter().enumerate() {
-            own = own.child(row(text(skill, "name"), text(skill, "description"), "Remove", "remove", index, cx));
+            own = own.child(row(
+                text(skill, "name"),
+                text(skill, "description"),
+                "Remove",
+                "remove",
+                index,
+                cx,
+            ));
         }
         let mut available = v_flex().gap(px(4.0));
-        for (index, skill) in self.skills["available"].as_array().into_iter().flatten().enumerate() {
-            available = available.child(row(text(skill, "name"), text(skill, "description"), "Add", "add", index, cx));
+        for (index, skill) in self.skills["available"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .enumerate()
+        {
+            available = available.child(row(
+                text(skill, "name"),
+                text(skill, "description"),
+                "Add",
+                "add",
+                index,
+                cx,
+            ));
         }
         v_flex()
             .id("ghost-skills")
@@ -697,7 +808,11 @@ impl Render for GpuiGhostModalWindow {
             "New Ghost".to_string()
         } else {
             let name = self.name_input.read(cx).value().trim().to_string();
-            if name.is_empty() { "Ghost".to_string() } else { name }
+            if name.is_empty() {
+                "Ghost".to_string()
+            } else {
+                name
+            }
         };
         let description = if self.is_new {
             "A long-lived agent with a Soul and a Memory that looks after your projects, opens threads in them and runs habits."
@@ -711,10 +826,22 @@ impl Render for GpuiGhostModalWindow {
                 &p,
                 "ghost-tabs",
                 &[
-                    ModalSegmentedItem { icon: None, label: "General" },
-                    ModalSegmentedItem { icon: None, label: "Soul" },
-                    ModalSegmentedItem { icon: None, label: "Memory" },
-                    ModalSegmentedItem { icon: None, label: "Skills" },
+                    ModalSegmentedItem {
+                        icon: None,
+                        label: "General",
+                    },
+                    ModalSegmentedItem {
+                        icon: None,
+                        label: "Soul",
+                    },
+                    ModalSegmentedItem {
+                        icon: None,
+                        label: "Memory",
+                    },
+                    ModalSegmentedItem {
+                        icon: None,
+                        label: "Skills",
+                    },
                 ],
                 selected,
                 |this: &mut Self, index, _, cx| {

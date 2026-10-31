@@ -47,22 +47,27 @@ pub struct CoordinatorThreadRow {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CoordinatorThreadsPanel {
-    /// "1 working · 94 threads".
+    /// "1 active · 94 total".
     pub meta: String,
     pub rows: Vec<CoordinatorThreadRow>,
-    /// A thread needs the user's approval, which marks the header.
+    /// A thread needs the user's approval, which marks the header (red, as the sidebar's approval
+    /// dot).
     pub attention: bool,
+    /// A thread waits on an answer that is no approval (a question), which marks the header pink
+    /// when no thread needs an approval.
+    #[serde(default)]
+    pub question: bool,
     /// The step the list is at: 0 in flight only, 1 with the recent ones, 2+ with 30 more per step.
     pub step: u32,
     /// "Show recent", "169 more" or "Show fewer"; "" when there is nothing to add or take back.
     pub more_label: String,
     /// The step the link moves to (0 for "Show fewer").
     pub more_step: u32,
-    /// The quiet line when nothing is listed: "No threads working".
+    /// The quiet line when nothing is listed: "No workers working".
     pub empty_label: String,
-    /// Threads working or waiting on the user, what the first step lists and the Threads pill counts.
+    /// Threads working or waiting on the user, what the first step lists and the Workers pill counts.
     pub in_flight: usize,
-    /// Threads working right now, which mark the Threads pill as running (extras/chat_pills.rs).
+    /// Threads working right now, which mark the Workers pill as running (extras/chat_pills.rs).
     pub working: usize,
 }
 
@@ -215,7 +220,7 @@ pub fn settle_open(
         Err(message) => Effect::Toast {
             level: "error".to_string(),
             message: if message.is_empty() {
-                "Could not open that thread.".to_string()
+                "Could not open that worker.".to_string()
             } else {
                 message
             },
@@ -291,6 +296,9 @@ pub fn coordinator_threads_panel(
     });
     let working = rows.iter().filter(|(_, row)| row.working).count();
     let approval = rows.iter().filter(|(_, row)| row.needs_approval).count();
+    let question = rows
+        .iter()
+        .any(|(_, row)| row.waiting && !row.needs_approval && !row.working);
     let flying = rows.iter().filter(|(_, row)| in_flight(row)).count();
     let recent = rows
         .iter()
@@ -303,8 +311,10 @@ pub fn coordinator_threads_panel(
     };
     let hidden = total.saturating_sub(listed);
     let mut meta = Vec::new();
+    // CDXC:Coordinators 2026-10-29 DECISION: User: "make this 2 active • 429 total": the header counts
+    // the workers running now as "active" and every worker as "total".
     if working > 0 {
-        meta.push(format!("{working} working"));
+        meta.push(format!("{working} active"));
     }
     if approval > 0 {
         meta.push(plural(
@@ -313,7 +323,7 @@ pub fn coordinator_threads_panel(
             "need your approval",
         ));
     }
-    meta.push(plural(total, "thread", "threads"));
+    meta.push(format!("{total} total"));
     let rows: Vec<CoordinatorThreadRow> = match all {
         // The full list: its first `listed` rows.
         Some(_) => rows.into_iter().take(listed).map(|(_, row)| row).collect(),
@@ -340,11 +350,12 @@ pub fn coordinator_threads_panel(
     Some(CoordinatorThreadsPanel {
         meta: meta.join(" \u{b7} "),
         attention: approval > 0,
+        question,
         step,
         more_label,
         more_step,
         empty_label: if rows.is_empty() {
-            "No threads working".to_string()
+            "No workers working".to_string()
         } else {
             String::new()
         },
@@ -359,4 +370,26 @@ pub fn project(threads: Option<&Value>, step: u32, all: Option<&Value>) -> Value
     coordinator_threads_panel(threads, step, all)
         .and_then(|panel| serde_json::to_value(panel).ok())
         .unwrap_or(Value::Null)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::coordinator_threads_panel;
+    use serde_json::json;
+
+    /// The header's waiting dot: an approval marks `attention` (red), a thread waiting on any other
+    /// answer marks `question` (pink); a working thread marks neither.
+    #[test]
+    fn panel_tells_an_approval_from_a_question() {
+        let row = |id: &str, state: &str, approval: bool| json!({"projectId": "p", "sessionId": id, "state": state, "needsApproval": approval});
+        let panel = |rows: Vec<serde_json::Value>| {
+            coordinator_threads_panel(Some(&json!({"threads": rows})), 0, None).unwrap()
+        };
+        let asking = panel(vec![row("a", "working", false), row("b", "waiting", false)]);
+        assert!((!asking.attention, asking.question) == (true, true));
+        let stuck = panel(vec![row("a", "waiting", true)]);
+        assert!(stuck.attention && !stuck.question);
+        let busy = panel(vec![row("a", "working", false)]);
+        assert!(!busy.attention && !busy.question);
+    }
 }

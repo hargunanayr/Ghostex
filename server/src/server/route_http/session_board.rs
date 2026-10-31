@@ -187,7 +187,9 @@ fn complete_sessions(state: &Arc<AppState>, body: &Value) -> Result<Value, Domai
     let targets = params
         .get("sessions")
         .and_then(Value::as_array)
-        .ok_or_else(|| DomainStateError::bad_request("Pass sessions: [{ projectId, sessionId }]."))?;
+        .ok_or_else(|| {
+            DomainStateError::bad_request("Pass sessions: [{ projectId, sessionId }].")
+        })?;
     let now = now_iso();
     let mut completed = Vec::new();
     let mut skipped = Vec::new();

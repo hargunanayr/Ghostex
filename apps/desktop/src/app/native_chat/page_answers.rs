@@ -95,12 +95,16 @@ impl NativeChatView {
             .text_size(px(12.0 * s))
             .line_height(px(18.0 * s));
         if !failed {
-            let label = if delivery["state"] == "queued" {
-                "Waiting for the agent to be free…"
+            let reason = text(delivery, "waitReason");
+            let label: gpui::SharedString = if delivery["state"] == "queued" && !reason.is_empty() {
+                // Why gxserver still holds the answers, once they have waited about a minute.
+                reason.into()
+            } else if delivery["state"] == "queued" {
+                "Waiting for the agent to be free…".into()
             } else if delivery["state"] == "reconnecting" {
-                "Reconnecting to Ghostex… your answers go out as soon as it's back."
+                "Reconnecting to Ghostex… your answers go out as soon as it's back.".into()
             } else {
-                "Sending to the agent…"
+                "Sending to the agent…".into()
             };
             let glyph = svg()
                 .path("titlebar/loader2.svg")
@@ -123,7 +127,7 @@ impl NativeChatView {
             };
             return line
                 .role(gpui::Role::Status)
-                .aria_label(label)
+                .aria_label(label.clone())
                 .text_color(p.muted)
                 .child(glyph)
                 .child(label)

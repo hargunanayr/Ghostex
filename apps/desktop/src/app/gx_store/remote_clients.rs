@@ -597,6 +597,7 @@ impl GhostexGpuiApp {
             state: MACHINE_STATE_CONNECTED.to_string(),
             message: None,
             fed: true,
+            this_computer: false,
         }];
         for (machine_id, label) in ordered {
             tabs.push(MachineTabInput {
@@ -632,6 +633,10 @@ impl GhostexGpuiApp {
                         .presentation()
                         .loaded(&MachineId::Remote(machine_id.clone()))
                         .is_some(),
+                this_computer: self
+                    .remote_gxserver_connections
+                    .get(machine_id.as_str())
+                    .is_some_and(|connection| connection.this_computer),
             });
         }
         tabs

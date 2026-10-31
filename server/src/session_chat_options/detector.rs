@@ -153,6 +153,7 @@ impl SessionChatOptionDetector {
             }
         }
         let mut auto_trust_plan = None;
+        let mut feedback_card_plan = None;
         let mut detected = open_gxserver_database(&self.paths)
             .ok()
             .map(|db| {
@@ -169,6 +170,12 @@ impl SessionChatOptionDetector {
                     project_id,
                     session_id,
                     detected.notice.as_ref(),
+                );
+                feedback_card_plan = crate::session_chat_claude_feedback_card::dismiss_plan(
+                    &repository,
+                    project_id,
+                    session_id,
+                    &detected.composer,
                 );
                 detected
             })
@@ -432,6 +439,19 @@ impl SessionChatOptionDetector {
         if let Some(plan) = auto_trust_plan {
             if crate::session_chat_trust_memory::claim_auto_trust_attempt(project_id, session_id) {
                 crate::session_chat_trust_memory::dispatch_auto_trust(
+                    self.clone(),
+                    plan,
+                    project_id,
+                    session_id,
+                    agent,
+                );
+            }
+        }
+        // Claude's self-drafted feedback card is closed from here for the same reason
+        // (session_chat_claude_feedback_card.rs).
+        if let Some(plan) = feedback_card_plan {
+            if crate::session_chat_claude_feedback_card::claim_dismissal(project_id, session_id) {
+                crate::session_chat_claude_feedback_card::dispatch_dismissal(
                     self.clone(),
                     plan,
                     project_id,

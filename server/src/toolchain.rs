@@ -424,6 +424,17 @@ mod tests {
         );
     }
 
+    /// A dangling link is not a program, so the tool reads as missing in the health answer rather
+    /// than resolving and failing when a session starts (GitHub #360).
+    #[cfg(unix)]
+    #[test]
+    fn a_dangling_tool_link_is_not_an_executable_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let link = dir.path().join("zmx");
+        std::os::unix::fs::symlink("../../bin/zmx", &link).expect("link");
+        assert!(!is_executable_file(&link));
+    }
+
     #[test]
     fn gxserver_root_from_dev_target_executable_keeps_cwd_fallback() {
         assert!(gxserver_root_from_executable_path(Path::new(

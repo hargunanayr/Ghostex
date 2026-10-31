@@ -397,6 +397,7 @@ pub(super) fn is_inactive(row: &ghostex_gx_protocol::PresentationSession) -> boo
         && row.activity != SessionActivity::Working
         && row.activity != SessionActivity::Attention
         && row.pending_question_count == 0
+        && !row.awaiting_approval
         && row.background_work_detected_at.is_none()
 }
 

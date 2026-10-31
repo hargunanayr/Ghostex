@@ -57,9 +57,7 @@ fn bool_setting(paths: &GxserverPaths, key: &str) -> bool {
     if cfg!(test) {
         return false;
     }
-    std::fs::read_to_string(paths.app_config_dir.join("native-sidebar-settings.json"))
-        .ok()
-        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+    crate::shared_settings_file::read_shared_settings(paths)
         .and_then(|settings| settings.get(key).and_then(Value::as_bool))
         .unwrap_or(false)
 }

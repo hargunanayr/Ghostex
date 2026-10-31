@@ -276,10 +276,12 @@ impl NativeSessionBoardView {
                             label,
                             p,
                         )
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            cx.stop_propagation();
-                            this.card_action(&action_id, window, cx);
-                        }));
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                cx.stop_propagation();
+                                this.card_action(&action_id, window, cx);
+                            },
+                        ));
                         if always {
                             this.child(button)
                         } else {
@@ -292,12 +294,7 @@ impl NativeSessionBoardView {
                         }
                     })
                     .when_some(time.filter(|_| !card.task_waiting), |this, time| {
-                        this.child(
-                            div()
-                                .flex_none()
-                                .text_color(p.faint)
-                                .child(time),
-                        )
+                        this.child(div().flex_none().text_color(p.faint).child(time))
                     }),
             )
             .into_any_element()

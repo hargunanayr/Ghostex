@@ -502,6 +502,7 @@ pub fn pending_sends_as_messages(pending: &[PendingSend]) -> Vec<ChatMessage> {
                         prompt_id,
                         state: "queued".to_string(),
                         error_message: None,
+                        wait_reason: None,
                     })
             });
             let echo = ChatMessage {
@@ -518,6 +519,7 @@ pub fn pending_sends_as_messages(pending: &[PendingSend]) -> Vec<ChatMessage> {
                 deferred_work: None,
                 startup_delivery,
                 api_error: None,
+                mention_paths: None,
             };
             let command = entry
                 .text

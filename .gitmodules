@@ -15,6 +15,7 @@
 # Ghostex checkout. Gitlinks pin reviewed revisions, and the dependencies with
 # Ghostex-owned runtime fixes use first-party fork branches so Actions can
 # reproduce the exact source committed here.
+# CDXC:Build 2026-10-25 DECISION: User chose to take the GPUI stack straight to Zed main for the GPUI Fast 0.1.10 / GPUI Kit 0.8 upgrade: the zed fork carries GPUI Fast main 124f79b synced onto Zed main a5c4ca8bf6 by hand (GPUI Fast's docs/upstream-sync.md), so the macOS glass code moved from cocoa/objc to objc2 with it; and GPUI Kit 0.8's scroll bounce stays on ("we judge it in testing").
 [submodule ".dependencies/zed"]
 	path = .dependencies/zed
 	url = https://github.com/maddada/zed.git

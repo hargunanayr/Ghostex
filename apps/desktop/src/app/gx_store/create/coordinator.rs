@@ -69,7 +69,7 @@ fn coordinator_models(family: &str) -> Vec<NewCoordinatorModel> {
 /// server/src/coordinators/title.rs).
 fn coordinator_title(name: &str) -> (&str, &'static str) {
     if name.trim().is_empty() {
-        ("Orchestrator", "placeholder")
+        ("Coordinator", "placeholder")
     } else {
         (name, "user")
     }
@@ -204,7 +204,7 @@ impl GhostexGpuiApp {
                         }
                         Err(reason) => this.gx_store_create_toast(
                             "warning",
-                            "Orchestrator not created",
+                            "Coordinator not created",
                             Some(&reason),
                             cx,
                         ),
@@ -221,7 +221,7 @@ impl GhostexGpuiApp {
         let Some(agent) = resolve_sidebar_agent(hud.as_deref(), agent_id) else {
             self.gx_store_create_toast(
                 "warning",
-                "Orchestrator not created",
+                "Coordinator not created",
                 Some("That agent is no longer configured."),
                 cx,
             );
@@ -248,7 +248,7 @@ impl GhostexGpuiApp {
                     let _ = this.update(cx, |this, cx| {
                         this.gx_store_create_toast(
                             "warning",
-                            "Orchestrator not created",
+                            "Coordinator not created",
                             Some(&message),
                             cx,
                         );
@@ -272,7 +272,7 @@ impl GhostexGpuiApp {
                 if let Some(message) = role_error.as_deref() {
                     this.gx_store_create_toast(
                         "warning",
-                        "Orchestrator's skill not set up",
+                        "Coordinator's skill not set up",
                         Some(message),
                         cx,
                     );
@@ -313,13 +313,13 @@ impl GhostexGpuiApp {
             let _ = this.update(cx, |this, cx| match result {
                 Ok(_) => this.gx_store_create_toast(
                     "info",
-                    "Now an orchestrator",
+                    "Now a coordinator",
                     Some("Its playbook reaches it once its current turn is over."),
                     cx,
                 ),
                 Err(error) => this.gx_store_create_toast(
                     "warning",
-                    "Not made an orchestrator",
+                    "Not made a coordinator",
                     Some(&error.message),
                     cx,
                 ),

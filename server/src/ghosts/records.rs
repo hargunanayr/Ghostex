@@ -94,7 +94,10 @@ pub fn list_ghosts(db: &Connection) -> Result<Vec<GhostRecord>, DomainStateError
     Ok(rows)
 }
 
-pub fn read_ghost(db: &Connection, ghost_id: &str) -> Result<Option<GhostRecord>, DomainStateError> {
+pub fn read_ghost(
+    db: &Connection,
+    ghost_id: &str,
+) -> Result<Option<GhostRecord>, DomainStateError> {
     db.query_row(
         &format!("SELECT {GHOST_COLUMNS} FROM ghosts WHERE ghostId = ?1"),
         params![ghost_id],

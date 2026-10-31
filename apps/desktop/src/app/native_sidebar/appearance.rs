@@ -16,6 +16,11 @@ pub(crate) struct SidebarAppearance {
     pub(crate) selected_highlight: Hsla,
     pub(crate) foreground: Hsla,
     pub(crate) muted: Hsla,
+    /// CDXC:Sidebar 2026-10-29 DECISION:
+    /// User, comparing the sidebar's icons with the workarea header's (the sidebar's were #7D828C, the Spaces row's #808080 and the machine tab names #B5B8BF against the header's about #BBBBBC), picked "B. Sidebar takes the header's grey". The icons of the sidebar's top row, bottom bar, Spaces row and machine tabs use `titlebar_icon_color()`, the header's own icon colour, and the machine tab names use `titlebar_text_color()`, its label colour, so dark and light follow the header. Selected, hovered and disabled states keep their logic on top of this base. This supersedes the 2026-10-28 rule that drew Claude's button in #7C828C (app/claude_web/sidebar_button.rs).
+    pub(crate) chrome_icon: Hsla,
+    /// The header's label colour, for the machine tab names (see `chrome_icon`).
+    pub(crate) chrome_label: Hsla,
     pub(crate) selected: Hsla,
     pub(crate) hover: Hsla,
     pub(crate) session_hover: Hsla,
@@ -65,6 +70,8 @@ impl SidebarAppearance {
             tooltip_delay: tooltip_delay_from_hud(hud),
             foreground: chrome_color(0xb4b8c0, 0x262626).into(),
             muted: chrome_color(0x7c828c, 0x6b7280).into(),
+            chrome_icon: titlebar_icon_color(),
+            chrome_label: titlebar_text_color(),
             selected: if light_glass {
                 light_glass_selected
             } else {

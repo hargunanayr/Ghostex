@@ -121,6 +121,10 @@ mkdir -p \
 cp -a "$APP_DIR/." "$PACKAGE_ROOT/opt/ghostex/"
 cp "$REPO_ROOT/apps/desktop/resources/AppIcon.appiconset/icon_256x256.png" \
 	"$PACKAGE_ROOT/usr/share/icons/hicolor/256x256/apps/ghostex.png"
+# CDXC:Cli 2026-10-26 SEE-ALSO:
+# The desktop app recognises this script as Ghostex's own CLI only byte for
+# byte (GPUI_LINUX_PACKAGE_CLI_WRAPPER in
+# apps/desktop/src/app/helpers/os_cli/cli_install.rs); change both together.
 cat >"$PACKAGE_ROOT/usr/bin/ghostex" <<'EOF'
 #!/usr/bin/env bash
 exec /opt/ghostex/gxserver/bin/ghostex "$@"

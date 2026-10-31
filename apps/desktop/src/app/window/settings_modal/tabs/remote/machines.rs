@@ -638,6 +638,16 @@ fn tile_icon(t: &RemoteTokens, path: &'static str) -> AnyElement {
 }
 
 fn tile_text(t: &RemoteTokens, title: String, detail_text: String) -> AnyElement {
+    tile_text_wrapping(t, title, detail_text, false)
+}
+
+/// [`tile_text`] whose line may wrap: a failing machine's reason is read whole.
+fn tile_text_wrapping(
+    t: &RemoteTokens,
+    title: String,
+    detail_text: String,
+    wrap: bool,
+) -> AnyElement {
     v_flex()
         .flex_1()
         .min_w_0()
@@ -653,7 +663,7 @@ fn tile_text(t: &RemoteTokens, title: String, detail_text: String) -> AnyElement
                 .text_color(hsla(t.foreground))
                 .child(title),
         )
-        .child(detail(t, detail_text, false))
+        .child(detail(t, detail_text, wrap))
         .into_any_element()
 }
 
@@ -704,6 +714,11 @@ fn machine_tile(
         .unwrap_or_default()
         .to_string();
     let visible = machine.get("disabled").and_then(Value::as_bool) != Some(true);
+    let status = machine_tile_status(
+        tab.connect_states.get(&id).map(String::as_str),
+        tab.this_computer.contains(&id),
+        tab.status_messages.get(&id).map(String::as_str),
+    );
     let hover = t.card(0.58);
     let open_machine = machine.clone();
     let switch_id = id.clone();
@@ -735,12 +750,17 @@ fn machine_tile(
                     tab.open_machine_dialog(Some(&open_machine), window, cx);
                 }))
                 .child(tile_icon(t, ICON_DEVICE_DESKTOP))
-                .child(tile_text(
+                .child(tile_text_wrapping(
                     t,
                     name,
-                    // A connected machine's Ghostex version (and its update) stands in for the SSH target.
-                    super::app_update::tile_update_line(tab, &id)
+                    // A failing machine's reason, or that it is this computer, comes first and
+                    // wraps; then a connected machine's Ghostex version (and its update) stands in
+                    // for the SSH target.
+                    status
+                        .clone()
+                        .or_else(|| super::app_update::tile_update_line(tab, &id))
                         .unwrap_or_else(|| format_remote_machine_ssh_target(machine)),
+                    status.is_some(),
                 )),
         )
         .children(super::app_update::tile_update_button(tab, t, &id, cx))
@@ -1109,7 +1129,25 @@ pub(super) fn machine_dialog(
         )));
     }
     body = body.child(v_flex().w_full().gap(px(12.0)).children(fields));
-    if let Some(machine_id) = machine_id.clone() {
+    // A machine that is this computer runs this app's own gxserver: installing or updating it
+    // there would stop that gxserver, so the row explains instead of offering the button.
+    let this_computer = machine_id
+        .as_ref()
+        .is_some_and(|id| tab.this_computer.contains(id));
+    if this_computer {
+        body = body.child(
+            div()
+                .w_full()
+                .mt(px(8.0))
+                .text_size(px(13.0))
+                .line_height(px(18.2))
+                .text_color(hsla(colors.muted))
+                .child(
+                    "This is this computer. Its gxserver is the one this app runs, so it is not installed or updated from here.",
+                ),
+        );
+    }
+    if let Some(machine_id) = machine_id.clone().filter(|_| !this_computer) {
         // CDXC:RemoteMachines 2026-06-23-08:30: the gxserver install action reuses the reconnect flow, so native opens the approval modal only after SSH proves gxserver is missing, and otherwise connects the existing remote daemon.
         let installed = install.as_ref().is_some_and(|install| install.installed);
         let version_text = install

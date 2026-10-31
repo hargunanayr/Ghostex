@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 
-use gpui::{prelude::*, *};
+/// CDXC:WebGpui 2026-10-26 WHY: never glob-import `gpui::*` here. The shared desktop files reach the crate root through `use crate::*`, so a glob would hand them `gpui::test`, which shadows the built-in `#[test]` and expands back into `#[test]`; the test target then dies with "recursion limit reached while expanding `#[test]`" however high the limit goes.
+use gpui::{App, AppCell, Application, KeyBinding, WindowOptions, prelude::*};
 use gpui_component::{Root, theme::Theme};
 use wasm_bindgen::prelude::*;
 
@@ -155,6 +156,7 @@ pub fn run() -> Result<(), JsValue> {
         })
     {
         shared_settings::install(settings);
+        app::helpers::apply_settings_theme_colours();
     }
     app.with_assets(assets::GhostexAssets).run(|cx: &mut App| {
         // A Mac browser gets the Mac text editing keys in every text input (the chat composer's Cmd+Backspace and friends).

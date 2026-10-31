@@ -525,7 +525,7 @@ impl GhostexGpuiApp {
         let icon_color = if open {
             titlebar_active_text_color()
         } else {
-            appearance.muted
+            appearance.chrome_icon
         };
         let button_bounds: Rc<Cell<Option<Bounds<Pixels>>>> =
             self.titlebar_notification_bell_bounds.clone();

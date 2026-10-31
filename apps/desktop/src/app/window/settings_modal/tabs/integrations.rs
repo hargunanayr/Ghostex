@@ -3,6 +3,8 @@
 //! the bundled agent skills and App Shots. Every action posts the message the React page posted
 //! (`installGhostexCli`, `install*Skill`, `*CuaDriver`, `uninstallBundledAgentSkill(s)`, ...) and
 //! the app answers each with a fresh `ghostexCliStatus`, which ends the page's checking state.
+//! With a remote machine picked at the top (machine_picker.rs) the page shows that machine's
+//! integrations instead (integrations/remote_machine.rs).
 use super::super::super::native_modal_kit::*;
 use super::super::catalog::settings_catalog;
 use super::super::fields::{
@@ -16,6 +18,7 @@ use super::super::rail::{rail_pages, render_no_matches};
 use super::super::store::{
     SettingsStore, SettingsStoreEvent, post_store_message, store_copy_to_clipboard,
 };
+use super::{machine_picker, windows_link_notice};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, AnyView, App, AppContext as _, ClickEvent, Context, ElementId, Entity, FontWeight,
@@ -27,9 +30,11 @@ use serde_json::{Value, json};
 use std::time::Duration;
 
 mod permissions;
+mod remote_machine;
 mod spaceo;
 mod tools;
 mod updates;
+mod web_runtime;
 
 const SKILLS_MODULE: &str = super::super::catalog::module::AGENT_SKILLS;
 
@@ -132,6 +137,12 @@ struct Skill {
 }
 
 fn visible_skills() -> Vec<Skill> {
+    catalog_skills(cfg!(target_os = "macos"))
+}
+
+/// The bundled skills Settings lists; `with_macos_only` keeps the ones that run only on macOS (a
+/// remote machine's own gxserver says whether they can be installed there).
+fn catalog_skills(with_macos_only: bool) -> Vec<Skill> {
     settings_catalog()
         .module_value(SKILLS_MODULE, "VISIBLE_BUNDLED_GHOSTEX_AGENT_SKILLS")
         .and_then(Value::as_array)
@@ -139,8 +150,7 @@ fn visible_skills() -> Vec<Skill> {
             skills
                 .iter()
                 .filter(|skill| {
-                    cfg!(target_os = "macos")
-                        || skill.get("macOSOnly").and_then(Value::as_bool) != Some(true)
+                    with_macos_only || skill.get("macOSOnly").and_then(Value::as_bool) != Some(true)
                 })
                 .filter_map(|skill| {
                     let text = |key: &str| skill.get(key)?.as_str().map(str::to_string);
@@ -329,11 +339,20 @@ pub(crate) struct IntegrationsTab {
     managed: tools::ManagedToolsState,
     /// The permission rows' live re-checks (permissions.rs).
     permissions: permissions::PermissionPolling,
+    /// The remote machine the page shows (the machine picker's pick); `None` is this computer.
+    shown_machine: Option<String>,
+    shown_machine_name: Option<String>,
+    /// That machine's integrations (integrations/remote_machine.rs).
+    remote: remote_machine::RemoteIntegrations,
 }
 
 impl IntegrationsTab {
     fn new(store: Entity<SettingsStore>, cx: &mut Context<Self>) -> Self {
-        cx.observe(&store, |_, _, cx| cx.notify()).detach();
+        cx.observe(&store, |page: &mut Self, _, cx| {
+            page.follow_machine(cx);
+            cx.notify();
+        })
+        .detach();
         cx.subscribe(
             &store,
             |page: &mut Self, _, event: &SettingsStoreEvent, cx| {
@@ -355,7 +374,13 @@ impl IntegrationsTab {
             .detach();
         }
         cx.spawn(async move |page, cx| {
-            let _ = page.update(cx, |page, cx| page.load_managed_tools(cx));
+            let _ = page.update(cx, |page, cx| {
+                // A Settings opened on a remote machine reads its Tools as it follows it.
+                if !page.follow_machine(cx) {
+                    page.load_managed_tools(cx);
+                }
+                machine_picker::request_machine_states(&page.store, cx);
+            });
         })
         .detach();
         let mut page = Self {
@@ -366,9 +391,30 @@ impl IntegrationsTab {
             copied_task: None,
             managed: tools::ManagedToolsState::default(),
             permissions: permissions::PermissionPolling::default(),
+            shown_machine: None,
+            shown_machine_name: None,
+            remote: remote_machine::RemoteIntegrations::default(),
         };
         page.start_permission_polling(cx);
+        page.request_web_runtime_status_if_missing(cx);
         page
+    }
+
+    /// Follows the machine picker: another machine drops the last one's answers and reads the new
+    /// machine's integrations and Tools. Says whether the machine changed.
+    fn follow_machine(&mut self, cx: &mut Context<Self>) -> bool {
+        let choice = machine_picker::picked_machine_choice(&self.store, cx);
+        let machine = choice.as_ref().and_then(|choice| choice.machine_id.clone());
+        self.shown_machine_name = choice.map(|choice| choice.name);
+        if machine == self.shown_machine {
+            return false;
+        }
+        self.shown_machine = machine;
+        self.remote = remote_machine::RemoteIntegrations::default();
+        self.managed = tools::ManagedToolsState::default();
+        self.load_remote_integrations(cx);
+        self.load_managed_tools(cx);
+        true
     }
 
     /// Posts `{ type }` with the checking state on, as every React handler did.
@@ -614,6 +660,11 @@ impl IntegrationsTab {
                 cx,
             ),
         ];
+        // What is wrong and how to fix it, from the CLI status (`gpui_cli_problem`).
+        let problem = (!checking && !cli_ready)
+            .then(|| text(status, "cliProblem"))
+            .flatten()
+            .map(str::to_string);
         let row = integration_row(
             p,
             "ghostex-cli",
@@ -622,15 +673,98 @@ impl IntegrationsTab {
             RowTitle {
                 link: None,
                 label: "Command line tool".to_string(),
-                description: format!(
-                    "{label}. Ghostex keeps the app-bundled ghostex command linked automatically for mobile apps and CLI-backed integration setup. gx is linked when that alias is available and not taken by another command."
-                ),
+                description: match &problem {
+                    Some(problem) => format!("{label}. {problem}"),
+                    None => format!(
+                        "{label}. Ghostex keeps the app-bundled ghostex command linked automatically for mobile apps and CLI-backed integration setup. gx is linked when that alias is available and not taken by another command."
+                    ),
+                },
                 badge: None,
                 pill: None,
             },
             controls,
         );
-        settings_section(p, "Ghostex CLI", None, None, vec![row]).map(IntoElement::into_any_element)
+        let mut rows = vec![row];
+        if let Some(problem) = problem {
+            rows.push(self.cli_problem_row(
+                p,
+                problem,
+                text(status, "cliFixCommand").map(str::to_string),
+                cx,
+            ));
+        }
+        settings_section(p, "Ghostex CLI", None, None, rows).map(IntoElement::into_any_element)
+    }
+
+    /// CDXC:Cli 2026-10-28 WHY:
+    /// The Command line tool row only turned amber when `ghostex` could not be found, and its
+    /// tooltip kept the fixed description, so nothing said why or what to do. This row says it in
+    /// plain words and, when the fix is a PATH line, shows it with a copy button.
+    fn cli_problem_row(
+        &mut self,
+        p: &SettingsPalette,
+        problem: String,
+        fix_command: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        const COPY_BUTTON: &str = "integrations-cli-copy-path-fix";
+        let mut controls = Vec::new();
+        if let Some(command) = fix_command {
+            let copied = self.copied == Some(COPY_BUTTON);
+            let command_for_copy = command.clone();
+            controls.push(
+                div()
+                    .flex_shrink_1()
+                    .min_w_0()
+                    .max_w(px(416.0))
+                    .px(px(10.0))
+                    .py(px(4.8))
+                    .rounded(px(MODAL_RADIUS_CONTROL))
+                    .border_1()
+                    .border_color(hsla(p.hairline))
+                    .bg(hsla(p.surface))
+                    .font_family(MODAL_MONO_FONT)
+                    .text_size(px(13.0))
+                    .line_height(px(18.0))
+                    .text_color(hsla(p.muted))
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .child(command)
+                    .into_any_element(),
+            );
+            controls.push(ghost_icon_button(
+                p,
+                COPY_BUTTON,
+                if copied {
+                    ICON_CIRCLE_CHECK_FILLED
+                } else {
+                    ICON_COPY
+                },
+                p.foreground,
+                if copied { "Copied" } else { "Copy command" }.to_string(),
+                false,
+                String::new(),
+                move |page, _window, cx| {
+                    page.copy_command(COPY_BUTTON, command_for_copy.clone(), cx)
+                },
+                cx,
+            ));
+        }
+        integration_row(
+            p,
+            "ghostex-cli-problem",
+            None,
+            None,
+            RowTitle {
+                link: None,
+                label: problem.clone(),
+                description: problem,
+                badge: None,
+                pill: None,
+            },
+            controls,
+        )
     }
 
     /// `TrycuaInstalledActions`.
@@ -1314,8 +1448,46 @@ impl Render for IntegrationsTab {
                 move |tab, _window, cx| store.update(cx, |store, cx| store.set_active_tab(tab, cx)),
             )));
         }
+        if let Some(picker) = machine_picker::render_machine_picker(
+            self,
+            &p,
+            &self.store.clone(),
+            "integrations",
+            window,
+            cx,
+        ) {
+            blocks.push(PageBlock::section("machinePicker", picker));
+        }
+        // A remote machine's integrations answer says its platform; this computer's is the build's.
+        let windows = match &self.shown_machine {
+            Some(_) => windows_link_notice::is_windows(self.remote.platform().as_deref()),
+            None => cfg!(target_os = "windows"),
+        };
+        if windows {
+            let remote_name = self
+                .shown_machine
+                .as_ref()
+                .map(|_| self.shown_machine_label());
+            blocks.push(PageBlock::section(
+                "windowsLinkNotice",
+                windows_link_notice::render_windows_link_notice(
+                    &p,
+                    &self.store.clone(),
+                    remote_name.as_deref(),
+                    cx,
+                ),
+            ));
+        }
         let section = "integrations";
-        if search.section(section).has_visible() {
+        if self.shown_machine.is_some() {
+            for (anchor, element) in self.remote_sections(&p, cx) {
+                blocks.push(PageBlock::section(anchor, element));
+            }
+            blocks.extend(
+                self.managed_tools_section(&p, cx)
+                    .map(|element| PageBlock::section("managedTools", element)),
+            );
+        } else if search.section(section).has_visible() {
             if search.row_visible(section, "ghostexCapture") {
                 blocks.extend(
                     self.ghostex_capture_section(&p, cx)
@@ -1362,6 +1534,12 @@ impl Render for IntegrationsTab {
                 blocks.extend(
                     self.managed_tools_section(&p, cx)
                         .map(|element| PageBlock::section("managedTools", element)),
+                );
+            }
+            if search.row_visible(section, "webRuntime") {
+                blocks.extend(
+                    self.web_runtime_section(&p, cx)
+                        .map(|element| PageBlock::section("webRuntime", element)),
                 );
             }
         }

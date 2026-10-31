@@ -105,9 +105,17 @@ pub(super) fn to_cli_session(
         "snoozedUntil",
         &[p("snoozedUntil"), s("snoozedUntil")],
     );
-    insert_js(&mut map, "completedAt", &[p("completedAt"), s("completedAt")]);
+    insert_js(
+        &mut map,
+        "completedAt",
+        &[p("completedAt"), s("completedAt")],
+    );
     insert_js(&mut map, "pendingTaskPreview", &[p("pendingTaskPreview")]);
-    insert_js(&mut map, "pendingTaskStartedAt", &[p("pendingTaskStartedAt")]);
+    insert_js(
+        &mut map,
+        "pendingTaskStartedAt",
+        &[p("pendingTaskStartedAt")],
+    );
     /*
      * CDXC:Git 2026-07-29-00:00:
      * Branch / +n −n / PR badge is resolved once per session cwd by the daemon,
@@ -157,6 +165,15 @@ pub(super) fn to_cli_session(
         &mut map,
         "backgroundWorkDetectedAt",
         &[p("backgroundWorkDetectedAt")],
+    );
+    // The red waiting-for-approval dot (CDXC:SessionStatus 2026-10-27 in server/src/session_approval.rs); absent when false.
+    insert_js(&mut map, "awaitingApproval", &[p("awaitingApproval")]);
+    // CDXC:Sidebar 2026-10-30 SEE-ALSO: the phone's Unified list (apps/mobile/app/src/contract/unified/) reads what gx-core's Unified sidebar reads: when the working stint began (its "came back" moment and Working timer) and a failed model change (its Failed status).
+    insert_js(&mut map, "workingStartedAt", &[p("workingStartedAt")]);
+    insert_js(
+        &mut map,
+        "modelSelectionFailure",
+        &[p("modelSelectionFailure")],
     );
     insert_js(
         &mut map,

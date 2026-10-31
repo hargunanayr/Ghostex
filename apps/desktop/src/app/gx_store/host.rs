@@ -186,6 +186,8 @@ pub(crate) struct GxStoreHost {
     pub(super) notifications: super::notifications::NotificationFeedsHost,
     /// The status item's per-machine views (indicators/).
     pub(super) indicators: super::indicators::IndicatorsHost,
+    /// The Unified sidebar's per-machine lists, alive only while it is selected (unified_sidebar.rs).
+    pub(crate) unified_sidebar: super::unified_sidebar::UnifiedSidebarHost,
     /// The collection a project move just created, which the renderer opens its Rename on. Held
     /// here rather than carried from the old projection's publish, because the create is the
     /// store's now and the publish would not know about it.
@@ -528,6 +530,8 @@ impl GhostexGpuiApp {
         // asked on every `createSidebarGroups`. Asked here on the same cadence, and free for the
         // users who have no user-made groups at all: the document's project map is empty.
         self.gx_store_prune_workspace_groups(cx);
+        // A project the daemon stopped listing takes its parked pages with it.
+        self.close_parked_pages_of_removed_projects(cx);
         if self.gx_store_after_pump(outcome.tab_lists_changed, cx) {
             cx.notify();
         }

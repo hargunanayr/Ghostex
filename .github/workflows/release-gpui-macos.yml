@@ -94,7 +94,7 @@ jobs:
         uses: mozilla-actions/sccache-action@v0.0.11
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.4
       # CDXC:Release 2026-09-15 WHY:
       # Only the code-server identity input is restored here. The VS Code tree,
       # its `npm ci` (4 to 6 minutes) and the ripgrep seed were only needed to
@@ -158,15 +158,15 @@ jobs:
         id: ghosttykit_cache
         with:
           path: .dependencies/ghostty/macos/GhosttyKit.xcframework
-          key: warm-ghosttykit-macos-arm64-zig0.16.0-${{ steps.cache_keys.outputs.zig }}
+          key: warm-ghosttykit-macos-arm64-zig0.17.0-${{ steps.cache_keys.outputs.zig }}
       - name: Install build tools
         run: tooling/release-gpui/retry.sh 3 5 -- brew install cmake ninja rsync xcodegen
       - name: Install pinned Zig toolchain
         run: |
           tooling/release-gpui/retry.sh 3 5 -- bash -c 'curl -fsSL https://mise.run | sh'
-          tooling/release-gpui/retry.sh 3 5 -- "$HOME/.local/bin/mise" install zig@0.16.0
-          ZIG_BIN="$HOME/.local/share/mise/installs/zig/0.16.0/bin/zig"
-          [[ "$($ZIG_BIN version)" == "0.16.0" ]]
+          tooling/release-gpui/retry.sh 3 5 -- "$HOME/.local/bin/mise" install zig@0.17.0
+          ZIG_BIN="$HOME/.local/share/mise/installs/zig/0.17.0/bin/zig"
+          [[ "$($ZIG_BIN version)" == "0.17.0" ]]
           printf 'ZIG=%s\nGHOSTEX_ZIG=%s\n' \
             "$ZIG_BIN" "$ZIG_BIN" >> "$GITHUB_ENV"
       - name: Seed pinned VS Code ripgrep cache

@@ -16,11 +16,15 @@ use crate::paths::GxserverPaths;
 const SKILL_FILE: &str = "SKILL.md";
 
 fn own_skills_dir(paths: &GxserverPaths, ghost_id: &str) -> PathBuf {
-    ghost_home_dir(paths, ghost_id).join(".agents").join("skills")
+    ghost_home_dir(paths, ghost_id)
+        .join(".agents")
+        .join("skills")
 }
 
 fn claude_skills_dir(paths: &GxserverPaths, ghost_id: &str) -> PathBuf {
-    ghost_home_dir(paths, ghost_id).join(".claude").join("skills")
+    ghost_home_dir(paths, ghost_id)
+        .join(".claude")
+        .join("skills")
 }
 
 fn global_skills_dir(paths: &GxserverPaths) -> PathBuf {
@@ -106,7 +110,11 @@ pub fn list_ghost_skills(paths: &GxserverPaths, ghost_id: &str) -> Value {
 }
 
 /// Links an own skill into Claude Code's project skill folder.
-fn link_for_claude(paths: &GxserverPaths, ghost_id: &str, name: &str) -> Result<(), DomainStateError> {
+fn link_for_claude(
+    paths: &GxserverPaths,
+    ghost_id: &str,
+    name: &str,
+) -> Result<(), DomainStateError> {
     link_skill_into_agent_root(
         &own_skills_dir(paths, ghost_id).join(name),
         &claude_skills_dir(paths, ghost_id).join(name),

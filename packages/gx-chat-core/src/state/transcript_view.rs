@@ -46,6 +46,9 @@ pub struct TranscriptViewState {
     pub summary_mode: bool,
     /// The user's verbose override, or `None` to follow the setting.
     pub verbose_override: Option<bool>,
+    /// The user's Simple override for this chat, or `None` to follow the setting (with
+    /// `verbose_override` the chat's detail level: CDXC:SessionChat 2026-10-29 in transcript/actions.rs).
+    pub simple_override: Option<bool>,
     /// The session's directory, which shortens the paths on file-change cards.
     ///
     /// A late directory throws the cached projections away, because every card's display path
@@ -128,6 +131,8 @@ pub struct TranscriptViewState {
     pub pending_summary_mode: Option<bool>,
     /// The verbose override the write in flight will adopt once it lands.
     pub pending_verbose_override: Option<Option<bool>>,
+    /// The Simple override the write in flight will adopt once it lands.
+    pub pending_simple_override: Option<Option<bool>>,
     /// The five inputs the last projection was built from, so an unchanged turn rebuilds nothing.
     pub projection_inputs: Option<ProjectionInputs>,
     /// The fold memory, `NativeChatPresentation.foldMemory`: the newest message id when the
@@ -149,6 +154,9 @@ pub struct TranscriptViewState {
     pub session_directory: Vec<crate::event::KnownSession>,
     /// Bumped whenever [`Self::session_directory`] changes, so the projection rebuilds.
     pub session_directory_revision: u64,
+    /// Settings > Chat > Tool call cards (`chatToolCallCards`): each message's tool calls project
+    /// as one card (`transcript/tool_card.rs`). A change throws the cached projections away.
+    pub tool_cards: bool,
 }
 
 /// One message's full projection, with the source it was built from.
@@ -217,6 +225,7 @@ impl Default for TranscriptViewState {
         Self {
             summary_mode: false,
             verbose_override: None,
+            simple_override: None,
             working_directory: None,
             agent_path: ROOT_AGENT_PATH.to_string(),
             deferred: BTreeMap::new(),
@@ -245,6 +254,7 @@ impl Default for TranscriptViewState {
             page_thumbnail_attempts: BTreeMap::new(),
             pending_summary_mode: None,
             pending_verbose_override: None,
+            pending_simple_override: None,
             projection_inputs: None,
             fold_settled_at: None,
             projection_rebuilt: false,
@@ -252,6 +262,7 @@ impl Default for TranscriptViewState {
             settled: None,
             session_directory: Vec::new(),
             session_directory_revision: 0,
+            tool_cards: false,
         }
     }
 }

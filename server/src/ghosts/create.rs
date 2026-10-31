@@ -47,9 +47,9 @@ fn project_ids_param(
     let Some(value) = params.get("projectIds") else {
         return Ok(None);
     };
-    let ids = value
-        .as_array()
-        .ok_or_else(|| DomainStateError::bad_request("projectIds must be a list of project ids."))?;
+    let ids = value.as_array().ok_or_else(|| {
+        DomainStateError::bad_request("projectIds must be a list of project ids.")
+    })?;
     let mut out = Vec::new();
     for id in ids.iter().filter_map(Value::as_str).map(str::trim) {
         if id.is_empty() || out.iter().any(|known| known == id) {

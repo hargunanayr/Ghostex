@@ -197,7 +197,7 @@ impl GhostexGpuiApp {
 
     /// `moveGpuiWorkspaceSessionToSubgroup` then `persistWorkspaceGroups`, which wrote even when the
     /// group was gone.
-    pub(super) fn gx_store_place_created_session_in_subgroup(
+    pub(crate) fn gx_store_place_created_session_in_subgroup(
         &mut self,
         project: &ProjectKey,
         session_id: &str,

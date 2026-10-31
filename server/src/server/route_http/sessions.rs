@@ -30,7 +30,23 @@ pub(super) async fn route_sessions_http(
             &body_json,
             |repository, db, params, _| {
                 // Only gxserver makes a box session (a box create, or reopening one from history).
-                let params = &crate::agentbox::without_client_agentbox_record(params);
+                let mut params = crate::agentbox::without_client_agentbox_record(params);
+                // A session whose folder is missing never starts (the provider refuses it, and it does
+                // not expand `~`), so a new session's own `cwd` is stored as the folder it checked on
+                // this computer; a restore keeps its source's.
+                let restoring = ["restoredFromSessionId", "restoredFromHistoryId"]
+                    .iter()
+                    .any(|key| params.get(*key).is_some_and(|value| !value.is_null()));
+                if let Some(cwd) = params
+                    .get("cwd")
+                    .filter(|cwd| cwd.as_str().is_some_and(|cwd| !cwd.trim().is_empty()))
+                    .filter(|_| !restoring)
+                {
+                    let folder =
+                        crate::domain::normalize_existing_directory_path(Some(cwd), "cwd")?;
+                    params.insert("cwd".to_string(), Value::String(folder));
+                }
+                let params = &params;
                 let created_session = repository.create_session(params, false)?;
                 let session = apply_created_session_identity(repository, &created_session, params)?;
                 let project_id = value_text(&session, "projectId")?;
@@ -55,6 +71,19 @@ pub(super) async fn route_sessions_http(
                 // A Claude cloud create goes to the repo's main checkout project (claude_cloud/create.rs).
                 let cloud_params = crate::claude_cloud::cloud_create_params(repository, params)?;
                 let params = cloud_params.as_ref().unwrap_or(params);
+                // `create-agent --group-id` needs the session in the group's own project, and a
+                // cloud session moves to the main checkout's, so that create is refused up front.
+                if let (Some(_), Some(group_project), Some(project)) = (
+                    &cloud_params,
+                    params.get("sessionGroupProjectId").and_then(Value::as_str),
+                    params.get("projectId").and_then(Value::as_str),
+                ) {
+                    if group_project != project {
+                        return Err(DomainStateError::bad_request(format!(
+                            "A Claude cloud session for project {group_project} is created in project {project}, the repository's main checkout, so it cannot join a session group of {group_project}."
+                        )));
+                    }
+                }
                 let project = repository.resolve_create_session_project(params)?;
                 let params = &coordinator_runtime::prepare_coordinator_create_params(params)?;
                 let create_params = create_agent_session_params_for_project(db, &project, params)?;
@@ -367,6 +396,12 @@ pub(super) async fn route_sessions_http(
                 crate::agents::kill_draft_session_provider(&session);
                 let project_id = value_text(&session, "projectId")?;
                 let session_id = value_text(&session, "sessionId")?;
+                crate::session_chat_queue::forget_session_chat_queue(
+                    db,
+                    &project_id,
+                    Some(&session_id),
+                )?;
+                crate::session_chat_queue_attachments::sweep(&state.paths, db);
                 schedule_presentation_session_delta(
                     &state,
                     db,
@@ -506,7 +541,7 @@ pub(super) async fn route_sessions_http(
                     request_id,
                     DomainStateError {
                         code: "internalError",
-                        message: format!("Orchestrator threads task failed: {error}"),
+                        message: format!("Coordinator threads task failed: {error}"),
                     },
                 ),
             }
@@ -591,7 +626,7 @@ pub(super) async fn route_sessions_http(
                     worker_request_id,
                     &body_json,
                     |_, db, params, server_id| {
-                        crate::external_sessions::discover(
+                        crate::external_sessions::discover_before_listing(
                             db,
                             server_id,
                             &worker_state.paths,
@@ -599,7 +634,7 @@ pub(super) async fn route_sessions_http(
                                 .get("refreshExternalSessions")
                                 .and_then(Value::as_bool)
                                 == Some(true),
-                        )?;
+                        );
                         list_previous_sessions(db, server_id, params)
                     },
                 )

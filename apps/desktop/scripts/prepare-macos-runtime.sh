@@ -314,7 +314,7 @@ build_zmx_if_needed() {
 
 	(
 		cd "$ZMX_ROOT"
-		# CDXC:Zmx 2026-05-20-10:23: Zig resolves the native build runner through the selected macOS Xcode SDK, which can fail before zmx compilation starts. Scope the Command Line Tools developer dir to the zmx submodule build only; the zmx artifact itself is still built for the explicit deployment target above. This is not version-specific: it applied to Zig 0.15 and still applies to the 0.16 toolchain zmx builds with today.
+		# CDXC:Zmx 2026-05-20-10:23: Zig resolves the native build runner through the selected macOS Xcode SDK, which can fail before zmx compilation starts. Scope the Command Line Tools developer dir to the zmx submodule build only; the zmx artifact itself is still built for the explicit deployment target above. This is not version-specific: it applied to Zig 0.15 and still applies to the 0.17 toolchain zmx builds with today.
 		ZMX_BUILD_ENV=(env -u LDFLAGS ZIG="$ZIG_BIN")
 		if [[ -z "${ZMX_BUILD_DEVELOPER_DIR:-}" ]] &&
 			DEVELOPER_DIR=/Library/Developer/CommandLineTools /usr/bin/xcrun --sdk macosx --show-sdk-path >/dev/null 2>&1; then
@@ -937,53 +937,14 @@ if [[ "${GHOSTEX_MACOS_GXSERVER_ONLY:-0}" == "1" ]]; then
 	exit 0
 fi
 
-# CDXC:Build 2026-05-29-11:24: `cargo xtask start` builds zmx and its Ghostty Zig dependency.
-# Both are on Zig 0.16 now (zmx was re-ported onto upstream/main for 0.16, matching the
-# vendored ghostty pin), so the repo needs exactly one Zig toolchain. An explicit `ZIG` still
-# wins; otherwise prefer a 0.16 binary from PATH/Homebrew/mise instead of blindly taking the
-# first PATH entry, which may still be an old 0.15 keg.
-ZIG_BIN="${ZIG:-}"
-if [[ -z "$ZIG_BIN" ]]; then
-	for zig_candidate in \
-		"$(command -v zig || true)" \
-		/opt/homebrew/bin/zig \
-		/opt/homebrew/opt/zig@0.16/bin/zig \
-		"$HOME/.local/share/mise/installs/zig/0.16"*/bin/zig; do
-		[[ -n "$zig_candidate" && -x "$zig_candidate" ]] || continue
-		# Remember the first usable binary so the version error below can name it.
-		[[ -n "$ZIG_BIN" ]] || ZIG_BIN="$zig_candidate"
-		if [[ "$("$zig_candidate" version 2>/dev/null || true)" == 0.16.* ]]; then
-			ZIG_BIN="$zig_candidate"
-			break
-		fi
-	done
-fi
-if [[ -z "$ZIG_BIN" ]]; then
-	cat >&2 <<EOF
-Zig 0.16.x is required to build Ghostex's native zmx/Ghostty dependency.
-
-Install it, then rerun this script:
-  brew install zig
-  # or: mise install zig@0.16.0
-EOF
-	exit 1
-fi
-ZIG_VERSION="$("$ZIG_BIN" version 2>/dev/null || true)"
-if [[ "$ZIG_VERSION" != 0.16.* ]]; then
-	cat >&2 <<EOF
-Zig 0.16.x is required to build Ghostex's native zmx/Ghostty dependency.
-
-Selected Zig:
-  $ZIG_BIN
-  version: ${ZIG_VERSION:-unknown}
-
-Install a 0.16 toolchain or set ZIG explicitly:
-  brew install zig
-  mise install zig@0.16.0
-  ZIG=/opt/homebrew/bin/zig cargo xtask start
-EOF
-	exit 1
-fi
+# `cargo xtask start` builds zmx and its Ghostty Zig dependency with the one Zig
+# series the vendored Ghostty requires, resolved the same way as every other build
+# path (tooling/zig-toolchain.sh), so a PATH `zig` of another version is skipped.
+# shellcheck source=../../../tooling/zig-toolchain.sh
+source "$REPO_ROOT/tooling/zig-toolchain.sh"
+ZIG_BIN="$(ghostex_find_zig "$REPO_ROOT")"
+ZIG_VERSION="$("$ZIG_BIN" version)"
+echo "Zig for zmx: $ZIG_BIN ($ZIG_VERSION)"
 export ZIG="$ZIG_BIN"
 
 mkdir -p "$WEB_DIR"

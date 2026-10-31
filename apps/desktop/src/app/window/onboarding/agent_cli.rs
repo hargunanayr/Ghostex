@@ -33,7 +33,7 @@ pub(crate) struct CliMethod {
     pub(crate) unavailable_reason: Option<String>,
     /// What one click does, including anything Ghostex installs first (absent from older gxservers).
     pub(crate) plan: Option<String>,
-    /// "node", "homebrew" or "systemTools": a tool Ghostex installs before `command`.
+    /// "node", "homebrew", "mise" or "systemTools": a tool Ghostex installs before `command`.
     pub(crate) prerequisite: Option<String>,
     pub(crate) system_tools: Vec<String>,
 }
@@ -52,6 +52,7 @@ impl CliMethod {
         let suffix = match self.prerequisite.as_deref() {
             Some("node") => Some("installs Node.js first".to_string()),
             Some("homebrew") => Some("installs Homebrew first".to_string()),
+            Some("mise") => Some("installs mise first".to_string()),
             Some("systemTools") => {
                 let tools: Vec<&str> = if self.system_tools.is_empty() {
                     vec!["curl"]

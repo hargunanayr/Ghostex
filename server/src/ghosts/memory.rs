@@ -20,8 +20,20 @@ const MEMORY_TRIM_TO_LINES: usize = GHOST_MEMORY_CONTEXT_MAX_LINES - 20;
 const WRITE_ATTEMPTS: usize = 3;
 
 const SECRET_PREFIXES: &[&str] = &[
-    "sk-", "sk_live_", "rk_live_", "ghp_", "gho_", "ghs_", "ghu_", "github_pat_", "xoxb-", "xoxp-",
-    "xoxa-", "glpat-", "AKIA", "AIza",
+    "sk-",
+    "sk_live_",
+    "rk_live_",
+    "ghp_",
+    "gho_",
+    "ghs_",
+    "ghu_",
+    "github_pat_",
+    "xoxb-",
+    "xoxp-",
+    "xoxa-",
+    "glpat-",
+    "AKIA",
+    "AIza",
 ];
 
 /// Replaces anything that looks like an API key or token with `[redacted]`: a Ghost's memory is
@@ -31,7 +43,9 @@ pub fn redact_secrets(text: &str) -> String {
         .map(|word| {
             let bare = word.trim_matches(|ch: char| "`'\"()[]{}<>,;".contains(ch));
             let looks_secret = bare.len() >= 16
-                && SECRET_PREFIXES.iter().any(|prefix| bare.starts_with(prefix))
+                && SECRET_PREFIXES
+                    .iter()
+                    .any(|prefix| bare.starts_with(prefix))
                 && !bare.contains(char::is_whitespace);
             if looks_secret {
                 word.replace(bare, "[redacted]")
@@ -252,9 +266,8 @@ pub fn apply_memory_action(
     match action {
         "add" => {
             let line = fact_line(&today(), &clean_fact(fact.unwrap_or_default())?, until);
-            let hash = edit_memory_file(paths, ghost_id, &name, |memory| {
-                Ok(add_fact(memory, &line))
-            })?;
+            let hash =
+                edit_memory_file(paths, ghost_id, &name, |memory| Ok(add_fact(memory, &line)))?;
             Ok(serde_json::json!({ "ok": true, "file": name, "hash": hash, "line": line }))
         }
         "replace" => {
@@ -267,7 +280,8 @@ pub fn apply_memory_action(
         }
         "remove" => {
             let find = find.unwrap_or_default();
-            let hash = edit_memory_file(paths, ghost_id, &name, |memory| remove_fact(memory, find))?;
+            let hash =
+                edit_memory_file(paths, ghost_id, &name, |memory| remove_fact(memory, find))?;
             Ok(serde_json::json!({ "ok": true, "file": name, "hash": hash }))
         }
         "search" => {
@@ -297,7 +311,11 @@ pub fn search_files(paths: &GxserverPaths, ghost_id: &str) -> Vec<String> {
         GHOST_MEMORY_FILE.to_string(),
         GHOST_MEMORY_ARCHIVE_FILE.to_string(),
     ];
-    files.extend(list_topics(paths, ghost_id).into_iter().map(|topic| format!("memory/{topic}.md")));
+    files.extend(
+        list_topics(paths, ghost_id)
+            .into_iter()
+            .map(|topic| format!("memory/{topic}.md")),
+    );
     files
 }
 

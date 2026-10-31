@@ -42,6 +42,12 @@ impl GhostexGpuiApp {
         {
             // The composer's terminal button: the same session, as a terminal.
             Some("terminalView" | "switchToTerminal") => self.web_show_terminal(true, cx),
+            // Copy Report's last step: Send Bug / Feedback with its agent switch on.
+            Some("sendFeedback") => {
+                let collect_with_agent = message["collectWithAgent"] == true
+                    || message["params"]["collectWithAgent"] == true;
+                self.open_gpui_feedback_modal(collect_with_agent, cx);
+            }
             // A row of a coordinator's Threads panel: that thread's chat, on the same machine.
             // gxserver resumed it first when it was closed (`openCoordinatorThread`). An agent
             // message card's Go to session opens the other session's chat the same way.
@@ -208,11 +214,31 @@ impl GhostexGpuiApp {
                 "Save it from the Ghostex app.",
                 cx,
             ),
-            // The Session details panel's card closed by a click on the chat (shell.rs).
+            // The Session details panel's card was dismissed (shell.rs): it goes off for this chat
+            // once the press that did it has landed, if the chat is still the one on screen
+            // (`SessionDetailsChoices::settle`).
             Some("sessionDetailsDismissed") => {
+                let key = session.to_sidebar_session_id();
                 self.session_details_dismissed_at = Some(web_time::Instant::now());
-                self.session_details_open = false;
+                self.session_details_choices
+                    .dismissed(&key, web_time::Instant::now());
                 cx.notify();
+                cx.spawn(async move |this, cx| {
+                    cx.background_executor()
+                        .timer(crate::app::native_chat::session_details::DISMISS_SETTLE)
+                        .await;
+                    let _ = this.update(cx, |this, cx| {
+                        let shown = this
+                            .open_session
+                            .as_ref()
+                            .filter(|session| !this.web_shows_terminal(session))
+                            .map(|session| session.to_sidebar_session_id());
+                        this.session_details_choices
+                            .settle(shown.as_deref(), web_time::Instant::now());
+                        cx.notify();
+                    });
+                })
+                .detach();
             }
             Some("openAgentsHubSkill") => self.web_chat_needs_app_toast(
                 "Agents Hub is in the Ghostex app",
@@ -233,12 +259,11 @@ impl GhostexGpuiApp {
             Some("reviewChanges") => {
                 self.gx_store_git_titlebar_action("commit", cx);
             }
-            Some("openFile" | "locateFile" | "annotateReply") => self
-                .web_chat_needs_app_toast(
-                    "Files open in the Ghostex app",
-                    "The browser has no Code or Docs view.",
-                    cx,
-                ),
+            Some("openFile" | "locateFile" | "annotateReply") => self.web_chat_needs_app_toast(
+                "Files open in the Ghostex app",
+                "The browser has no Code or Docs view.",
+                cx,
+            ),
             // The desktop's own bookkeeping for its panes, support logs and draft handoffs, which
             // the page does not have: nothing to do.
             Some(
@@ -285,6 +310,11 @@ impl GhostexGpuiApp {
             }
             Some("delayedActions") => {
                 self.web_open_chat_delayed_send(session, &row, cx);
+                return true;
+            }
+            // The working card's Links pill: the page's links card, as the sidebar row opens it.
+            Some("sessionLinks") => {
+                self.open_session_links_card(row.clone(), cx);
                 return true;
             }
             Some("sleep") => {

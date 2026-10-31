@@ -148,7 +148,7 @@ fn read_stream(client: &Client) -> Result<(), crate::domain::DomainStateError> {
     let response = client.event_stream()?;
     CONNECTED.store(true, Ordering::Relaxed);
     GENERATION.fetch_add(1, Ordering::Relaxed);
-    let mut reader = BufReader::new(response.into_reader());
+    let mut reader = BufReader::new(response.into_body().into_reader());
     let mut line = String::new();
     loop {
         line.clear();

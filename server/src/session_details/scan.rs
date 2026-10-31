@@ -73,6 +73,11 @@ pub(super) struct TranscriptFacts {
     pub skills: BTreeMap<String, String>,
     /// Skills the session used, in the order it first used them.
     pub invoked_skills: Vec<String>,
+    /// The conversation has a message, so Claude can resume it.
+    ///
+    /// CDXC:SessionDetails 2026-10-25 WHY:
+    /// Claude Code writes a conversation only with its first message (until then the transcript is missing or holds just start-up records such as hook results), and `claude --resume <id>` before that ends with "No conversation found with session ID: <id>". The panel showed that as "Couldn't count: Claude Code stopped before it counted the context" on every session opened before its first message, and kept it for the failed-retry wait after the message arrived (seen on a new session in the home folder, 2026-10-25). The breakdown is not asked for until this is true.
+    pub conversation_started: bool,
     /// Background commands by Claude's task id, and the order they started in.
     background: HashMap<String, BackgroundRun>,
     background_order: Vec<String>,
@@ -456,6 +461,16 @@ impl TranscriptFacts {
     fn observe(&mut self, line: &[u8]) {
         // Cheap marker tests first: most records are messages this reader skips.
         let text = String::from_utf8_lossy(line);
+        if !self.conversation_started
+            && (text.contains("\"type\":\"user\"") || text.contains("\"type\":\"assistant\""))
+        {
+            self.conversation_started = serde_json::from_slice::<Value>(line).is_ok_and(|record| {
+                matches!(
+                    record.get("type").and_then(Value::as_str),
+                    Some("user" | "assistant")
+                )
+            });
+        }
         let wanted = [
             "\"attachment\"",
             "compact_boundary",

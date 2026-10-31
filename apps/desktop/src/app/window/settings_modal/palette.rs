@@ -65,16 +65,17 @@ impl SettingsPalette {
         let modal = *modal;
         let foreground = modal.foreground;
         if modal.glass && !modal.light {
-            // styles/modals-glass.css: every Settings surface is a white wash over the lifted window.
+            // styles/modals-glass.css: every Settings surface is a white wash over the window, at the
+            // dialogs' washes on the popover glass (CDXC:AppModal 2026-10-29 on `frosted_dialog_fill`).
             let surface = modal.surface;
-            let hairline = modal_rgba(0xffffff, 0.10);
+            let hairline = modal.hairline;
             return Self {
                 modal,
                 light: false,
                 glass: true,
                 surface,
-                raised: modal_rgba(0xffffff, 0.06),
-                raised_hover: modal_rgba(0xffffff, 0.085),
+                raised: modal.raised,
+                raised_hover: modal.raised_hover,
                 hairline,
                 foreground,
                 muted: rgb(0x9ca2ab),
@@ -91,13 +92,13 @@ impl SettingsPalette {
             };
         }
         if modal.light {
-            let hairline = modal_rgba(0x000000, 0.14);
+            let hairline = if modal.glass {
+                modal.hairline
+            } else {
+                modal_rgba(0x000000, 0.14)
+            };
             let (surface, raised, raised_hover) = if modal.glass {
-                (
-                    modal.surface,
-                    modal_rgba(0x000000, 0.05),
-                    modal_rgba(0x000000, 0.09),
-                )
+                (modal.surface, modal.raised, modal.raised_hover)
             } else {
                 (rgb(0xf5f5f5), rgb(0xffffff), rgb(0xe9e9e9))
             };

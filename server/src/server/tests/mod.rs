@@ -1,5 +1,6 @@
 //! gxserver HTTP server unit tests, grouped by what they cover. Shared fixtures
 //! (`test_app_state`, git helpers, RPC helpers) live in `helpers.rs`.
+mod draft_worktree_routes;
 mod helpers;
 mod project_directories;
 mod protocol_and_routes;

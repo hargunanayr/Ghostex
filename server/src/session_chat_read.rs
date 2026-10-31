@@ -98,6 +98,7 @@ pub(crate) fn resolve_session_chat_read_state(
             code: "notFound",
             message: "The session no longer exists.".to_string(),
         })?;
+    crate::session_chat_resources::ensure_indexed(state, &db, project_id, session_id);
     let agent = session_chat_display_agent_for_session(&session);
     /*
     CDXC:Drafts 2026-08-28:
@@ -123,7 +124,8 @@ pub(crate) fn resolve_session_chat_read_state(
     let stored_prompt = crate::agents::session_chat_prompt_setting(&session);
     let queue = crate::session_chat_queue::read_session_chat_queue_snapshot_with(
         &db, project_id, session_id,
-    );
+    )
+    .with_resource_index(&db, project_id, session_id);
     let available_agents = if crate::agents::session_is_draft(&session) {
         repository
             .get_project(project_id)?
@@ -470,11 +472,20 @@ pub(crate) async fn handle_read_session_chat_http(
         })
         .await;
         return match history {
-            Ok(Ok(value)) => routed_json(
-                Some(endpoint_path),
-                StatusCode::OK,
-                rpc_success(request_id, value),
-            ),
+            Ok(Ok(mut value)) => {
+                if let Some(page) = value.as_object_mut() {
+                    crate::session_chat_mention_paths::annotate_result(
+                        page,
+                        &project_id,
+                        &session_id,
+                    );
+                }
+                routed_json(
+                    Some(endpoint_path),
+                    StatusCode::OK,
+                    rpc_success(request_id, value),
+                )
+            }
             outcome => domain_error_response(
                 endpoint_path,
                 request_id,
@@ -871,7 +882,14 @@ pub(crate) async fn handle_read_session_chat_http(
         result.insert("messages".to_string(), json!([]));
         result.insert("hasMore".to_string(), json!(false));
         result.insert("beforeOffset".to_string(), json!(0));
-        result.insert("status".to_string(), json!("unsupported"));
+        // A Claude cloud session's chat has no transcript here: it takes the first message, which
+        // starts the session on claude.ai (CDXC:ClaudeCloud in packages/gx-core/src/claude_cloud.rs).
+        let status = if agent.as_deref() == Some(crate::claude_cloud::CLAUDE_CLOUD_AGENT_ID) {
+            "empty"
+        } else {
+            "unsupported"
+        };
+        result.insert("status".to_string(), json!(status));
         return routed_json(
             Some(endpoint_path),
             StatusCode::OK,
@@ -1098,6 +1116,7 @@ pub(crate) async fn handle_read_session_chat_http(
             result.insert("error".to_string(), json!("Transcript unavailable"));
         }
     }
+    crate::session_chat_mention_paths::annotate_result(&mut result, &project_id, &session_id);
     routed_json(
         Some(endpoint_path),
         StatusCode::OK,

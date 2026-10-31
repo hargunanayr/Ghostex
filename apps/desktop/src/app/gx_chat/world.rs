@@ -525,6 +525,9 @@ fn settings_moved(
         || settings
             .all_orchestrator_efforts
             .is_some_and(|enabled| enabled != state.core.all_orchestrator_efforts_enabled)
+        || settings
+            .tool_cards
+            .is_some_and(|enabled| enabled != state.transcript_view.tool_cards)
         || settings.marked_heading_strength.is_some_and(|strength| {
             ghostex_gx_chat_core::transcript::marked_sections::heading_strength(strength)
                 != state.core.marked_heading_strength

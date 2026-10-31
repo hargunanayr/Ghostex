@@ -563,7 +563,7 @@ impl Render for AccountsTab {
             )
         };
         let mut blocks: Vec<PageBlock> = Vec::new();
-        if !should_show_section(&search.section("accounts"), true) {
+        if !should_show_section(&search.section("accounts"), None) {
             if searching {
                 let store = self.store.clone();
                 let matching: Vec<SettingsTabId> = rail_pages(self.store.read(cx))

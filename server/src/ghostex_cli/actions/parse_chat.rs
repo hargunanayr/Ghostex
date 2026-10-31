@@ -65,6 +65,7 @@ pub(super) fn evaluate_parser(parser: Parser, rest: &[String], flags: &Flags) ->
         Parser::SessionChatDraft => parse_session_chat_draft(rest, flags)?,
         Parser::KeepSessionsAwake => parse_keep_sessions_awake(flags)?,
         Parser::ClientHello => parse_client_hello(flags)?,
+        Parser::ClientView => parse_client_view(flags)?,
     };
     if let Some(raw) = flags.text("draftVersionJson") {
         let version: Value = serde_json::from_str(&raw)

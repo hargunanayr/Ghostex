@@ -14,6 +14,11 @@ pub(crate) async fn run_git_action(
     context: &TypedOperationContext,
 ) -> Result<Value, TypedOperationError> {
     let action = normalize_git_action(params.get("action"))?;
+    match action.as_str() {
+        "changesDiff" => return super::git_changes::changes_diff(params, context).await,
+        "changesRevert" => return super::git_changes::changes_revert(params, context).await,
+        _ => {}
+    }
     if action == "countFileLines" {
         let file_paths = optional_relative_file_paths(params.get("filePaths"))?;
         let line_count = count_project_file_lines(&context.cwd, &file_paths)?;
@@ -589,6 +594,8 @@ pub(crate) fn normalize_git_action(input: Option<&Value>) -> Result<String, Type
     match action {
         "addAll"
         | "branch"
+        | "changesDiff"
+        | "changesRevert"
         | "commit"
         | "countFileLines"
         | "checkout"

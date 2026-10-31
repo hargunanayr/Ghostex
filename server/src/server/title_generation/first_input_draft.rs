@@ -1,5 +1,9 @@
 use super::*;
 
+/// Rounds of the provider's composer wait a staged draft takes before it is typed anyway: two
+/// minutes, at 10 seconds a round.
+const GXSERVER_FIRST_USER_INPUT_DRAFT_COMPOSER_WAIT_ROUNDS: u32 = 12;
+
 #[derive(Clone)]
 pub(crate) struct FirstUserInputDraftTarget {
     draft: String,
@@ -117,18 +121,30 @@ pub(crate) fn schedule_first_user_input_draft(state: AppState, target: FirstUser
                 return;
             }
         } else {
-            crate::session_chat_composer::wait_for_session_chat_composer_by_ids(
-                &state.paths,
-                server_id,
-                &target.project_id,
-                &target.session_id,
-                crate::session_chat_composer::SessionChatComposerWaitPolicy {
-                    settle_ms: 0,
-                    timeout_ms: GXSERVER_PROVIDER_COMPOSER_WAIT_TIMEOUT_MS,
-                    unknown_hold_ms: GXSERVER_FIRST_USER_INPUT_DRAFT_READY_DELAY_MS,
-                },
-            )
-            .await;
+            /*
+            CDXC:TranscriptExport 2026-10-31 WHY:
+            A prompt the CLI opens at startup (Codex's "Update available", a trust question) keeps its composer away for as long as the user leaves it there, and a draft typed at it is gone: a handoff's message box came up empty in testing. An agent whose composer can be read gets more rounds of the wait, so dismissing the prompt lets the draft through; a composer that never appears still gets the draft in the end, as before.
+            */
+            for _ in 0..GXSERVER_FIRST_USER_INPUT_DRAFT_COMPOSER_WAIT_ROUNDS {
+                let wait = crate::session_chat_composer::wait_for_session_chat_composer_by_ids(
+                    &state.paths,
+                    server_id,
+                    &target.project_id,
+                    &target.session_id,
+                    crate::session_chat_composer::SessionChatComposerWaitPolicy {
+                        settle_ms: 0,
+                        timeout_ms: GXSERVER_PROVIDER_COMPOSER_WAIT_TIMEOUT_MS,
+                        unknown_hold_ms: GXSERVER_FIRST_USER_INPUT_DRAFT_READY_DELAY_MS,
+                    },
+                )
+                .await;
+                if !matches!(
+                    wait,
+                    crate::session_chat_composer::SessionChatComposerWait::NotReady(_)
+                ) {
+                    break;
+                }
+            }
         }
         let Ok(db) = open_gxserver_database(&state.paths) else {
             return;

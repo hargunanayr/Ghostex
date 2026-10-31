@@ -354,6 +354,7 @@ pub fn with_live_shell_output(
         deferred_work: None,
         startup_delivery: None,
         api_error: None,
+        mention_paths: None,
     };
     pending.push(shell_command_message(&template, command, Some(output)));
     pending

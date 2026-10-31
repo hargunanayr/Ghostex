@@ -20,6 +20,12 @@ pub(crate) fn executable(home: &Path, name: &str) -> Option<PathBuf> {
     crate::platform::live_path::find(name, &install_dirs(home))
 }
 
+/// `executable` for a probe Ghostex runs on its own: `None` while `name` is only an install-on-demand
+/// wrapper, which the probe would make install the CLI (`agent_hooks/on_demand.rs`).
+pub(crate) fn probe_executable(home: &Path, name: &str) -> Option<PathBuf> {
+    crate::agent_hooks::on_demand::probe_target_path(executable(home, name)?, name, home)
+}
+
 /// The helpers' own install directories, searched after the live PATH.
 fn install_dirs(home: &Path) -> Vec<PathBuf> {
     let mut dirs = vec![home.join(".local/bin"), home.join(".cargo/bin")];
@@ -319,6 +325,20 @@ fn discover_row(home: &Path, provider: Provider, row: &Value) -> Option<Discover
             )
         };
         account.usage_error = claude_usage_notice(&status, usage.is_object(), last_good_age);
+        // A session reported this login expired, and no reading of the saved login since says it works.
+        if account.status == "ready"
+            && super::store::login_expired(provider, &account.selector).is_some_and(|marked| {
+                !super::login_expired::read_after(
+                    &status,
+                    row["usage"].is_object(),
+                    row["usageFetchedAt"].as_str(),
+                    &marked,
+                )
+            })
+        {
+            account.status = "loginRequired".into();
+            account.usage_error = Some(super::login_expired::NOTICE.into());
+        }
         account.usage_stale = !row["usage"].is_object() && usage.is_object();
         if let Some(w) = window("fiveHour", "5h", &usage["fiveHour"], "pct", None) {
             account.usage.push(w);
@@ -355,7 +375,10 @@ fn discover_row(home: &Path, provider: Provider, row: &Value) -> Option<Discover
             }
         }
     } else {
-        account.identity = text(row, "accountId");
+        account.identity = super::codex_identity::codex_identity(
+            &text(row, "accountId"),
+            Some(&text(row, "userId")),
+        );
         account.status = match text(row, "loginStatus").as_str() {
             "present" => "ready",
             "identity_changed" => "identityChanged",
@@ -398,26 +421,25 @@ fn discover_row(home: &Path, provider: Provider, row: &Value) -> Option<Discover
     Some(account)
 }
 pub(crate) fn codex_get(row: &Value, path: &str) -> Result<Value, String> {
-    let response = match codex_request(row, "GET", path)?.call() {
+    let response = match codex_request(row, ureq::Agent::get, path)?.call() {
         Ok(r) => r,
-        Err(ureq::Error::Status(401, _)) => {
+        Err(ureq::Error::StatusCode(401)) => {
             return Err("Sign in again to refresh account usage.".into());
         }
-        Err(ureq::Error::Status(429, _)) => {
+        Err(ureq::Error::StatusCode(429)) => {
             return Err("Usage requests are temporarily limited. Ghostex will try again.".into());
         }
         Err(_) => return Err("Usage could not be refreshed. Ghostex will try again.".into()),
     };
-    response
-        .into_json()
+    crate::http_agent::read_json(response)
         .map_err(|_| "The usage service returned an invalid response.".to_string())
 }
-/// A ChatGPT backend request authorized as the xswap account in `row`, after checking its saved login still belongs to that account.
-pub(crate) fn codex_request(
+/// A ChatGPT backend request authorized as the xswap account in `row`, after checking its saved login still belongs to that account. `method` is `ureq::Agent::get` or `ureq::Agent::post`.
+pub(crate) fn codex_request<B>(
     row: &Value,
-    method: &str,
+    method: impl FnOnce(&ureq::Agent, String) -> ureq::RequestBuilder<B>,
     path: &str,
-) -> Result<ureq::Request, String> {
+) -> Result<ureq::RequestBuilder<B>, String> {
     let home = PathBuf::from(text(row, "home"));
     if !home.is_absolute() {
         return Err("Invalid Codex account home.".into());
@@ -426,25 +448,31 @@ pub(crate) fn codex_request(
     let auth: Value =
         serde_json::from_slice(&raw).map_err(|_| "Codex credentials are unreadable.")?;
     let expected = text(row, "accountId");
-    if auth.pointer("/tokens/account_id").and_then(Value::as_str) != Some(expected.as_str()) {
+    // The member is checked too: a slot whose login moved to another member of the same Business workspace keeps the workspace's `account_id`.
+    let saved = super::codex_identity::codex_identity(&expected, Some(&text(row, "userId")));
+    if auth.pointer("/tokens/account_id").and_then(Value::as_str) != Some(expected.as_str())
+        || !super::codex_identity::codex_auth_identity(&auth).is_some_and(|login| {
+            super::codex_identity::identity_matches(Provider::Codex, &saved, &login)
+        })
+    {
         return Err("This account's login identity changed. Reconnect it.".into());
     }
     let token = auth
         .pointer("/tokens/access_token")
         .and_then(Value::as_str)
         .ok_or("Sign in again to read usage.")?;
-    Ok(ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(15))
-        .build()
-        .request(
-            method,
-            &format!("https://chatgpt.com/backend-api/wham/{path}"),
-        )
-        .set("Authorization", &format!("Bearer {token}"))
-        .set("ChatGPT-Account-Id", &expected)
-        .set("Accept", "application/json")
-        .set("OpenAI-Beta", "codex-1")
-        .set("originator", "Codex Desktop"))
+    Ok(method(
+        crate::http_agent::agent(),
+        format!("https://chatgpt.com/backend-api/wham/{path}"),
+    )
+    .header("Authorization", format!("Bearer {token}"))
+    .header("ChatGPT-Account-Id", &expected)
+    .header("Accept", "application/json")
+    .header("OpenAI-Beta", "codex-1")
+    .header("originator", "Codex Desktop")
+    .config()
+    .timeout_global(Some(Duration::from_secs(15)))
+    .build())
 }
 fn codex_usage(row: &Value) -> Result<(Vec<UsageWindow>, Option<u64>), String> {
     let value = codex_get(row, "usage")?;

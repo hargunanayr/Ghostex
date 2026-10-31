@@ -54,6 +54,12 @@ struct AgentCard<'a> {
     references: &'a Value,
 }
 
+/// How far a card's session name's hover fill reaches past the name on each side; the name's
+/// negative margin takes the same back, so it adds no space at rest.
+const CARD_PILL_PAD: f32 = 3.0;
+/// The width of a word space in the chat font, in ems.
+const WORD_SPACE_EM: f32 = 0.27;
+
 impl NativeChatView {
     /// A message another agent sent this session.
     ///
@@ -125,7 +131,7 @@ impl NativeChatView {
                 .flex_col()
                 .min_w_0()
                 .w_full()
-                .gap(px(8.0 * p.scale))
+                .gap(px(SINGLE_LINE_CARD.stack_gap() * p.scale))
                 .children(cards.iter().map(|sent| {
                     let marked = text(sent, "markdown");
                     self.agent_card(
@@ -221,12 +227,29 @@ impl NativeChatView {
             .gap(px(10.0 * s))
             .min_w_0()
             .child(self.agent_card_mark(card, p))
-            .child(
+            .child(if card["pill"].is_object() {
+                // `Message from` / `Message to`, then the other session's pill.
+                let pill = &card["pill"];
+                shape
+                    .title(div().flex_1().min_w_0().flex().items_center(), p)
+                    // An ordinary word space between `Message to` and the session's name.
+                    .gap(px(shape.title_size * WORD_SPACE_EM * s))
+                    .text_color(p.foreground)
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .whitespace_nowrap()
+                            .child(text(pill, "prefix")),
+                    )
+                    .child(self.session_pill(&format!("{key}:pill"), pill, p, cx))
+                    .into_any_element()
+            } else {
                 shape
                     .title(div().flex_1().min_w_0().truncate(), p)
                     .text_color(p.foreground)
-                    .child(text(card, "name")),
-            )
+                    .child(text(card, "name"))
+                    .into_any_element()
+            })
             .when(
                 session.is_object() && text(card, "failure").is_empty(),
                 |row| {
@@ -317,27 +340,43 @@ impl NativeChatView {
                 .children(recipients.iter().enumerate().map(|(index, recipient)| {
                     let row_key = format!("{key}:recipient:{index}");
                     let session = &recipient["session"];
-                    let name = div()
-                        .id(SharedString::from(format!("{row_key}:name")))
-                        .min_w_0()
-                        .truncate()
-                        .text_color(p.foreground)
-                        .child(text(recipient, "name"))
-                        .when(session.is_object(), |name| {
-                            let command = json!({
-                                "type": "openAgentSession",
-                                "projectId": session["projectId"],
-                                "sessionId": session["sessionId"],
-                            });
-                            name.role(gpui::Role::Button)
-                                .aria_label("Go to session")
-                                .chat_cursor_pointer()
-                                .hover(|style| style.underline())
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    cx.stop_propagation();
-                                    this.invoke(command.clone(), cx)
-                                }))
-                        });
+                    let name = if recipient["pill"].is_object() {
+                        // The row's own colour, the same as a recipient drawn without a pill.
+                        div()
+                            .min_w_0()
+                            .flex()
+                            .text_color(p.foreground)
+                            .child(self.session_pill(
+                                &format!("{row_key}:pill"),
+                                &recipient["pill"],
+                                p,
+                                cx,
+                            ))
+                            .into_any_element()
+                    } else {
+                        div()
+                            .id(SharedString::from(format!("{row_key}:name")))
+                            .min_w_0()
+                            .truncate()
+                            .text_color(p.foreground)
+                            .child(text(recipient, "name"))
+                            .when(session.is_object(), |name| {
+                                let command = json!({
+                                    "type": "openAgentSession",
+                                    "projectId": session["projectId"],
+                                    "sessionId": session["sessionId"],
+                                });
+                                name.role(gpui::Role::Button)
+                                    .aria_label("Go to session")
+                                    .chat_cursor_pointer()
+                                    .hover(|style| style.underline())
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.invoke(command.clone(), cx)
+                                    }))
+                            })
+                            .into_any_element()
+                    };
                     div()
                         .flex()
                         .items_center()
@@ -351,6 +390,86 @@ impl NativeChatView {
                 }))
                 .into_any_element(),
         )
+    }
+
+    /// The other session's name on a message card (gx-chat-core `transcript/session_mentions.rs`):
+    /// the session's title in the line's own type, a faint fill under the pointer (the decision
+    /// below). A pill the core marks `logo: false` sits beside the card's own agent tile and leaves
+    /// the logo to it (CDXC:SessionChat 2026-10-28 on `card_pill`). A click switches to the
+    /// session; a session that is gone draws muted and opens nothing. Its own click never opens or
+    /// closes the card.
+    pub(super) fn session_pill(
+        &self,
+        key: &str,
+        pill: &Value,
+        p: &ChatAppearance,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let s = p.scale;
+        let missing = pill["missing"] == true;
+        let shows_logo = pill["logo"] != false;
+        let (logo, logo_color) = super::markdown_links::session_pill_icon(
+            pill["agentIcon"].as_str().unwrap_or_default(),
+            pill["coordinator"] == true,
+            p,
+        );
+        let session = &pill["session"];
+        let command = session.is_object().then(|| {
+            json!({
+                "type": "openAgentSession",
+                "projectId": session["projectId"],
+                "sessionId": session["sessionId"],
+            })
+        });
+        let hint = SharedString::from(text(pill, "title"));
+        let hover = p.foreground.opacity(0.06);
+        // CDXC:SessionChat 2026-10-29 DECISION: User, of the "Message from" card's pill (2026-10-28): "make this pill look like [the chat box's session pill] after removing the +", then of "Message to" followed by a wide gap and a smaller grey title: "make font size equal and let's not have this extra space there please. also no need to change the color of text of the session name like that". The card's session name (the header's, and each recipient row's on a "Message to N sessions" card) has no frame and takes the line's own size, weight and colour, so it reads as one title with the words before it, a word space away; it is still a pill: a faint fill under the pointer and a click switches to the session. The fill reaches past the name through a negative margin, so at rest it adds no space. Pills in a message's text and in the chat box keep their own look. The title's `+` went in gx-chat-core `pill_label`. Supersedes the reference colour of the 2026-10-28 decision.
+        div()
+            .id(SharedString::from(key.to_string()))
+            .flex()
+            .items_center()
+            .min_w_0()
+            .gap(px(4.0 * s))
+            .px(px(CARD_PILL_PAD * s))
+            .mx(px(-CARD_PILL_PAD * s))
+            .rounded(px(5.0 * s))
+            .when(missing, |pill| pill.text_color(p.card_muted))
+            .whitespace_nowrap()
+            .role(gpui::Role::Button)
+            .aria_label(SharedString::from(format!(
+                "{}: {}",
+                text(pill, "label"),
+                text(pill, "title")
+            )))
+            .tooltip(move |window, cx| {
+                gpui_component::tooltip::Tooltip::new(hint.clone()).build(window, cx)
+            })
+            .when(shows_logo, |pill| {
+                pill.child(
+                    gpui::svg()
+                        .path(logo)
+                        .size(px(12.0 * s))
+                        .flex_shrink_0()
+                        .text_color(if missing {
+                            logo_color.opacity(0.45)
+                        } else {
+                            logo_color
+                        }),
+                )
+            })
+            .child(div().min_w_0().truncate().child(text(pill, "label")))
+            .when_some(command, |pill, command| {
+                pill.chat_cursor_pointer()
+                    .hover(move |style| style.bg(hover))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.invoke(command.clone(), cx)
+                    }))
+            })
+            .when(missing, |pill| {
+                pill.on_click(|_, _, cx| cx.stop_propagation())
+            })
+            .into_any_element()
     }
 
     /// A pill (`SINGLE_LINE_CARD`, cards.rs) with its glyph and word: Delivered in green, like
@@ -439,6 +558,13 @@ impl NativeChatView {
         cx: &Context<Self>,
     ) -> Option<AnyElement> {
         let failure = text(card, "failure");
+        // A message still waiting says why instead, once gxserver has held it a minute; it has no
+        // Retry or Remove (the card's `retryPromptId` is set only when it failed).
+        let failure = if failure.is_empty() {
+            text(card, "waitReason")
+        } else {
+            failure
+        };
         if failure.is_empty() {
             return None;
         }

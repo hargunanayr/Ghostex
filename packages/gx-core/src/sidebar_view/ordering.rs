@@ -60,6 +60,7 @@ pub(crate) fn is_grouped_working(row: &SessionRow) -> bool {
     !row.is_browser
         && row.activity == "working"
         && row.pending_question_count == 0
+        && !row.awaiting_approval
         && !row.model_selection_failed
         && !row.program_status_failed
 }

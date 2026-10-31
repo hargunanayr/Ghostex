@@ -16,8 +16,8 @@ use ghostex_gx_core::session_board::{
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, Bounds, Context, ElementId, FocusHandle, FontWeight, Hsla, InteractiveElement as _,
-    IntoElement, ParentElement as _, Pixels, Render, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Task, WeakEntity, Window, div, px, rgb,
+    IntoElement, ParentElement as _, Pixels, Render, SharedString, StatefulInteractiveElement as _,
+    Styled as _, Task, WeakEntity, Window, div, px, rgb,
 };
 
 use super::card::BoardCardDrag;
@@ -186,7 +186,9 @@ impl NativeSessionBoardView {
         }
         self.filter = filter;
         self.confirm = None;
-        self.app_later(window, cx, |app, _, cx| app.rebuild_native_session_board(cx));
+        self.app_later(window, cx, |app, _, cx| {
+            app.rebuild_native_session_board(cx)
+        });
     }
 
     fn show_filter_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -352,7 +354,11 @@ impl NativeSessionBoardView {
             .gap(px(6.0))
             .text_size(px(12.5))
             .text_color(p.muted)
-            .child(titlebar_svg_icon("titlebar/layout-kanban.svg", 13.0, p.muted))
+            .child(titlebar_svg_icon(
+                "titlebar/layout-kanban.svg",
+                13.0,
+                p.muted,
+            ))
             .child(caption);
         if self.board.spaces.is_empty() {
             return row.into_any_element();
@@ -378,7 +384,9 @@ impl NativeSessionBoardView {
                         12.0,
                         p.muted,
                     ))
-                    .on_click(cx.listener(|this, _, window, cx| this.show_space_picker(window, cx))),
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.show_space_picker(window, cx)),
+                    ),
             )
             .into_any_element()
     }
@@ -412,7 +420,9 @@ impl NativeSessionBoardView {
                         14.0,
                         p.muted,
                     ))
-                    .on_click(cx.listener(|this, _, window, cx| this.show_filter_picker(window, cx))),
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.show_filter_picker(window, cx)),
+                    ),
             )
             .into_any_element()
     }
@@ -472,22 +482,28 @@ impl NativeSessionBoardView {
         let hover = p.control_hover;
         Some(
             div()
-                .id(ElementId::Name(format!("session-board-bulk-{}", column.as_str()).into()))
+                .id(ElementId::Name(
+                    format!("session-board-bulk-{}", column.as_str()).into(),
+                ))
                 .flex()
                 .items_center()
                 .h(px(24.0))
                 .px(px(9.0))
                 .rounded(px(6.0))
                 .border_1()
-                .border_color(if confirming { p.border_strong } else { p.border })
+                .border_color(if confirming {
+                    p.border_strong
+                } else {
+                    p.border
+                })
                 .when(confirming, |this| this.bg(p.control))
                 .text_size(px(12.0))
                 .text_color(if confirming { p.foreground } else { p.muted })
                 .cursor_pointer()
                 .hover(move |style| style.bg(hover))
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.bulk_clicked(column, window, cx)
-                }))
+                .on_click(
+                    cx.listener(move |this, _, window, cx| this.bulk_clicked(column, window, cx)),
+                )
                 .child(label)
                 .into_any_element(),
         )
@@ -511,7 +527,9 @@ impl NativeSessionBoardView {
         let hidden = cards.len().saturating_sub(LANE_CARD_LIMIT);
         let action = self.render_lane_action(column, cards.len(), p, cx);
         div()
-            .id(ElementId::Name(format!("session-board-lane-{}", column.as_str()).into()))
+            .id(ElementId::Name(
+                format!("session-board-lane-{}", column.as_str()).into(),
+            ))
             .flex_1()
             .min_w_0()
             .max_h_full()
@@ -609,7 +627,10 @@ impl Render for NativeSessionBoardView {
             .iter()
             .map(|column| self.render_lane(*column, &p, light, now, cx))
             .collect();
-        let panel = self.panel.is_some().then(|| self.render_panel(&p, window, cx));
+        let panel = self
+            .panel
+            .is_some()
+            .then(|| self.render_panel(&p, window, cx));
         let picker = self.render_project_picker(&p, cx);
         div()
             .id("session-board")

@@ -18,7 +18,8 @@ fn main() {
         .expect("start the gxserver runtime");
     runtime.block_on(async {
         if let Err(error) = gxserver::cli::run(args).await {
-            eprintln!("{error}");
+            // With its causes ("read gxserver config: Permission denied"): the desktop app quotes this line when gxserver stops right after starting.
+            eprintln!("{error:#}");
             std::process::exit(1);
         }
     });

@@ -13,7 +13,9 @@ use gpui_component::h_flex;
 
 use super::appearance::SidebarAppearance;
 use crate::GhostexGpuiApp;
-use crate::app::consts::{TITLEBAR_ICON_LAYOUT_COLUMNS, TITLEBAR_ICON_PLUS, TITLEBAR_ICON_SETTINGS};
+use crate::app::consts::{
+    TITLEBAR_ICON_LAYOUT_COLUMNS, TITLEBAR_ICON_PLUS, TITLEBAR_ICON_SETTINGS,
+};
 use crate::app::helpers::*;
 use ghostex_gx_core::GhostView;
 
@@ -30,9 +32,9 @@ pub(crate) fn ghost_color(ghost_id: &str, color: &str) -> u32 {
             return value;
         }
     }
-    let hash = ghost_id
-        .bytes()
-        .fold(0u32, |hash, byte| hash.wrapping_mul(31).wrapping_add(byte as u32));
+    let hash = ghost_id.bytes().fold(0u32, |hash, byte| {
+        hash.wrapping_mul(31).wrapping_add(byte as u32)
+    });
     GHOST_COLORS[hash as usize % GHOST_COLORS.len()]
 }
 
@@ -110,7 +112,11 @@ impl GhostexGpuiApp {
                     .justify_center()
                     .rounded(px(4.0 * scale))
                     .hover(|button| button.bg(appearance.hover))
-                    .child(titlebar_svg_icon(TITLEBAR_ICON_PLUS, 13.0 * scale, appearance.muted))
+                    .child(titlebar_svg_icon(
+                        TITLEBAR_ICON_PLUS,
+                        13.0 * scale,
+                        appearance.muted,
+                    ))
                     .on_click(cx.listener(|app, _, window, cx| {
                         cx.stop_propagation();
                         app.open_new_ghost_modal(window, cx);
@@ -152,7 +158,10 @@ impl GhostexGpuiApp {
             ghost.chat_session_id.clone(),
         );
         div()
-            .id(SharedString::from(format!("native-sidebar-ghost-rail-{}", ghost.ghost_id)))
+            .id(SharedString::from(format!(
+                "native-sidebar-ghost-rail-{}",
+                ghost.ghost_id
+            )))
             .role(gpui::Role::Button)
             .aria_label(SharedString::from(ghost.name.clone()))
             .aria_selected(focused)

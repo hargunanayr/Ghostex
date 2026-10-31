@@ -93,14 +93,17 @@ pub(super) fn js_string_of(value: Option<&Value>) -> String {
 }
 
 pub(super) fn http_json(url: &str, timeout_ms: u64) -> Result<Value, String> {
-    match ureq::get(url)
-        .timeout(Duration::from_millis(timeout_ms))
+    match crate::http_agent::agent()
+        .get(url)
+        .config()
+        .timeout_global(Some(Duration::from_millis(timeout_ms)))
+        .build()
         .call()
     {
-        Ok(response) => response
-            .into_json::<Value>()
-            .map_err(|error| error.to_string()),
-        Err(ureq::Error::Status(code, _)) => Err(format!("HTTP {code}")),
+        Ok(response) => {
+            crate::http_agent::read_json::<Value>(response).map_err(|error| error.to_string())
+        }
+        Err(ureq::Error::StatusCode(code)) => Err(format!("HTTP {code}")),
         Err(error) => Err(error.to_string()),
     }
 }

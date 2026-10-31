@@ -89,7 +89,7 @@ impl GhostexGpuiApp {
             default_prompt_agent_id,
             initial_title,
             can_generate_from_history,
-            palette: self.gpui_native_modal_palette(),
+            palette: self.gpui_native_dialog_palette(),
             prefs_path: Some(gpui_rename_session_modal_prefs_path()),
         };
         let host = self.native_app_modal_host(cx, move |app, command, cx| {

@@ -113,7 +113,12 @@ impl GhostexGpuiApp {
                         h_flex()
                             .gap(px(8.0))
                             .items_center()
-                            .child(div().size(px(7.0)).rounded_full().bg(lane_tone(card.column)))
+                            .child(
+                                div()
+                                    .size(px(7.0))
+                                    .rounded_full()
+                                    .bg(lane_tone(card.column)),
+                            )
                             .child(
                                 div()
                                     .flex_1()
@@ -153,9 +158,11 @@ impl GhostexGpuiApp {
                                     false,
                                     p,
                                 )
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.session_board_close_chat(cx);
-                                })),
+                                .on_click(cx.listener(
+                                    |this, _, _, cx| {
+                                        this.session_board_close_chat(cx);
+                                    },
+                                )),
                             ),
                     )
                     .child(
@@ -197,9 +204,11 @@ impl GhostexGpuiApp {
                                     false,
                                     p,
                                 )
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.session_board_set_completed(&card, complete, cx);
-                                })),
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        this.session_board_set_completed(&card, complete, cx);
+                                    },
+                                )),
                             ),
                         )
                     }),

@@ -125,6 +125,7 @@ export type GxserverEndpointPath =
    * box. A box picked here starts with the draft's first message.
    */
   | '/api/draftRunLocation'
+  | '/api/draftWorktree'
   /*
    * CDXC:AgentProviders 2026-09-03:
    * Moves a PROMPTED session onto another agent configuration of the same CLI
@@ -134,6 +135,12 @@ export type GxserverEndpointPath =
   | '/api/switchSessionAgent'
   | '/api/agentCliMaintenance'
   | '/api/managedTools'
+  /**
+   * CDXC:RemoteMachines 2026-10-26 SEE-ALSO:
+   * A machine's platform, Ghostex CLI and bundled agent skills, with skill install and uninstall
+   * (server/src/machine_integrations.rs), for Settings > Integrations with that machine picked.
+   */
+  | '/api/machineIntegrations'
   /**
    * CDXC:AgentBox 2026-10-01 SEE-ALSO:
    * agentbox readiness, the box list, box web app / screen URLs, stop/destroy, and the setup
@@ -151,6 +158,7 @@ export type GxserverEndpointPath =
   | '/api/readSidebarHud'
   | '/api/mutateSidebarHudSettings'
   | '/api/updateWorkspaceSessionGroups'
+  | '/api/readWorkspaceSessionGroups'
   /*
    * CDXC:Navigation 2026-08-19:
    * Titlebar Back/Forward walks a daemon-owned trail of previously active
@@ -208,6 +216,7 @@ export type GxserverEndpointPath =
   | '/api/resolveAgentPromptLaunch'
   | '/api/readSessionChat'
   | '/api/readSessionTerminalTail'
+  | '/api/readSessionChatReport'
   | '/api/catchUpSession'
   | '/api/readSessionFilesLinks'
   | '/api/readSessionChatSkills'

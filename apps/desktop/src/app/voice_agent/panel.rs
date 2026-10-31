@@ -30,8 +30,12 @@ use crate::app::window::settings_modal::catalog::settings_catalog;
 use crate::app::window::*;
 use crate::*;
 
+#[path = "panel_confirm_card.rs"]
+mod confirm_card;
 #[path = "panel_controls.rs"]
 pub(crate) mod controls;
+// The card reads its frame's data as `super::rows`.
+use super::rows;
 #[path = "panel_focus_strip.rs"]
 mod focus_strip;
 
@@ -570,6 +574,7 @@ fn row_text_len(row: &VoiceRow) -> usize {
     match row {
         VoiceRow::Caption { text, .. } | VoiceRow::Announcement { text } => text.len(),
         VoiceRow::Tool { label, ok, .. } => label.len() + usize::from(ok.is_some()),
+        VoiceRow::Confirm(card) => card.title.len(),
     }
 }
 
@@ -602,6 +607,11 @@ enum PanelAction {
     AllSessions,
     /// The focus strip's title: shows the session.
     ShowFocus,
+    /// A confirm card's Stop (`Some(session)`) or Cancel.
+    Confirm {
+        id: String,
+        session: Option<String>,
+    },
 }
 
 impl VoicePanelWindow {
@@ -648,6 +658,9 @@ impl VoicePanelWindow {
                     app.start_voice_agent_call(about, cx);
                 }
                 PanelAction::AllSessions => app.voice_call_all_sessions(cx),
+                PanelAction::Confirm { id, session } => {
+                    app.answer_voice_agent_confirm(&id, session.as_deref(), cx)
+                }
                 PanelAction::ShowFocus => {
                     if let Some(key) = app
                         .voice_agent
@@ -1279,7 +1292,26 @@ impl VoicePanelWindow {
                 .text_color(colors.muted)
                 .child(text.clone())
                 .into_any_element(),
+            // Drawn by `confirm_row`, which needs the panel for its buttons.
+            VoiceRow::Confirm(_) => div().into_any_element(),
         }
+    }
+
+    fn confirm_row(
+        &self,
+        card: &rows::ConfirmCard,
+        colors: &PanelColors,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let panel = cx.entity().downgrade();
+        let id = card.id.clone();
+        confirm_card::confirm_card(card, colors.controls(), move |session, _, cx| {
+            let action = PanelAction::Confirm {
+                id: id.clone(),
+                session,
+            };
+            let _ = panel.update(cx, |this, cx| this.run(action, cx));
+        })
     }
 
     fn body(
@@ -1303,7 +1335,10 @@ impl VoicePanelWindow {
             .gap(px(14.0))
             .px(px(12.0))
             .py(px(10.0))
-            .children(snapshot.rows.iter().map(|row| Self::row(row, colors)));
+            .children(snapshot.rows.iter().map(|row| match row {
+                VoiceRow::Confirm(card) => self.confirm_row(card, colors, cx),
+                row => Self::row(row, colors),
+            }));
         let empty = snapshot.rows.is_empty() && snapshot.problem.is_none();
         let memory = self.memory_block(snapshot, colors, cx);
         v_flex()

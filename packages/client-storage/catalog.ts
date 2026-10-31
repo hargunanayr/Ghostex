@@ -103,6 +103,13 @@ export const storageCatalog = Object.freeze({
     'ghostex-sidebar-project-terminal-launcher',
     textCodec
   ),
+  launcherChoices: define(
+    'launcherChoices',
+    'Agent launcher',
+    'apps/desktop/src/app/gx_store/primary_launcher.rs',
+    'ghostex.sidebar.agentLauncherChoices.v1',
+    objectCodec
+  ),
   accountOwner: define(
     'accountOwner',
     'Account setup identity',
@@ -506,7 +513,7 @@ export const storageCatalog = Object.freeze({
   commitAgent: define(
     'commitAgent',
     'Commit prompt agent',
-    desktop + 'src/app/git_commit_modal_lifecycle.rs',
+    desktop + 'src/app/native_changes_host.rs',
     'ghostex.promptAgent.gitCommit',
     textCodec
   ),

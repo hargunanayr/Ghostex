@@ -26,6 +26,8 @@ pub(super) const FOLLOWING_TOOLS: &[&str] = &[
     "send_prompt",
     "send_draft",
     "start_agent",
+    "stop_session",
+    "start_coordinator",
 ];
 
 /// The session a successful tool call showed, for the client's tool event: `{projectId,

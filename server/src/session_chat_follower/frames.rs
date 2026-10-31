@@ -295,16 +295,17 @@ pub(super) fn emit_snapshot_frame(
         tail.messages.clone(),
         &local_commands,
     );
+    let mut rows =
+        crate::session_chat_history::collapse_snapshot_messages(&messages, tail.before_offset);
+    crate::session_chat_mention_paths::annotate_messages(
+        &mut rows,
+        &config.project_id,
+        &config.session_id,
+    );
     stream.emit_sequenced(
         |seq| {
             let mut frame = session_chat_frame(config, frame_type, epoch, seq);
-            frame.insert(
-                "messages".to_string(),
-                Value::Array(crate::session_chat_history::collapse_snapshot_messages(
-                    &messages,
-                    tail.before_offset,
-                )),
-            );
+            frame.insert("messages".to_string(), Value::Array(rows));
             insert_optional_lifecycle(&mut frame, tail.lifecycle.as_ref());
             frame.insert("hasMore".to_string(), json!(tail.has_more));
             frame.insert("hasMoreExact".to_string(), json!(true));
@@ -354,13 +355,19 @@ pub(super) fn emit_appended_frame(
     lifecycle: Option<&SessionChatTurnLifecycle>,
     superseded_message_ids: &[String],
 ) {
+    let mut rows = match serde_json::to_value(messages) {
+        Ok(Value::Array(rows)) => rows,
+        _ => Vec::new(),
+    };
+    crate::session_chat_mention_paths::annotate_messages(
+        &mut rows,
+        &config.project_id,
+        &config.session_id,
+    );
     stream.emit_sequenced(
         |seq| {
             let mut frame = session_chat_frame(config, "sessionChatAppended", epoch, seq);
-            frame.insert(
-                "messages".to_string(),
-                serde_json::to_value(messages).unwrap_or(Value::Array(Vec::new())),
-            );
+            frame.insert("messages".to_string(), Value::Array(rows));
             // Omitted when empty: daemons and clients that predate the field
             // then behave exactly as before.
             if !superseded_message_ids.is_empty() {

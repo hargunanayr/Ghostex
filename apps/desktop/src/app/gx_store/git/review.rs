@@ -344,6 +344,7 @@ impl GhostexGpuiApp {
                     staged_only: trusted.as_ref().is_some_and(|commit| commit.staged_only),
                     has_commit: review.has_commit,
                     message: confirm.message.clone(),
+                    create_branch: confirm.commit_on_new_ref,
                 },
                 cx,
             );

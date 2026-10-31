@@ -18,7 +18,9 @@ fn parse_schedule(text: &str) -> CliResult<Value> {
     let time = |value: &str| -> CliResult<String> {
         let (hour, minute) = value
             .split_once(':')
-            .and_then(|(hour, minute)| Some((hour.parse::<u32>().ok()?, minute.parse::<u32>().ok()?)))
+            .and_then(|(hour, minute)| {
+                Some((hour.parse::<u32>().ok()?, minute.parse::<u32>().ok()?))
+            })
             .filter(|(hour, minute)| *hour <= 23 && *minute <= 59)
             .ok_or_else(|| CliError::Other(format!("{value} is not a time like 17:20.")))?;
         Ok(format!("{hour:02}:{minute:02}"))
@@ -36,10 +38,14 @@ fn parse_schedule(text: &str) -> CliResult<Value> {
                 .ok()
                 .filter(|minute| *minute <= 59)
                 .ok_or_else(bad)?;
-            Ok(json!({ "kind": "cron", "expression": format!("{minute} * * * *"), "timezone": "local" }))
+            Ok(
+                json!({ "kind": "cron", "expression": format!("{minute} * * * *"), "timezone": "local" }),
+            )
         }
         ["daily", at] => Ok(json!({ "kind": "daily", "time": time(at)?, "timezone": "local" })),
-        ["weekdays", at] => Ok(json!({ "kind": "weekly", "days": [1, 2, 3, 4, 5], "time": time(at)?, "timezone": "local" })),
+        ["weekdays", at] => Ok(
+            json!({ "kind": "weekly", "days": [1, 2, 3, 4, 5], "time": time(at)?, "timezone": "local" }),
+        ),
         ["weekly", day, at] => {
             let day = DAYS
                 .iter()
@@ -53,7 +59,12 @@ fn parse_schedule(text: &str) -> CliResult<Value> {
 
 /// A schedule as a person reads it ("Daily at 17:20").
 fn schedule_label(schedule: &Value) -> String {
-    let text = |key: &str| schedule.get(key).and_then(Value::as_str).unwrap_or_default();
+    let text = |key: &str| {
+        schedule
+            .get(key)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+    };
     match text("kind") {
         "daily" => format!("Daily at {}", text("time")),
         "weekly" => {
@@ -73,7 +84,11 @@ fn schedule_label(schedule: &Value) -> String {
                 format!("Weekly {names} at {}", text("time"))
             }
         }
-        "cron" => match text("expression").split_whitespace().collect::<Vec<_>>().as_slice() {
+        "cron" => match text("expression")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .as_slice()
+        {
             [minute, "*", "*", "*", "*"] => format!("Hourly at :{minute:0>2}"),
             _ => format!("Cron {}", text("expression")),
         },
@@ -98,7 +113,11 @@ fn find_habit(state: &Value, id: &str) -> CliResult<Value> {
         .flatten()
         .find(|habit| agents::text(habit, "id") == id)
         .cloned()
-        .ok_or_else(|| CliError::Other(format!("No habit has the id {id}. ghostex ghost habit list shows them.")))
+        .ok_or_else(|| {
+            CliError::Other(format!(
+                "No habit has the id {id}. ghostex ghost habit list shows them."
+            ))
+        })
 }
 
 /// `ghostex ghost habit list|add|update|run|remove`.
@@ -124,7 +143,11 @@ pub(super) fn run(parsed: &ParsedArgs) -> CliResult<()> {
                     agents::text(&habit, "id"),
                     agents::text(&habit, "name"),
                     schedule_label(&habit["schedule"]),
-                    if habit["enabled"].as_bool() == Some(true) { "on" } else { "off" },
+                    if habit["enabled"].as_bool() == Some(true) {
+                        "on"
+                    } else {
+                        "off"
+                    },
                     habit["nextRunAt"]
                         .as_str()
                         .map(|next| format!("  next {next}"))
@@ -161,7 +184,11 @@ pub(super) fn run(parsed: &ParsedArgs) -> CliResult<()> {
             if let Some(enabled) = flag_text(parsed, "enabled") {
                 definition["enabled"] = json!(enabled != "false");
             }
-            for (key, what) in [("name", "--name"), ("schedule", "--schedule"), ("prompt", "--instructions")] {
+            for (key, what) in [
+                ("name", "--name"),
+                ("schedule", "--schedule"),
+                ("prompt", "--instructions"),
+            ] {
                 if definition.get(key).is_none_or(Value::is_null) {
                     return Err(CliError::Other(format!("habit {action} needs {what}.")));
                 }
@@ -189,14 +216,20 @@ pub(super) fn run(parsed: &ParsedArgs) -> CliResult<()> {
         }
         "run" | "remove" => {
             let id = parsed.rest.get(1).ok_or_else(|| {
-                CliError::Other(format!("habit {action} needs the habit id from habit list."))
+                CliError::Other(format!(
+                    "habit {action} needs the habit id from habit list."
+                ))
             })?;
             let endpoint = if action == "run" {
                 "/api/runAutomationNow"
             } else {
                 "/api/deleteAutomation"
             };
-            call_gxserver_rpc(endpoint, &json!({ "projectId": home, "automationId": id }), &flags)?;
+            call_gxserver_rpc(
+                endpoint,
+                &json!({ "projectId": home, "automationId": id }),
+                &flags,
+            )?;
             println!(
                 "{}",
                 if action == "run" {

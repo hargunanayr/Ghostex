@@ -80,11 +80,29 @@ pub(super) fn replacements(
         .filter(|reference| !reference.revealed)
         .filter_map(|reference| {
             let color = markdown_links::composer_color(&reference.kind, appearance)?;
+            // A mention of another session (gx-chat-core `session_mentions.rs`) leads with that
+            // session's agent logo, as its pill does in the transcript.
+            let icon = if reference.kind == "session" {
+                let known = crate::app::gx_chat::session_directory::find(&reference.path);
+                let agent = known
+                    .as_ref()
+                    .map_or("", |session| session.agent_id.as_str());
+                markdown_links::session_pill_icon(
+                    ghostex_gx_chat_core::extras::agents::default_agent_by_id(Some(agent))
+                        .map_or(agent, |(icon, _)| icon),
+                    known.as_ref().is_some_and(|session| session.coordinator),
+                    appearance,
+                )
+                .0
+                .to_string()
+            } else {
+                format!("chat-references/{}.svg", reference.kind)
+            };
             Some(
                 InlineReplacement::new(reference.range.clone(), reference.pill.clone())
                     .color(color)
                     .icon(
-                        format!("chat-references/{}.svg", reference.kind),
+                        icon,
                         gpui::px(
                             COMPOSER_FONT_PX * appearance.scale * markdown_links::VISUAL.icon_em,
                         ),
@@ -101,6 +119,13 @@ pub(super) fn replacements(
                     .tooltip(if reference.kind == "sideChat" {
                         "Side chat: sent to the agent as a side question (/btw). Click to remove."
                             .to_string()
+                    } else if reference.kind == "comment" {
+                        // A review comment's destination is its encoded payload, not a place.
+                        ghostex_gx_chat_core::composer::review_comments::ReviewComment::from_href(
+                            &reference.path,
+                        )
+                        .map(|comment| comment.tooltip())
+                        .unwrap_or_default()
                     } else {
                         reference.path.clone()
                     }),
@@ -185,6 +210,10 @@ impl NativeChatView {
         if reference.kind == "sideChat" {
             let draft = self.draft.clone();
             self.invoke(json!({"type":"toggleSideChat","text":draft}), cx);
+            return true;
+        }
+        // A review comment pill has nothing to open; it goes to the agent when the message is sent.
+        if reference.kind == "comment" {
             return true;
         }
         if event.click_count >= 2 {

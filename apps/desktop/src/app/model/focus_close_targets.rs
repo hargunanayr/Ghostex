@@ -118,7 +118,9 @@ pub(crate) fn focused_surface_close_decision(
             | TitlebarMode::Automate
             | TitlebarMode::Manage
             | TitlebarMode::Terminal
-            | TitlebarMode::BotFeed | TitlebarMode::GhostOverview
+            | TitlebarMode::BotFeed
+            | TitlebarMode::GhostOverview
+            | TitlebarMode::Changes
             | TitlebarMode::Work
             | TitlebarMode::Extension(_) => FocusedSurfaceCloseDecision::NoOp,
         },

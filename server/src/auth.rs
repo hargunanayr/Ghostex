@@ -3,7 +3,7 @@ use std::{fs, io, path::Path};
 use anyhow::{bail, Context, Result};
 use axum::http::{header, HeaderMap};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use rand::RngCore;
+use rand::Rng;
 use subtle::ConstantTimeEq;
 
 use crate::paths::GxserverPaths;
@@ -34,7 +34,7 @@ pub fn ensure_gxserver_auth_token(paths: &GxserverPaths) -> Result<GxserverAuthS
     }
 
     let mut random = [0_u8; TOKEN_BYTES];
-    rand::thread_rng().fill_bytes(&mut random);
+    rand::rng().fill_bytes(&mut random);
     let token = URL_SAFE_NO_PAD.encode(random);
     write_new_file_with_mode(
         &paths.auth_token_file,

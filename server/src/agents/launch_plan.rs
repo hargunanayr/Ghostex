@@ -63,7 +63,7 @@ pub(crate) fn create_agent_session_params_for_project(
         Some(_) => {
             if crate::coordinators::coordinator_create_request(params)?.is_some() {
                 return Err(DomainStateError::bad_request(
-                    "An orchestrator runs on this computer. Start it without a box.",
+                    "A coordinator runs on this computer. Start it without a box.",
                 ));
             }
             Some(crate::agentbox::box_agent_family(
@@ -261,6 +261,19 @@ pub(crate) fn create_agent_session_params_for_project(
                         Value::String(as_atuin_ignored_shell_input(&command)),
                     );
                     plan.insert("command".to_string(), Value::String(command));
+                }
+                if family.as_deref() == Some("dsh") {
+                    if let Some(command) = plan
+                        .get("command")
+                        .and_then(Value::as_str)
+                        .map(with_dsh_launch_env)
+                    {
+                        plan.insert(
+                            "startupText".to_string(),
+                            Value::String(as_atuin_ignored_shell_input(&command)),
+                        );
+                        plan.insert("command".to_string(), Value::String(command));
+                    }
                 }
             }
             plan
@@ -513,7 +526,7 @@ fn apply_requested_agent_model(
         }
         if crate::coordinators::coordinator_create_request(params)?.is_none() {
             return Err(DomainStateError::bad_request(
-                "A ZCode thread keeps its configured model; only an orchestrator's own model can be set.",
+                "A ZCode thread keeps its configured model; only a coordinator's own model can be set.",
             ));
         }
         return Ok((command, None));
@@ -618,7 +631,7 @@ fn refuse_unsupported_coordinator_agent(
         .map(|_| ())
         .ok_or_else(|| {
             DomainStateError::bad_request(format!(
-                "An orchestrator runs on {}. Pick one of those agents.",
+                "A coordinator runs on {}. Pick one of those agents.",
                 crate::coordinators::coordinator_agent_families_text()
             ))
         })
@@ -719,6 +732,7 @@ pub(crate) fn default_agent_session_title_name(agent_id: &str) -> Option<&'stati
         "mastra" => Some("Mastra Code"),
         "devin" => Some("Devin"),
         "droid" => Some("Factory Droid"),
+        "dsh" => Some("DeepSeek Harness"),
         "empryo" => Some("Empryo"),
         "freebuff" => Some("Freebuff"),
         "gemini" => Some("Gemini"),
@@ -862,6 +876,8 @@ pub(crate) fn resolve_agent_launch_command(
     let command = with_codex_no_daemon(agent_id, icon, &command);
     let command = with_marked_handovers(agent_id, icon, &command);
     let command = crate::connectors::with_connector_tools(agent_id, icon, &command);
+    // Last, so the steps above still read the program's own name (agent_cli/launch_path.rs).
+    let command = crate::agent_cli::launch_path::with_reachable_program(&command);
     #[cfg(windows)]
     let command = native_cli_command(&command);
     command

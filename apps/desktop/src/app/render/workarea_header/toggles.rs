@@ -170,7 +170,8 @@ impl GhostexGpuiApp {
             cx.listener(|this, _, window, cx| {
                 window.prevent_default();
                 cx.stop_propagation();
-                this.toggle_gpui_sidebar_collapsed(cx);
+                // With Claude on, showing the sidebar leaves Claude (app/claude_web/takeover.rs).
+                this.toggle_sidebar_from_user(cx);
             }),
         )
         .managed_tooltip_with_placement(ManagedTooltipPlacement::Right, {

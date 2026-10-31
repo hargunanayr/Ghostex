@@ -38,15 +38,15 @@ CHOOSE AND CREATE
   initial message when input is ready; --body-file reads that task from disk.
   Without either, the agent starts waiting for a message. --title sets the
   initial name; the agent's own auto-naming can replace it, except for a thread
-  created by an orchestrator, which keeps its --title (only a user's rename
+  created by a coordinator, which keeps its --title (only a user's rename
   changes it). Copy globalRef from the result for follow-ups. Created does
   not mean the task has completed.
 
-  Run by an orchestrator, create also makes the new session one of its
-  threads (it nests under the orchestrator and its turn-end reports go there).
+  Run by a coordinator, create also makes the new session one of its
+  threads (it nests under the coordinator and its turn-end reports go there).
   Pass --standalone to create an ordinary session instead, for one the user
   chats to directly; it is not linked and reports to nobody. Needs Ghostex
-  10.24.0 or later. `ghostex orchestrator unlink <thread-ref>` turns an
+  10.24.0 or later. `ghostex coordinator unlink <thread-ref>` turns an
   existing thread into such a session.
 
 IDENTITY AND RECIPIENTS
@@ -76,8 +76,8 @@ SENDER BLOCK
 
 THREADS AND THEIR ORCHESTRATOR
   A thread reports by ending its turn: Ghostex forwards its final message to
-  its orchestrator. Ghostex refuses a thread's send, send-session-chat-message,
-  send-text, send-key or send-enter into its own orchestrator's session.
+  its coordinator. Ghostex refuses a thread's send, send-session-chat-message,
+  send-text, send-key or send-enter into its own coordinator's session.
 
   <message body>
 
@@ -140,8 +140,8 @@ DELIVERY
   true) instead of typing it again, a retry of one that was refused before
   anything was submitted sends it now, and --interrupt is not repeated. A
   send without --request-id is always a new message.
-  An orchestrator's message to its own thread is also watched by Ghostex: if
-  the thread goes idle without it, the orchestrator gets a thread report
+  A coordinator's message to its own thread is also watched by Ghostex: if
+  the thread goes idle without it, the coordinator gets a thread report
   saying the message did not reach it.
 
   Control characters in the text (other than newline and tab) are sent as

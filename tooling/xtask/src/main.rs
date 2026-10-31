@@ -2,6 +2,7 @@
 //! The packaging shell scripts under apps/desktop/scripts/ still do the building; JavaScript tools (bun, vite, tsc, vitest, tailwind) still run for the pages and checks that are TypeScript.
 
 mod codesign;
+mod format;
 mod gxserver;
 mod help;
 mod http;
@@ -37,7 +38,9 @@ Web build
                           build the web app and serve it with `ghostex web` on :4173
 
 Checks and generators
-  typecheck               root TypeScript gate (storage lint, Help files, tsc, release scripts)
+  typecheck               root gate (storage lint, Help files, tsc, release scripts, formatting)
+  format                  format every app-owned file (cargo fmt per crate, prettier; tooling/format/scope.json)
+  format-check            fail when an app-owned file is not formatted (part of typecheck)
   desktop-typecheck       apps/desktop/tsconfig.json (CEF entry modules, Files embed page)
   test [<vitest arguments>]
                           the vitest suites
@@ -83,6 +86,8 @@ fn main() {
         "web-dev" => tasks::web_dev(&args),
         "start-web" => tasks::start_web(&args),
         "typecheck" => tasks::typecheck(&args),
+        "format" => format::run(&args),
+        "format-check" => format::check(&args),
         "desktop-typecheck" => tasks::desktop_typecheck(&args),
         "test" => tasks::test(&args),
         "storage-check" => tasks::storage_check(&args),

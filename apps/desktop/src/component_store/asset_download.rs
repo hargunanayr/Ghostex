@@ -144,13 +144,15 @@ pub(crate) fn download(
         */
         let mut last_error = None;
         for attempt in 1..=3 {
-            let result = velopack::download::download_url_to_file(url, destination, |percent| {
-                if expected_size > 0 {
-                    let downloaded =
-                        expected_size.saturating_mul(percent.clamp(0, 100) as u64) / 100;
-                    progress(downloaded);
-                }
-            });
+            // No HttpOptions: no extra headers and no timeout, as before velopack 1.2.161.
+            let result =
+                velopack::download::download_url_to_file(url, destination, None, |percent: i16| {
+                    if expected_size > 0 {
+                        let downloaded =
+                            expected_size.saturating_mul(percent.clamp(0, 100) as u64) / 100;
+                        progress(downloaded);
+                    }
+                });
             match result {
                 Ok(()) => {
                     if expected_size > 0 {
@@ -342,7 +344,7 @@ pub(crate) fn verify_file(
         }
         digest.update(&buffer[..count]);
     }
-    let actual = format!("{:x}", digest.finalize());
+    let actual = hex::encode(digest.finalize());
     if actual != expected_sha256 {
         return Err("Downloaded component asset failed SHA-256 verification against the app's sealed manifest".to_string());
     }

@@ -180,8 +180,6 @@ impl GhostexGpuiApp {
         */
         self.remote_machine_connect_states
             .insert(remote_machine_id.to_string(), state.to_string());
-        // Settings > Remote counts connected machines on its Remote machines tab.
-        self.publish_remote_machine_connect_states(cx);
         // The sanitized summary of THIS transition, which the machine tab and the sidebar's
         // machine notice draw (gx_store/remote_clients.rs). A transition without a message leaves
         // the last failure's standing, but a new attempt or a connection clears it so a later
@@ -195,6 +193,9 @@ impl GhostexGpuiApp {
             self.remote_machine_status_messages
                 .remove(remote_machine_id);
         }
+        // Settings > Remote counts connected machines on its Remote machines tab, and draws each
+        // failing machine's reason on its tile, so this goes out after the reason is updated.
+        self.publish_remote_machine_connect_states(cx);
         // Every connect transition funnels through here, so this is also where the store learns
         // whether it still has a daemon to subscribe to on that machine: a client starts on the
         // connected edge and is retired on every other one, which leaves the machine's rows on
@@ -336,6 +337,25 @@ impl GhostexGpuiApp {
         action: GpuiGhostexCliSettingsAction,
         cx: &mut gpui::Context<Self>,
     ) {
+        self.run_gpui_ghostex_cli_settings_action_with_toast(action, true, cx);
+    }
+
+    /// The same action without the app's toast: the onboarding reports the outcome itself, in its
+    /// own words, from the `settingsActionStatus` it receives.
+    pub(crate) fn run_gpui_ghostex_cli_settings_action_quietly(
+        &mut self,
+        action: GpuiGhostexCliSettingsAction,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.run_gpui_ghostex_cli_settings_action_with_toast(action, false, cx);
+    }
+
+    fn run_gpui_ghostex_cli_settings_action_with_toast(
+        &mut self,
+        action: GpuiGhostexCliSettingsAction,
+        toast: bool,
+        cx: &mut gpui::Context<Self>,
+    ) {
         /*
         CDXC:Cli 2026-06-24-12:56:
         Settings integration actions in GPUI must mutate only bounded local install targets and then refresh the shared `ghostexCliStatus` contract. CLI repair uses packaged app resources only; skill install/uninstall actions use fixed Ghostex-owned command or directory targets and never accept React-provided shell text, paths, stdout, stderr, URLs, tokens, or environment data.
@@ -363,12 +383,14 @@ impl GhostexGpuiApp {
                     result.message.as_str(),
                     cx,
                 );
-                this.dispatch_gpui_app_modal_toast(
-                    result.toast_level,
-                    result.toast_title,
-                    result.message.as_str(),
-                    cx,
-                );
+                if toast {
+                    this.dispatch_gpui_app_modal_toast(
+                        result.toast_level,
+                        result.toast_title,
+                        result.message.as_str(),
+                        cx,
+                    );
+                }
             });
         })
         .detach();

@@ -406,7 +406,11 @@ fn run_head(state: &mut ChatState, context: &ChatContext) -> Vec<Effect> {
                 ),
             };
             if !submission.drawn {
-                let drawn = draw_agent_send(state, context, &body, &images);
+                // gxserver turns each review comment pill into its block before the agent reads
+                // it (send_session_chat_message_with_draft), so the echo shows the same text the
+                // transcript will record.
+                let echoed = crate::composer::review_comments::expand_review_comments(&body);
+                let drawn = draw_agent_send(state, context, &echoed, &images);
                 adopt_send(state, drawn);
             }
             if hold_for_gate(state, context) {

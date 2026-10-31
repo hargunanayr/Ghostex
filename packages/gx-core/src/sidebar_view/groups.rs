@@ -16,8 +16,8 @@ use super::sections::{project_session_sections, SectionLayout};
 use super::tags::matches_tag_filters;
 use super::threads::nest_threads;
 use super::view::{
-    GroupCore, GroupSummary, ProjectContextView, RemoteMachineView, SessionRow, SessionView,
-    ThreadTally, WorktreeView,
+    GroupCore, GroupSummary, NeedsYou, ProjectContextView, RemoteMachineView, SessionRow,
+    SessionView, ThreadTally, WorktreeView,
 };
 
 /// Where a group's rows come from.
@@ -322,10 +322,11 @@ pub(crate) fn group_summary(sessions: &[SessionView]) -> GroupSummary {
         if row.activity == "working" {
             summary.working_count += 1;
         }
-        if row.pending_question_count > 0 {
-            summary.question_count += 1;
-        } else if row.activity == "attention" {
-            summary.attention_count += 1;
+        match row.needs_you() {
+            Some(NeedsYou::Approval) => summary.approval_count += 1,
+            Some(NeedsYou::Question) => summary.question_count += 1,
+            Some(NeedsYou::Attention) => summary.attention_count += 1,
+            None => {}
         }
         if row.shows_background_work() {
             summary.background_work_count += 1;
@@ -407,5 +408,54 @@ fn count_label(count: i64, singular: &str) -> String {
         singular.to_string()
     } else {
         format!("{singular}s")
+    }
+}
+
+#[cfg(test)]
+mod summary_tests {
+    use std::sync::Arc;
+
+    use super::group_summary;
+    use crate::sidebar_view::view::{RowNesting, SessionRow, SessionView};
+
+    fn view(row: SessionRow) -> SessionView {
+        SessionView {
+            row: Arc::new(row),
+            is_focused: false,
+            is_visible: false,
+            is_multi_selected: false,
+            nesting: RowNesting::default(),
+        }
+    }
+
+    /// A header counts a row waiting for approval in its own red count only, even when it also has
+    /// a question or sits in attention; the pink and blue counts keep the rest.
+    #[test]
+    fn approval_rows_count_red_only() {
+        let summary = group_summary(&[
+            view(SessionRow {
+                activity: "attention".to_string(),
+                pending_question_count: 1,
+                awaiting_approval: true,
+                ..SessionRow::default()
+            }),
+            view(SessionRow {
+                activity: "attention".to_string(),
+                pending_question_count: 1,
+                ..SessionRow::default()
+            }),
+            view(SessionRow {
+                activity: "attention".to_string(),
+                ..SessionRow::default()
+            }),
+        ]);
+        assert_eq!(
+            (
+                summary.approval_count,
+                summary.question_count,
+                summary.attention_count
+            ),
+            (1, 1, 1)
+        );
     }
 }

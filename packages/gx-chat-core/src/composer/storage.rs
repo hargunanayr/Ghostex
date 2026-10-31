@@ -33,6 +33,10 @@ pub const DRAFTS_STORE: &str = "drafts";
 pub const SUMMARY_STORE: &str = "summary";
 /// The per-session verbose override.
 pub const VERBOSE_STORE: &str = "verbose";
+/// The per-session Simple override (`"1"`, `"0"` or absent, like `verbose`): with `verbose` it is
+/// the chat's detail level, Simple, Detailed or Verbose (CDXC:SessionChat 2026-10-29 DECISION in
+/// transcript/actions.rs). The phone keeps its own Simple switch and never reads this store.
+pub const SIMPLE_STORE: &str = "simple";
 /// `composer('submitted', {text, version})`: clear the stored draft when it still holds the
 /// submitted revision, record the send in the host's sent history, and flush.
 ///
@@ -153,11 +157,7 @@ pub fn decode_summary(raw: Option<&str>) -> bool {
 
 /// What the summary record is written as.
 pub fn encode_summary(summary_mode: bool) -> &'static str {
-    if summary_mode {
-        "1"
-    } else {
-        "0"
-    }
+    if summary_mode { "1" } else { "0" }
 }
 
 /// `"1"` and `"0"` pin the override; anything else follows the Ghostex setting.
@@ -171,11 +171,7 @@ pub fn decode_verbose(raw: Option<&str>) -> Option<bool> {
 
 /// What the verbose record is written as.
 pub fn encode_verbose(verbose: bool) -> &'static str {
-    if verbose {
-        "1"
-    } else {
-        "0"
-    }
+    if verbose { "1" } else { "0" }
 }
 
 /// `ghostex.sessionChat.summary.<sessionKey>`, as the store plus the suffix the host prefixes.
@@ -252,6 +248,14 @@ pub fn summary_key(session_key: &str) -> crate::event::StorageKey {
 pub fn verbose_key(session_key: &str) -> crate::event::StorageKey {
     crate::event::StorageKey {
         store: VERBOSE_STORE.to_string(),
+        suffix: session_key.to_string(),
+    }
+}
+
+/// `ghostex.sessionChat.simple.<sessionKey>`, written and read like the verbose record.
+pub fn simple_key(session_key: &str) -> crate::event::StorageKey {
+    crate::event::StorageKey {
+        store: SIMPLE_STORE.to_string(),
         suffix: session_key.to_string(),
     }
 }

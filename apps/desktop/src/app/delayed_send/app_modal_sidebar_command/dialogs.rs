@@ -23,6 +23,9 @@ impl GhostexGpuiApp {
             "remoteAppUpdate" => {
                 self.handle_remote_app_update_command(command, cx);
             }
+            "requestRemoteMachineConnectStates" => {
+                self.handle_request_remote_machine_connect_states(cx);
+            }
             "addProjectDialogRequest" => {
                 self.handle_gpui_add_project_dialog_request_message(command, cx);
             }

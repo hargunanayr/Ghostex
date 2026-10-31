@@ -6,8 +6,8 @@ use crate::app::hotkeys::{
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, App, Context, EntityInputHandler as _, Focusable as _, FontWeight,
-    InteractiveElement, IntoElement, KeyBinding, ParentElement, StatefulInteractiveElement, Styled,
-    Window, div, px,
+    InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement, Styled, Window,
+    div, px,
 };
 use gpui_component::tooltip::ManagedTooltipPlacement;
 use serde::Deserialize;
@@ -160,15 +160,17 @@ pub(super) fn register(cx: &mut App) {
     {
         // Bound in the focused field's context too, the way search and zoom are: a binding on
         // `NativeChat` alone loses by depth to any binding of the same chord on the chat box.
-        cx.bind_keys(["NativeChat", "NativeChat > Input"].map(|context| {
-            KeyBinding::new(
+        let bindings = ["NativeChat", "NativeChat > Input"].map(|context| {
+            crate::app::hotkeys::gpui_runtime_key_binding(
                 &shortcut,
                 ScrollChatToBottom {
                     shortcut: shortcut.clone(),
                 },
                 Some(context),
+                cx,
             )
-        }));
+        });
+        cx.bind_keys(bindings);
     }
 }
 
@@ -230,11 +232,7 @@ impl NativeChatView {
     /// bottom: the transcript follows its tail again. Called from the transcript's capture-phase
     /// wheel listener, before the list applies the same event, which keeps following on a downward
     /// scroll.
-    pub(super) fn follow_tail_if_wheel_reaches_end(
-        &self,
-        event: &gpui::ScrollWheelEvent,
-        scale: f32,
-    ) {
+    pub(super) fn follow_tail_if_wheel_reaches_end(&self, event: &gpui::ScrollEvent, scale: f32) {
         if self.list.is_following_tail() || self.disclosure_motion.borrow().follow_paused {
             return;
         }
@@ -268,8 +266,7 @@ impl NativeChatView {
 
     /// What still floats over the transcript's bottom edge: the Escape and "Agent was interrupted"
     /// toasts. "Scroll to bottom" and "Previous question" are icon pills on the working card
-    /// (working_card.rs, chat_pills.rs), which a transcript-only view (the phone's GPUI transcript)
-    /// draws too.
+    /// (working_card.rs, chat_pills.rs).
     pub(super) fn scroll_bottom_button(&self, cx: &Context<Self>) -> AnyElement {
         let glass = crate::app::helpers::window_glass_active_for(self.main_window);
         let p = ChatAppearance::current(&self.snapshot).on_window_glass(glass);
@@ -402,7 +399,7 @@ fn tone_colors(tone: &ErrorTone, light: bool) -> (gpui::Hsla, gpui::Hsla, gpui::
 }
 
 impl NativeChatView {
-    /// The toasts' (and a transcript-only view's scroll pill's) frosted window.
+    /// The toasts' frosted window.
     ///
     /// CDXC:SessionChat 2026-09-23 DECISION:
     /// User: the scroll-to-bottom pill "should match the color and everything of the composer box", then, when the composer's see-through wash let the transcript read through it, "can't we make it's bg more frosted glass??". Under window glass the pill wears the composer's wash and border over a real blur of what is behind it. Supersedes the same day's opaque menu tone and the plain see-through wash.

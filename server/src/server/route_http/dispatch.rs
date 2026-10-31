@@ -76,6 +76,10 @@ pub(in crate::server) async fn route_http(
         return crate::visual_pages::save_draft(state.clone(), path, body).await;
     }
 
+    if method == Method::POST && crate::visual_pages::is_notice_route(&path) {
+        return crate::visual_pages::dismiss_page_notice(state.clone(), path, body).await;
+    }
+
     // Composio's sign-in comes back in the user's browser, which has no gxserver token; the
     // handler trusts only the OAuth `state` a workspace's own sign-in issued.
     if method == Method::GET

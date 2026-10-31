@@ -43,6 +43,8 @@ pub(crate) struct PullRequestWorkflow {
     pub(crate) staged_only: bool,
     pub(crate) has_commit: bool,
     pub(crate) message: String,
+    /// On the default branch: move the work onto a new branch first.
+    pub(crate) create_branch: bool,
 }
 
 impl GhostexGpuiApp {
@@ -424,6 +426,7 @@ impl GhostexGpuiApp {
             workflow.has_commit,
             workflow.message.trim(),
             &selected,
+            workflow.create_branch,
         );
         let remote = scope.is_remote();
         let started = self.git_start_prompt_agent(

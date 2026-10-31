@@ -102,6 +102,7 @@ pub fn settle(state: &mut ChatState, context: &ChatContext, transcript: &[ChatMe
                 prompt_id: String::new(),
                 state: delivery.to_string(),
                 error_message: None,
+                wait_reason: None,
             }),
             text,
             sent_at_ms: context.now_millis(),
@@ -132,6 +133,37 @@ mod tests {
         );
         assert_eq!(echoes[0].queued_prompt_id.as_deref(), Some("a"));
         assert_eq!(echoes[0].startup_delivery.as_ref().unwrap().state, "queued");
+    }
+
+    #[test]
+    fn a_waiting_row_carries_why_it_waits() {
+        let reason = "Waiting: the agent's input box can't be read yet, trying again.";
+        let queue = vec![json!({
+            "id": "a", "text": ANSWERS, "state": "queued", "waitReason": reason
+        })];
+        let echoes = pending_with_startup_sends(&[], &queue, Some("claude"));
+        let delivery = echoes[0].startup_delivery.as_ref().unwrap();
+        assert_eq!(delivery.wait_reason.as_deref(), Some(reason));
+        assert_eq!(
+            serde_json::to_value(delivery).unwrap()["waitReason"],
+            json!(reason)
+        );
+        // The reason moves on with the ladder, and leaves when gxserver drops it.
+        let next = vec![json!({"id": "a", "text": ANSWERS, "state": "queued"})];
+        let echoes = pending_with_startup_sends(&echoes, &next, Some("claude"));
+        assert_eq!(
+            echoes[0].startup_delivery.as_ref().unwrap().wait_reason,
+            None
+        );
+        // The queue strip's row keeps it too.
+        let row: crate::document::QueuedPrompt = serde_json::from_value(
+            json!({"id": "b", "text": "x", "state": "queued", "createdAt": "", "updatedAt": "", "waitReason": reason}),
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(&row).unwrap()["waitReason"],
+            json!(reason)
+        );
     }
 
     #[test]

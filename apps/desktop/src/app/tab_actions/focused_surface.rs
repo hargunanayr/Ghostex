@@ -87,7 +87,8 @@ impl GhostexGpuiApp {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        if self.active_mode == mode {
+        // Claude's page is on screen in the sessions column's place (app/claude_web/takeover.rs).
+        if self.view_page_on_screen(mode) {
             if mode == TitlebarMode::Terminal {
                 if self.seed_terminal_view_for_open(cx) {
                     self.focus_command_pane(cx);
@@ -108,7 +109,9 @@ impl GhostexGpuiApp {
                 | TitlebarMode::Kanban
                 | TitlebarMode::Automate
                 | TitlebarMode::Manage
-                | TitlebarMode::BotFeed | TitlebarMode::GhostOverview
+                | TitlebarMode::BotFeed
+                | TitlebarMode::GhostOverview
+                | TitlebarMode::Changes
                 | TitlebarMode::Work
                 | TitlebarMode::Extension(_) => ShellFocusTarget::ProjectEditorSurface(mode),
             };
@@ -116,6 +119,11 @@ impl GhostexGpuiApp {
             if mode == TitlebarMode::Browser {
                 self.sync_active_browser_tab_to_surface(window, cx);
             } else {
+                // A view shown asleep never went through `activate_mode`, so its extension server
+                // may not be running yet.
+                if let TitlebarMode::Extension(id) = mode {
+                    self.ensure_extension_view_runtime_for_current_context(id, cx);
+                }
                 self.ensure_project_workarea_runtime_cef_surfaces_for_current_context(cx);
                 self.update_active_mode_cef_child_visibility(cx);
             }
@@ -129,7 +137,7 @@ impl GhostexGpuiApp {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> bool {
-        if self.active_mode != mode {
+        if !self.view_page_on_screen(mode) {
             return false;
         }
 
@@ -167,7 +175,9 @@ impl GhostexGpuiApp {
             | TitlebarMode::Kanban
             | TitlebarMode::Automate
             | TitlebarMode::Manage
-            | TitlebarMode::BotFeed | TitlebarMode::GhostOverview
+            | TitlebarMode::BotFeed
+            | TitlebarMode::GhostOverview
+            | TitlebarMode::Changes
             | TitlebarMode::Work
             | TitlebarMode::Extension(_) => ShellFocusTarget::ProjectEditorSurface(mode),
             TitlebarMode::Agents | TitlebarMode::Terminal => return false,
@@ -346,11 +356,15 @@ impl GhostexGpuiApp {
                 }
             }
             FocusedSurfaceCloseDecision::CloseViewTab(mode) => {
-                self.close_view_tab(mode, window, cx);
+                match (mode, self.code_windows.active) {
+                    // One of Code's extra windows closes on its own, not with the Code tab.
+                    (TitlebarMode::Source, Some(id)) => self.close_code_window(id, window, cx),
+                    _ => self.close_view_tab(mode, window, cx),
+                }
             }
             FocusedSurfaceCloseDecision::CloseViewPanel => {
                 if self.view_picker_open() {
-                    self.close_view_panel(window, cx);
+                    self.close_view_panel(cx);
                 }
             }
             FocusedSurfaceCloseDecision::CloseBrowserActiveTab => {

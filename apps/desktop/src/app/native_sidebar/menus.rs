@@ -8,8 +8,11 @@ use gpui::{
     AnyElement, Bounds, FontWeight, InteractiveElement, IntoElement, MouseButton, ParentElement,
     Pixels, Point, StatefulInteractiveElement, Styled, Window, deferred, div, px,
 };
+use gpui_component::scroll::{Scrollbar, ScrollbarMode};
 use gpui_component::{Root, h_flex, v_flex};
 use serde_json::Value;
+
+pub(crate) use super::menu_state::menu_left_at_button;
 
 /// The gap between a sidebar row or button and the menu hung from it.
 pub(crate) const SIDEBAR_MENU_OWNER_GAP: f32 = 3.0;
@@ -34,6 +37,9 @@ pub(crate) struct SidebarMenuOpener {
     /// Where the press that opened it went down (`press_position`), to tell the press that
     /// dismissed an open menu from a new one.
     pub(crate) press: Option<Point<Pixels>>,
+    /// Makes it a dropdown no taller than this (unscaled), always below the owner, its rows
+    /// scrolling inside it.
+    pub(crate) max_height: Option<f32>,
 }
 
 impl SidebarMenuOpener {
@@ -46,6 +52,7 @@ impl SidebarMenuOpener {
             gap: SIDEBAR_MENU_OWNER_GAP,
             trigger: None,
             press: None,
+            max_height: None,
         }
     }
 
@@ -76,6 +83,12 @@ impl SidebarMenuOpener {
     ) -> Self {
         self.trigger = Some(trigger.into());
         self.press = press;
+        self
+    }
+
+    /// The same, as a dropdown capped at `max_height` (unscaled).
+    pub(crate) fn capped(mut self, max_height: f32) -> Self {
+        self.max_height = Some(max_height);
         self
     }
 }
@@ -113,6 +126,7 @@ impl GhostexGpuiApp {
             position,
             SidebarMenuPlacement::Pointer,
             None,
+            None,
             scale,
             window,
             cx,
@@ -138,11 +152,36 @@ impl GhostexGpuiApp {
         };
         let anchor = Point::new(opener.owner.left(), opener.owner.bottom());
         let toggle = opener.trigger.map(|trigger| (trigger, opener.press));
-        Self::open_native_sidebar_menu(items, anchor, placement, toggle, scale, window, cx);
+        let max_height = opener.max_height.map(|height| px(height * scale));
+        Self::open_native_sidebar_menu(
+            items, anchor, placement, toggle, max_height, scale, window, cx,
+        );
     }
 
     /// CDXC:Sidebar 2026-09-21 DECISION:
     /// User: the sidebar menu drops down from its trigger button rather than opening where the pointer was: its right edge lines up with the button's right edge, and it sits below the button with a gap (4px since 2026-09-25, `HEADER_MENU_TRIGGER_GAP`). Clicking the button again closes it.
+    /// The More menu with its Collapse All row saying what the next press does to the Unified
+    /// groups, which fold without the menu being rebuilt.
+    pub(crate) fn native_sidebar_more_menu_now(&self, items: &Value) -> Value {
+        let mut items = items.clone();
+        let all_folded = self.native_sidebar.unified.as_ref().is_some_and(|unified| {
+            let saved = &self.gx_store.unified_sidebar.saved;
+            !unified.groups.is_empty()
+                && unified
+                    .groups
+                    .iter()
+                    .all(|group| saved.folded_groups.contains(&group.repo_key))
+        });
+        if all_folded && let Some(rows) = items.as_array_mut() {
+            for row in rows {
+                if row["command"]["action"] == ghostex_gx_core::UNIFIED_TOGGLE_GROUPS_ACTION {
+                    row["label"] = Value::from("Expand All");
+                }
+            }
+        }
+        items
+    }
+
     pub(crate) fn toggle_native_sidebar_more_menu(
         items: &Value,
         trigger: Bounds<Pixels>,
@@ -160,6 +199,7 @@ impl GhostexGpuiApp {
                 gap: crate::app::consts::HEADER_MENU_TRIGGER_GAP,
                 trigger: None,
                 press: None,
+                max_height: None,
             }
             .toggled_by(SIDEBAR_MORE_TRIGGER, Some(press)),
             scale,
@@ -219,6 +259,7 @@ impl GhostexGpuiApp {
                 fallback,
                 SidebarMenuPlacement::Pointer,
                 trigger,
+                None,
                 scale,
                 window,
                 cx,
@@ -243,11 +284,13 @@ impl GhostexGpuiApp {
         self.close_native_sidebar_menu(window, cx);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn open_native_sidebar_menu(
         items: &Value,
         position: Point<Pixels>,
         placement: SidebarMenuPlacement,
         toggle: Option<(String, Option<Point<Pixels>>)>,
+        max_height: Option<Pixels>,
         scale: f32,
         window: &mut Window,
         cx: &mut gpui::App,
@@ -327,6 +370,7 @@ impl GhostexGpuiApp {
                         account_panel,
                         panels: vec![SidebarMenuPanel {
                             placement,
+                            max_height,
                             ..SidebarMenuPanel::new(items, position)
                         }],
                         focus,
@@ -638,7 +682,15 @@ impl GhostexGpuiApp {
             .map(|bounds| bounds.bottom())
             .max()
             .unwrap_or(top);
-        let mut layers = div().relative().w(right - left).h(bottom - top);
+        // A panel alone in its frosted host fills the host window where the window can come out
+        // taller than the panel (`hosted_menu_fills_window`).
+        let fill_window =
+            only.is_some() && crate::app::window::frosted_host::hosted_menu_fills_window();
+        let mut layers = div()
+            .relative()
+            .w(right - left)
+            .h(bottom - top)
+            .when(fill_window, |layers| layers.size_full());
         let view = cx.entity();
         for (panel_index, panel) in panels.iter().enumerate() {
             if only.is_some_and(|only| only != panel_index) {
@@ -669,11 +721,14 @@ impl GhostexGpuiApp {
                     px(12.0 * scale + 2.0),
                 ))
                 .id(format!("native-sidebar-menu-panel-{panel_index}"))
-                .absolute()
-                .left(relative.x)
-                .top(relative.y)
                 .w(bounds.size.width)
-                .max_h(bounds.size.height)
+                .map(|content| {
+                    if fill_window {
+                        content.h_full()
+                    } else {
+                        content.max_h(bounds.size.height)
+                    }
+                })
                 .overflow_y_scroll()
                 .track_scroll(&panel.scroll)
                 .occlude()
@@ -908,7 +963,20 @@ impl GhostexGpuiApp {
                 );
                 offset += if heading { 24.0 } else { 34.0 };
             }
-            layers = layers.child(content);
+            // The bar shows only while the rows scroll, like the agent picker's (new_thread_picker.rs).
+            layers = layers.child(
+                div()
+                    .absolute()
+                    .left(relative.x)
+                    .top(relative.y)
+                    .when(fill_window, |panel| panel.size_full())
+                    .child(content)
+                    .child(
+                        Scrollbar::vertical(&panel.scroll)
+                            .mode(ScrollbarMode::Scrolling)
+                            .thickness(px(crate::app::consts::TITLEBAR_DROPDOWN_SCROLLBAR_WIDTH)),
+                    ),
+            );
         }
         Some((
             layers,

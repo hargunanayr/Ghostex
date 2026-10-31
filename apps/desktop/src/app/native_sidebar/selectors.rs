@@ -128,11 +128,11 @@ impl GhostexGpuiApp {
                     SelectorsPlacement::ProjectColumn { vertical: true, .. } => row.flex_col().items_center().py(px(6.0 * scale)),
                 })
                 .when(user_spaces.is_empty(), |row| row.child(h_flex().id("native-sidebar-create-space").role(gpui::Role::Button).aria_label("Create space").flex_shrink_0().h(px(28.0 * scale)).px(px(if vertical { 6.0 } else { 10.0 } * scale)).gap(px(6.0 * scale)).rounded(px(6.0 * scale)).border_1().border_color(appearance.muted.opacity(0.25)).text_size(px(12.0 * scale))
-                    .child(titlebar_svg_icon("titlebar/plus.svg", 14.0 * scale, appearance.muted)).when(!vertical, |button| button.child("Create space"))
+                    .text_color(appearance.chrome_label).child(titlebar_svg_icon("titlebar/plus.svg", 14.0 * scale, appearance.chrome_icon)).when(!vertical, |button| button.child("Create space"))
                     .on_click(cx.listener(|app, _, _, cx| { cx.stop_propagation(); app.dispatch_native_sidebar_ui(json!({"type": "editSpace"}), cx); }))))
                 .children(visible.into_iter().chain(snapshot.spaces.iter().filter(|space| space.id == "other")).map(|space| self.render_native_sidebar_space(space, &visible_ids, appearance, cx)))
                 .when(overflow, |row| row.child(div().id("native-sidebar-more-spaces").on_prepaint(super::menus::record_menu_owner(&more_owner)).role(gpui::Role::Button).aria_label("More spaces").size(px(28.0 * scale)).flex().items_center().justify_center().rounded(px(6.0 * scale)).hover(|row| row.bg(appearance.hover))
-                    .child(titlebar_svg_icon("titlebar/dots.svg", 16.0 * scale, appearance.muted))
+                    .child(titlebar_svg_icon("titlebar/dots.svg", 16.0 * scale, appearance.chrome_icon))
                     .on_click(cx.listener(move |_, event: &gpui::ClickEvent, window, cx| {
                         // CDXC:Spaces 2026-09-20 DECISION: User: the More menu lists the overflowing Spaces first and puts New Space last, under a separator.
                         let mut items: Vec<_> = hidden.iter().map(|space| json!({"label": space.name, "icon": space.icon, "iconColor": crate::app::window::space_editor_modal::space_display_color(&space.color, light), "checked": space.selected, "command": {"type": "selectSpace", "spaceId": space.id}})).collect();
@@ -162,10 +162,15 @@ impl GhostexGpuiApp {
             &space.color,
             appearance.light,
         );
-        let color = u32::from_str_radix(display_color.trim_start_matches('#'), 16)
-            .map(rgb)
-            .map(gpui::Hsla::from)
-            .unwrap_or(appearance.foreground);
+        // The single Gray Space takes the header's icon grey; the other colours stay their own.
+        let color = if crate::app::window::space_editor_modal::is_space_gray(&space.color) {
+            appearance.chrome_icon
+        } else {
+            u32::from_str_radix(display_color.trim_start_matches('#'), 16)
+                .map(rgb)
+                .map(gpui::Hsla::from)
+                .unwrap_or(appearance.foreground)
+        };
         let (selected_background, selected_outline) = space_tile_selected_colors(appearance);
         // The tile's own fill behind its status dots, for their rings (a selected tile is `selected_background`, the one holding the active session `appearance.selected`).
         let dot_group = format!("native-space-dots-{id}");
@@ -211,7 +216,8 @@ impl GhostexGpuiApp {
         let has_status = space.working_count > 0
             || space.attention_count > 0
             || space.background_work_count > 0
-            || space.question_count > 0;
+            || space.question_count > 0
+            || space.approval_count > 0;
         let icon = gpui::svg()
             .path(path)
             .size(px(16.0 * scale))
@@ -233,7 +239,7 @@ impl GhostexGpuiApp {
             .children(drop_position.map(|position| super::space_drag::insertion_line(position, scale)))
             // CDXC:Spaces 2026-09-22 DECISION: User: remove the numbers for now and match the dots exactly to the session card status dots. The 2026-09-25 overlap layout lives on `status_dot_stack`.
             .when(has_status, |row| row.child(h_flex().absolute().top(px(20.5 * scale)).left_0().w_full().justify_center().h(px(11.0 * scale))
-                .child(super::status::status_dot_stack(space.working_count, space.attention_count, space.background_work_count, space.question_count, scale, dot_backdrop))))
+                .child(super::status::status_dot_stack(space.working_count, space.attention_count, space.background_work_count, space.question_count, space.approval_count, scale, dot_backdrop))))
             .when(self.native_sidebar.pointer_inside && self.native_sidebar.menu.is_none() && !cx.has_active_drag(), |row| row.managed_discrete_tooltip_with_placement(tooltip_span.placement(), appearance.tooltip_delay, move |window, cx| super::tooltips::sidebar_free_width_tooltip(name.to_string(), tooltip_span, scale, window, cx)))
             .when(id != "other", |row| row.sidebar_drag_source(dragged, cx))
             .sidebar_drop_target("space", drag_id, None, cx)

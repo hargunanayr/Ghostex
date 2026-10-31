@@ -78,6 +78,27 @@ impl GhostexGpuiApp {
         false
     }
 
+    /// The page's agents arrive with the HUD (gx_store/host.rs), so there is nothing to refresh.
+    pub(crate) fn refresh_gpui_new_thread_picker_agents(&mut self, _cx: &mut Context<Self>) {}
+
+    /// Advanced Handoff's computers: a page reaches only the computer that serves it.
+    pub(crate) fn gpui_add_project_dialog_machine_options(&self) -> Value {
+        Value::Array(Vec::new())
+    }
+
+    /// Advanced Handoff never opens in a page, so neither does its
+    /// Add Project round trip.
+    pub(crate) fn open_gpui_add_project_modal(&mut self, _message: &Value, _cx: &mut Context<Self>) {}
+
+    /// The page draws no Handoff / Export dialog to show a branch notice in.
+    pub(crate) fn push_gpui_export_transcript_branch_notice(
+        &mut self,
+        _target: crate::app::window::ExportTranscriptRemoteTarget,
+        _line: Option<String>,
+        _cx: &mut Context<Self>,
+    ) {
+    }
+
     /// Attaching images from disk to a worktree's first prompt needs a file picker the page does not have.
     pub(crate) fn handle_gpui_pick_worktree_images_message(&mut self, cx: &mut Context<Self>) {
         self.dispatch_gpui_workspace_action_toast(

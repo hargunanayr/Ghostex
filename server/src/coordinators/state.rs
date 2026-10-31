@@ -246,6 +246,8 @@ pub struct ThreadScreenWait {
     blocking: bool,
     /// A question or an approval, which counts even while hooks say working.
     asks: bool,
+    /// A permission prompt or an approval read off the screen: the user's to grant.
+    approval: bool,
 }
 
 impl ThreadScreenWait {
@@ -275,9 +277,11 @@ impl ThreadScreenWait {
                 },
                 blocking: true,
                 asks: notice.kind == SESSION_CHAT_NOTICE_PERMISSION_PROMPT,
+                approval: notice.kind == SESSION_CHAT_NOTICE_PERMISSION_PROMPT,
             });
         }
-        let summary = prompt_summary(prompt?);
+        let prompt = prompt?;
+        let summary = prompt_summary(prompt);
         Some(Self {
             prompt: ThreadPrompt {
                 key: format!("screen:{}", stored_prompt_key(&summary)),
@@ -285,6 +289,7 @@ impl ThreadScreenWait {
             },
             blocking: false,
             asks: true,
+            approval: matches!(prompt, SessionChatInteractivePrompt::Approval { .. }),
         })
     }
 }
@@ -349,6 +354,12 @@ fn applicable_screen_wait(session: &Value, hook_working: bool) -> Option<ThreadS
     recorded_screen_wait(session).filter(|wait| wait.asks || !hook_working)
 }
 
+/// True when a thread's last screen reading shows a permission prompt or an approval, which only
+/// the user can grant (Empryo, Copilot and the other agents whose approvals exist only on screen).
+pub fn screen_waits_on_approval(session: &Value) -> bool {
+    recorded_screen_wait(session).is_some_and(|wait| wait.approval)
+}
+
 /// True when the thread waits on something its screen shows; the supervisor's transcript check
 /// does not overrule that, since the turn that asked is still open.
 pub fn waits_on_screen(session: &Value) -> bool {
@@ -374,7 +385,7 @@ pub fn waiting_prompt(session: &Value) -> Option<ThreadPrompt> {
 
 fn stored_prompt_key(stored: &str) -> String {
     use sha2::{Digest, Sha256};
-    format!("{:x}", Sha256::digest(stored.as_bytes()))
+    hex::encode(Sha256::digest(stored.as_bytes()))
         .chars()
         .take(16)
         .collect()

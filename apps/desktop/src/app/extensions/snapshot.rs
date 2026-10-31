@@ -104,6 +104,7 @@ impl GhostexGpuiApp {
                     this.extensions_snapshot = snapshot;
                     this.extension_projects = projects;
                     this.extension_session_details = session_details;
+                    this.coerce_active_mode_to_available_project_context(cx);
                     this.broadcast_extension_context_changes(cx);
                     this.start_pinned_extension_runtimes(pinned_popup_runtimes, cx);
                     cx.notify();

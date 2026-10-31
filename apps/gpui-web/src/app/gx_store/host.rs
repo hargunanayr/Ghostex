@@ -25,6 +25,8 @@ pub(crate) struct GxStoreHost {
     pub(crate) sidebar_ui: SidebarUiStore,
     /// The drawn list, under the desktop's field name so its executor files read it unchanged.
     pub(crate) sidebar_list: super::sidebar_list::SidebarList,
+    /// The Unified sidebar's per-machine lists, as on the desktop (`unified_sidebar.rs`).
+    pub(crate) unified_sidebar: super::unified_sidebar::UnifiedSidebarHost,
     pub(crate) menu_host: MenuHost,
     /// The desktop's record lines; the page writes none (`diagnostics.rs`).
     pub(crate) diagnostics: super::diagnostics::GxStoreDiagnostics,
@@ -290,6 +292,18 @@ impl GhostexGpuiApp {
         self.gx_store_after(output, cx);
     }
 
+    /// The web build's stand-in for the desktop's attention door (`gx_store/attention/host.rs`), which the shared sidebar calls when it opens a Ghost.
+    pub(crate) fn gx_store_acknowledge_attention(
+        &mut self,
+        session: ghostex_gx_core::SessionKey,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.gx_store_handle(
+            Event::Intent(ghostex_gx_core::Intent::AcknowledgeAttention { session }),
+            cx,
+        );
+    }
+
     /// A daemon frame: the client-owned documents' guards judge the daemon's copy, as the desktop's pump does (`gx_store/host.rs`), then the frame's changes are applied like any other.
     fn gx_store_after_frame(
         &mut self,
@@ -362,10 +376,10 @@ impl GhostexGpuiApp {
         let store = &mut self.gx_store;
         let ui = store.sidebar_ui.state().clone();
         let hud = store.runtime_facts.hud_value();
-        // The menus' facts, from the HUD and the launcher's stored default, as the desktop's `gx_store_menu_host` builds them. The page has no Keep Awake.
+        // The menus' facts, from the HUD and the launcher's stored picks, as the desktop's `gx_store_menu_host` builds them. The page has no Keep Awake.
         store.menu_host = MenuHost {
             agents: super::menu_host_lifted::launcher_agents(&hud["agents"]),
-            primary_agent_id: super::read_primary_agent_launcher_id(),
+            agent_choices: super::read_agent_choices(),
             global_commands: super::menu_host_lifted::header_commands(&hud["globalCommands"]),
             project_commands: super::menu_host_lifted::header_commands_by_project(
                 &hud["commandsByProject"],
@@ -400,6 +414,8 @@ impl GhostexGpuiApp {
         // The worktree dialog's agent list: the HUD's agents (the desktop reads the New Thread picker's list, which the page does not have).
         self.new_thread_picker_agents = hud["agents"].as_array().cloned();
         self.install_native_sidebar_snapshot(Arc::new(snapshot), cx);
+        let changes = std::mem::take(&mut self.gx_store.sidebar_list.last_changes);
+        self.gx_store_unified_sidebar_changed(&changes, cx);
         self.web_open_linked_session(cx);
         self.web_book_sidebar_deadline(cx);
         // A showing Quick Access republishes from the store it reads (`quick_access/host.rs`).
@@ -441,5 +457,7 @@ impl GxStoreHost {
             .flat_map(|group| group.core.sessions.iter())
             .find(|session| session.row.sidebar_session_id == sidebar_session_id)
             .and_then(|session| session.row.key.clone())
+            // A Unified sidebar card can be a session the Project list does not draw.
+            .or_else(|| self.unified_sidebar.session_key_for_row(sidebar_session_id))
     }
 }

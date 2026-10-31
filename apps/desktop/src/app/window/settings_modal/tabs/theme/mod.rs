@@ -325,13 +325,12 @@ impl ThemeCx {
         (self.visible)(key)
     }
 
-    /// `getSettingModificationProps(key)` with the advanced marker off (`advanced={false}`).
+    /// `getSettingModificationProps(key)` with the asterisk after the label.
     pub(super) fn spec_plain(&self, key: &str, label: &str, description: &str) -> RowSpec {
         RowSpec::new(label.to_string())
             .description(description.to_string())
             .keyed(&self.values, key)
             .marker_after_label()
-            .advanced(false)
     }
 
     /// `getSettingModificationProps(key)`.
@@ -452,7 +451,7 @@ impl ThemeTab {
                 t.spec_plain(
                     "themeSidebarContrast",
                     "Colourfulness",
-                    "How much of the colour shows in the sidebar and work area. Vivid is lighter and more colourful, Subtle is deeper and nearly neutral.",
+                    "How much of the colour shows in the sidebar and work area. Subtle is deeper and nearly neutral, Vivid lighter and more colourful, and in dark mode Full is the colour you picked itself.",
                 )
                 .icon(ICON_COLOURFULNESS),
                 Some(reset_key::<Self>("themeSidebarContrast")),
@@ -928,24 +927,36 @@ impl ThemeTab {
         .map(IntoElement::into_any_element)
     }
 
-    /// Related settings on General: each Open searches General for the row.
+    /// Related settings on the Chat, Sidebar & Sessions and Terminal pages: each Open searches
+    /// that page for the row.
     fn related_section(
         &mut self,
         p: &SettingsPalette,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let rows = [
-            ("Chat font and size", "Chat font", ICON_FONT),
-            ("Sidebar size", "Sidebar Interface Size", ICON_SIDEBAR),
+            (
+                "Chat font and size",
+                "Chat font",
+                ICON_FONT,
+                SettingsTabId::Chat,
+            ),
+            (
+                "Sidebar size",
+                "Sidebar Interface Size",
+                ICON_SIDEBAR,
+                SettingsTabId::Sidebar,
+            ),
             (
                 "Terminal background colour and image",
                 "Terminal background",
                 ICON_TERMINAL,
+                SettingsTabId::Terminal,
             ),
         ]
         .into_iter()
         .enumerate()
-        .map(|(index, (label, query, icon))| {
+        .map(|(index, (label, query, icon, tab))| {
             let button = settings_button(
                 p,
                 SharedString::from(format!("theme-related-{index}")),
@@ -958,7 +969,7 @@ impl ThemeTab {
                     let store = page.store.clone();
                     store.update(cx, |store, cx| {
                         store.set_search_query(query.to_string(), cx);
-                        store.set_active_tab(SettingsTabId::General, cx);
+                        store.set_active_tab(tab, cx);
                     });
                 },
                 cx,

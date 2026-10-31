@@ -28,6 +28,9 @@ pub(super) async fn route_agents_http(
         "/api/managedTools" => {
             managed_tools_http::handle(&state, endpoint.path, request_id, &body_json).await
         }
+        "/api/machineIntegrations" => {
+            machine_integrations_http::handle(&state, endpoint.path, request_id, &body_json).await
+        }
         "/api/agentbox" => {
             agentbox_http::handle(&state, endpoint.path, request_id, &body_json).await
         }

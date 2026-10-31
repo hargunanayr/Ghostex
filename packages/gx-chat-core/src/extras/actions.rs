@@ -43,7 +43,14 @@ pub fn handle_with_ids(
             vec![panels::write_tasks_collapsed(collapsed)]
         }
         ActionKind::ToggleAgentTasksCompleted => {
-            state.extras.panels.tasks_show_completed = flag(action, "expanded");
+            // `step` is how many "Show more" presses the list has had; 0 is the short form. An
+            // older client sends `expanded` instead.
+            state.extras.panels.tasks_done_step = action
+                .param("step")
+                .and_then(Value::as_u64)
+                .map_or(u32::from(flag(action, "expanded")), |step| {
+                    step.min(u32::MAX as u64) as u32
+                });
             Vec::new()
         }
         ActionKind::ToggleBackgroundTasks => {
@@ -118,6 +125,10 @@ pub fn handle_with_ids(
             vec![read_terminal_tail(request_id)]
         }
 
+        ActionKind::CopyReport => {
+            crate::extras::report::request(&mut state.extras.terminal_tail, next_request_id())
+        }
+
         ActionKind::OpenSubagent => {
             let Some(selector) = label(action, "selector") else {
                 return Vec::new();
@@ -185,7 +196,7 @@ pub fn handle(state: &mut ChatState, action: &UserAction, context: &ChatContext)
 }
 
 /// `POST /api/readSessionTerminalTail`.
-fn read_terminal_tail(request_id: u64) -> Effect {
+pub(crate) fn read_terminal_tail(request_id: u64) -> Effect {
     Effect::SendRpc {
         request_id,
         method: ChatRpcMethod::ReadSessionTerminalTail,

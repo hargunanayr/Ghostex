@@ -351,6 +351,97 @@ pub fn install_panic_hook() {
     }));
 }
 
+/// Full lines kept per `log` call site before its repeats are only counted.
+const LOG_RECORD_FULL_LINES_PER_SITE: u64 = 3;
+
+/// CDXC:Diagnostics 2026-10-26 WHY:
+/// The app installed no `log` logger, so every `log::error!` from GPUI and the other crates went
+/// nowhere; on 2026-10-25 the renderer failed every frame ("missing path intermediate texture")
+/// with a frozen window and an empty log. Errors from any crate and warnings from GPUI's own
+/// crates (`gpui*` targets: lost GPU device, fonts that fail to load, a11y tree faults) now go to
+/// `gpui-host-lifecycle.log` like the host's other unconditional errors. Warnings from the other
+/// crates stay off: usvg, html5ever, notify and the like warn about routine malformed input.
+/// Info and debug are cut by `log::set_max_level`, so those macros cost one atomic load. A call
+/// site writes its first three records in full, then one line with the count at 10, 100,
+/// 1,000 and so on, so a per-frame error adds a handful of lines, never a flood. A call site is
+/// its owned (target, file, line): `ResultExt::log_err` (gpui_util), GPUI's main error path,
+/// builds records whose file and module path are not `'static`, so a key on the static ones
+/// lost the file and made `log_err` errors from different files on the same line share a count.
+struct SupportLogRecords {
+    repeats: std::sync::Mutex<std::collections::HashMap<(String, String, u32), u64>>,
+}
+
+impl log::Log for SupportLogRecords {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() <= log::Level::Error
+            || (metadata.level() == log::Level::Warn && metadata.target().starts_with("gpui"))
+    }
+
+    fn log(&self, record: &log::Record) {
+        if !self.enabled(record.metadata()) {
+            return;
+        }
+        let file = record.file().or(record.module_path()).unwrap_or("unknown");
+        let line = record.line().unwrap_or(0);
+        let occurrence = {
+            let mut repeats = self
+                .repeats
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let count = repeats
+                .entry((record.target().to_owned(), file.to_owned(), line))
+                .or_insert(0);
+            *count += 1;
+            *count
+        };
+        let repeated = occurrence > LOG_RECORD_FULL_LINES_PER_SITE;
+        if repeated && !is_power_of_ten(occurrence) {
+            return;
+        }
+        let level = if record.level() == log::Level::Error {
+            "error"
+        } else {
+            "warning"
+        };
+        let event = if repeated {
+            format!("gpui.log.{level}Repeated")
+        } else {
+            format!("gpui.log.{level}")
+        };
+        write_entry(
+            GpuiSupportLog::HostLifecycle,
+            &event,
+            serde_json::json!({
+                "target": redact_crash_text(record.target(), MAX_SANITIZED_STRING_CHARS),
+                "location": format!("{}:{line}", redact_source_location(file)),
+                "message": redact_crash_text(&record.args().to_string(), MAX_CRASH_MESSAGE_CHARS),
+                "occurrence": occurrence,
+            }),
+        );
+    }
+
+    fn flush(&self) {}
+}
+
+fn is_power_of_ten(mut value: u64) -> bool {
+    while value >= 10 && value % 10 == 0 {
+        value /= 10;
+    }
+    value == 1
+}
+
+/// Routes `log` records into the support logs (see [`SupportLogRecords`]). Called once at
+/// startup, next to [`install_panic_hook`].
+pub fn install_log_records_sink() {
+    static LOGGER: std::sync::OnceLock<SupportLogRecords> = std::sync::OnceLock::new();
+    let logger = LOGGER.get_or_init(|| SupportLogRecords {
+        repeats: std::sync::Mutex::new(std::collections::HashMap::new()),
+    });
+    if log::set_logger(logger).is_ok() {
+        log::set_max_level(log::LevelFilter::Warn);
+    }
+}
+
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
     fn GhostexGpuiInstallUncaughtExceptionHandler();

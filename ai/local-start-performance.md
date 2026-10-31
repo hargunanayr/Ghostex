@@ -37,7 +37,7 @@ Every expensive step sits behind a content-hash stamp in `build/<arch>/build-cac
 
 ## Debug info (off by default)
 
-Every Rust build in the repository has no debug info and no symbol table, and on Windows the linker writes no `.pdb` (`CDXC:Build 2026-10-11 DECISION` in the root `.cargo/config.toml`; the phone's UniFFI libraries keep `strip = "debuginfo"`). A panic still logs its message and file:line; backtrace frames print as `<unknown>`.
+Every Rust build in the repository has no debug info and no symbol table, and on Windows the linker writes no `.pdb` (`CDXC:Build 2026-10-11 DECISION` in the root `.cargo/config.toml`). A panic still logs its message and file:line; backtrace frames print as `<unknown>`.
 
 When the user asks for crash-debugging info, build with it for that one build:
 

@@ -133,7 +133,7 @@ jobs:
           restore-keys: cargo-check-windows-${{ hashFiles('apps/desktop/Cargo.lock') }}-
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.4
       - name: Install pinned Zig
         shell: pwsh
         run: tooling/release-gpui/prepare-zig.ps1 -Arch x64

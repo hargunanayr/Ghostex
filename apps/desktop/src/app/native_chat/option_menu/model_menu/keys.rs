@@ -42,9 +42,17 @@ pub(super) fn register(cx: &mut gpui::App) {
             .iter()
             .map(|(_, letter)| letter.to_lowercase()),
     );
-    cx.bind_keys(keys.map(|key| {
-        gpui::KeyBinding::new(&key, ModelMenuKey { key: key.clone() }, Some(KEY_CONTEXT))
-    }));
+    let bindings: Vec<_> = keys
+        .map(|key| {
+            crate::app::hotkeys::gpui_runtime_key_binding(
+                &key,
+                ModelMenuKey { key: key.clone() },
+                Some(KEY_CONTEXT),
+                cx,
+            )
+        })
+        .collect();
+    cx.bind_keys(bindings);
 }
 
 /// CDXC:SessionChat 2026-09-24 DECISION:
@@ -82,13 +90,15 @@ fn bind_toggle_chord(cx: &mut gpui::App) {
     let Some(chord) = chord else {
         return;
     };
-    cx.bind_keys([gpui::KeyBinding::new(
+    let binding = crate::app::hotkeys::gpui_runtime_key_binding(
         &chord,
         ModelMenuKey {
             key: "toggle".into(),
         },
         Some(KEY_CONTEXT),
-    )]);
+        cx,
+    );
+    cx.bind_keys([binding]);
 }
 
 impl ChatOptionMenuPanel {

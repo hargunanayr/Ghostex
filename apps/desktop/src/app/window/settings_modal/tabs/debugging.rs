@@ -1,5 +1,5 @@
-//! The Debugging page (packages/core-ui/settings-modal/tabs/debugging.tsx (deleted 2026-10-01)), shown in the rail only
-//! with Show Advanced (or a search): Show debug UI controls, then the diagnostic log areas.
+//! The Debugging page (packages/core-ui/settings-modal/tabs/debugging.tsx (deleted 2026-10-01)), listed in the rail
+//! under its built-in extension: Show debug UI controls, then the diagnostic log areas.
 use super::super::fields::{
     FieldStates, RowSpec, SettingsPage, diagnostic_logging_field, reset_key, settings_section,
     toggle_field,

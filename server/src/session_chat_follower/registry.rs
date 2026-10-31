@@ -34,7 +34,14 @@ pub(crate) fn session_chat_agent_for_session(session: &Value) -> Option<String> 
 /// CDXC:SessionChat 2026-10-01 DECISION:
 /// User: "In the chat view we show Pi when I pick OMP, which is wrong." OMP writes Pi's transcript format and is decoded as Pi, but the chat's `agent` names the CLI the session runs, so every client labels it OMP and offers OMP's model picker. Transcript readers fold `omp` back to Pi.
 pub(crate) fn session_chat_display_agent_for_session(session: &Value) -> Option<String> {
-    let agent = session_chat_agent_for_session(session)?;
+    let Some(agent) = session_chat_agent_for_session(session) else {
+        // A Claude cloud session has no transcript here, but its chat greets it by name and takes
+        // its first message (CDXC:ClaudeCloud in packages/gx-core/src/claude_cloud.rs).
+        return session
+            .pointer("/runtimeSettings/claudeCloud")
+            .is_some_and(Value::is_object)
+            .then(|| crate::claude_cloud::CLAUDE_CLOUD_AGENT_ID.to_string());
+    };
     if agent == "pi"
         && crate::session_chat_composer::session_chat_composer_agent_id(session).as_deref()
             == Some("omp")
@@ -221,6 +228,13 @@ pub(crate) fn sync_session_chat_follower_for_session(
                     .get_session(&context_project_id, &context_session_id)
                     .ok()??;
                 let sessions = repository.list_presentation_sessions().ok()?;
+                if session.get("agentId").and_then(Value::as_str) == Some("dsh") {
+                    return crate::session_chat_dsh::discover_dsh_session_for_session(
+                        &repository,
+                        &session,
+                        &sessions,
+                    );
+                }
                 crate::session_chat_freebuff::discover_freebuff_chat_for_session(
                     &repository,
                     &session,
@@ -407,7 +421,7 @@ pub(crate) fn sync_session_chat_follower_for_session(
         let project_id = project_id.clone();
         let session_id = session_id.clone();
         Arc::new(move || {
-            crate::session_chat_queue::read_session_chat_queue_snapshot(
+            crate::session_chat_queue::read_session_chat_frame_snapshot(
                 &paths,
                 &project_id,
                 &session_id,

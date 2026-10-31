@@ -11,6 +11,9 @@ use gpui::{
 };
 use serde_json::{Value, json};
 
+/// A footer button's tooltip with the core's note wraps at this width, inside the picker's small window.
+const HINT_TOOLTIP_WIDTH: f32 = 220.0;
+
 /// An agent's logo in its brand tone; a white mark turns dark on the light surface.
 fn agent_logo(icon: &str, appearance: &ChatAppearance) -> gpui::Svg {
     let color = crate::app::helpers::workspace_tab_agent_icon_accent_color(icon);
@@ -376,6 +379,14 @@ impl ChatOptionMenuPanel {
                     Some(letter) => format!("{tooltip} ({letter})"),
                     None => tooltip,
                 };
+                // The core's note (Codex keeps Fast for new sessions) is a corner ⓘ on the icon and
+                // a line in the tooltip, so the row gets no wider.
+                let hint = setting["hint"].as_str().map(str::to_owned);
+                let tooltip = match &hint {
+                    Some(hint) => format!("{tooltip}\n{hint}"),
+                    None => tooltip,
+                };
+                let wraps = hint.is_some();
                 // CDXC:SessionChat 2026-09-24 DECISION:
                 // User: the footer's values ("Default", "Medium") must not be cut short. Reasoning, Context Window and Fast keep their full width and grow into the spare room; only the Account button and labelled option buttons give way and truncate.
                 let keeps_width = matches!(
@@ -408,7 +419,20 @@ impl ChatOptionMenuPanel {
                         .when(lit, |button| button.bg(palette.ink(0.11)))
                         .when(shaking, |button| button.relative().left(px(shake * scale)))
                         .tooltip(move |window, cx| {
-                            gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+                            if wraps {
+                                // The picker is its own small window, so a long note wraps inside it.
+                                let tooltip = tooltip.clone();
+                                gpui_component::tooltip::Tooltip::element(move |_, _| {
+                                    div()
+                                        .w(px(HINT_TOOLTIP_WIDTH * scale))
+                                        .whitespace_normal()
+                                        .child(tooltip.clone())
+                                })
+                                .build(window, cx)
+                            } else {
+                                gpui_component::tooltip::Tooltip::new(tooltip.clone())
+                                    .build(window, cx)
+                            }
                         })
                         .on_mouse_move(cx.listener(move |panel, _, _, cx| {
                             if let Some(state) = panel.model_menu.as_mut()
@@ -458,6 +482,17 @@ impl ChatOptionMenuPanel {
                                                 .font_weight(gpui::FontWeight::BOLD)
                                                 .text_color(palette.surface)
                                                 .child(letter),
+                                        )
+                                    })
+                                    .when(hint.is_some(), |icon| {
+                                        icon.child(
+                                            svg()
+                                                .absolute()
+                                                .right(px(-6.0 * scale))
+                                                .top(px(-5.0 * scale))
+                                                .path("titlebar/info-circle.svg")
+                                                .size(px(9.0 * scale))
+                                                .text_color(palette.muted),
                                         )
                                     }),
                             ),

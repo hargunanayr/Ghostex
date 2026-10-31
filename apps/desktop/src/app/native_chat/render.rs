@@ -10,8 +10,8 @@ use gpui::{
 use serde_json::json;
 
 impl NativeChatView {
-    /// Decides this frame's `held_text_width`: while a window panel slides
-    /// (`terminal_element::grid_resize_held`) and the pane's width would change the transcript's
+    /// Decides this frame's `held_text_width`: while a window panel or the docked Session details
+    /// column slides (`terminal_element::grid_resize_held`, `session_details.motion`) and the pane's width would change the transcript's
     /// text width, the rows keep the width they had before the slide, centred; the settling frame
     /// gives them the new one.
     ///
@@ -26,7 +26,9 @@ impl NativeChatView {
             Some(ratio) => pane * ratio,
             None => pane.min(768.0 * p.scale),
         };
-        if crate::terminal_element::grid_resize_held() {
+        if crate::terminal_element::grid_resize_held()
+            || self.session_details.motion.frame().animating
+        {
             self.held_text_width = self
                 .settled_text_width
                 .filter(|settled| (settled - natural).abs() > 0.5);
@@ -71,18 +73,6 @@ impl NativeChatView {
         cx.notify();
     }
 
-    /// Draws the transcript region alone, for a host that draws the composer and its cards itself
-    /// (see the `transcript_only` field). Only the phone's crate calls it.
-    #[allow(dead_code)]
-    pub(crate) fn set_transcript_only(&mut self, transcript_only: bool, cx: &mut Context<Self>) {
-        if self.transcript_only == transcript_only {
-            return;
-        }
-        self.transcript_only = transcript_only;
-        self.list.remeasure();
-        cx.notify();
-    }
-
     pub(crate) fn transcript_scrolled_to_top(&self) -> bool {
         let top = self.list.logical_scroll_top();
         top.item_ix == 0 && top.offset_in_item <= px(0.0)
@@ -91,19 +81,15 @@ impl NativeChatView {
 
 impl Render for NativeChatView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        #[cfg(target_arch = "wasm32")]
-        crate::app::helpers::indicator_animation::redraw_probe(format!(
-            "render chat {:?}",
-            cx.entity_id()
-        ));
         super::scroll_bottom::register(cx);
         super::search::register(cx);
         super::zoom::register(cx);
         self.last_render = Some(web_time::Instant::now());
         self.schedule_row_detail_sync(window, cx);
         self.refresh_issue_links(cx);
+        self.refresh_links_pill(cx);
         self.note_drawn_in(window, cx);
-        if self.maximized_window.is_none() && !self.transcript_only {
+        if self.maximized_window.is_none() {
             self.ensure_input(window, cx);
         }
         self.sync_form_inputs(window, cx);
@@ -112,9 +98,10 @@ impl Render for NativeChatView {
             crate::app::helpers::window_glass_active_for(self.main_window),
         );
         let s = p.scale;
-        self.hold_text_width_while_sliding(&p);
-        // Docked, floating or none: decided before anything measures the transcript's width.
+        // Docked, floating or none: decided before anything measures the transcript's width, and
+        // before the hold below reads whether the docked column is sliding.
         self.sync_session_details(&p, window, cx);
+        self.hold_text_width_while_sliding(&p);
         self.sync_search_scroll();
         self.sync_files_links_jump();
         self.sync_open_question_jump(window);
@@ -122,12 +109,6 @@ impl Render for NativeChatView {
         // A card above the composer that is opening or closing needs the next frame; the
         // transcript's rows ask for theirs as they are drawn.
         if self.disclosure_motion.borrow().running() {
-            #[cfg(target_arch = "wasm32")]
-            crate::app::helpers::indicator_animation::redraw_probe(format!(
-                "raf {}:{}",
-                file!(),
-                line!()
-            ));
             window.request_animation_frame();
         }
         self.sync_disclosure_anchor(window);
@@ -151,7 +132,7 @@ impl Render for NativeChatView {
         };
         let state = self.snapshot.clone();
         let error = self.error.clone();
-        self.transcript_inset = if maximized || self.transcript_only {
+        self.transcript_inset = if maximized {
             0.0
         } else {
             self.composer_frame(cx).transcript_inset
@@ -183,9 +164,7 @@ impl Render for NativeChatView {
                     .into_any_element(),
             )
         };
-        let composer = if self.transcript_only {
-            div().into_any_element()
-        } else if !covered {
+        let composer = if !covered {
             self.render_composer_host(cx)
         } else if maximized {
             div().h(px(148.0 * s)).into_any_element()
@@ -217,7 +196,7 @@ impl Render for NativeChatView {
         }
         let subagent_viewer = self.render_subagent_viewer(&p, window, cx);
         let edit_menu = self.edit_menu(window, cx);
-        let session_details_dock = self.render_session_details_dock(&p, cx);
+        let session_details_dock = self.render_session_details_dock(&p, window, cx);
         let pane_bounds = self.session_details_pane_bounds();
         let chat = div()
             .id("native-session-chat")

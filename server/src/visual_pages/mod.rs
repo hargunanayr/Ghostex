@@ -4,8 +4,11 @@
 //! kit), `publish` is the authenticated route that stores it, `serve` answers the page itself.
 
 mod answers;
+mod builtin;
 mod drafts;
+mod fit;
 mod kit;
+mod notice;
 mod prepare;
 mod publish;
 mod questions;
@@ -15,9 +18,11 @@ mod source;
 mod store;
 mod theme;
 mod thumbnail;
+mod version;
 
 pub(crate) use answers::{is_answers_route, submit as submit_answers};
 pub(crate) use drafts::{is_draft_route, save as save_draft};
+pub(crate) use notice::{dismiss as dismiss_page_notice, is_notice_route};
 pub(crate) use prepare::{page_too_large, prepare_page};
 pub(crate) use publish::{
     handle_publish_visual_page_http, PUBLISH_VISUAL_PAGE_BODY_LIMIT_BYTES,
@@ -37,3 +42,4 @@ pub(crate) use thumbnail::{
     handle_store_http as handle_store_visual_page_thumbnail_http,
     READ_VISUAL_PAGE_THUMBNAIL_ENDPOINT, STORE_VISUAL_PAGE_THUMBNAIL_ENDPOINT,
 };
+pub(crate) use version::{is_current_layout, PAGE_VERSION_META_TAG};

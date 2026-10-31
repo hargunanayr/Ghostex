@@ -859,15 +859,18 @@ fn read_loopback_image(url: &url::Url) -> Result<(Vec<u8>, &'static str), Domain
         code: "notFound",
         message: "The image address did not answer on this machine.".to_string(),
     };
-    let response = ureq::AgentBuilder::new()
-        .timeout(std::time::Duration::from_secs(8))
-        .redirects(0)
-        .build()
-        .get(url.as_str())
-        .call()
-        .map_err(|_| unreachable())?;
+    let response = ureq::Agent::from(
+        crate::http_agent::config()
+            .timeout_global(Some(std::time::Duration::from_secs(8)))
+            .max_redirects(0)
+            .build(),
+    )
+    .get(url.as_str())
+    .call()
+    .map_err(|_| unreachable())?;
     let mut bytes = Vec::new();
     response
+        .into_body()
         .into_reader()
         .take(SESSION_CHAT_IMAGE_READ_MAX_BYTES + 1)
         .read_to_end(&mut bytes)

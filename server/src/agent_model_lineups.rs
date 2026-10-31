@@ -66,7 +66,7 @@ pub(crate) fn read_lineup(agent: &str) -> Option<Value> {
         _ => return None,
     };
     let home = crate::resume_lookup::home_dir();
-    let program = crate::agent_hooks::probing::resolve_cli_command(command, &home)?;
+    let program = crate::agent_hooks::probing::resolve_probe_command(command, &home)?;
     let mut process = Command::new(program);
     process
         .args(args)
@@ -282,7 +282,7 @@ fn codex_lineup(output: &str) -> Option<Value> {
     }
     Some(agent_entry(
         "Codex CLI",
-        json!({ "available": true, "command": "/fast", "scope": "session" }),
+        json!({ "available": true, "command": "/fast", "scope": "default" }),
         rows,
     ))
 }

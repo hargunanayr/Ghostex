@@ -121,7 +121,7 @@ struct CachedCollectionMenu {
 struct CachedMoreMenu {
     /// The drawn project group ids, whether any of them is expanded, Show Hidden, and the ticked
     /// filters: everything it reads beyond the shared key.
-    identity: (u64, bool, bool, Vec<String>),
+    identity: (u64, bool, bool, Vec<String>, (bool, bool, bool, bool)),
     menu: Value,
 }
 
@@ -364,8 +364,10 @@ pub(super) fn snapshot_from_view(
             "copy": view.empty_state.copy,
             "detail": view.empty_state.detail,
             "actionLabel": view.empty_state.action_label,
+            "clearTagFilters": view.empty_state.clear_tag_filters,
         }),
         machine_notice: view.machine_notice.clone(),
+        show_all_projects_row: view.show_all_projects_row,
         hud: std::sync::Arc::clone(input.hud),
         groups,
         selected_machine_id: view.selected_machine_id.clone(),
@@ -377,6 +379,7 @@ pub(super) fn snapshot_from_view(
                 attention_count: machine.attention_count,
                 background_work_count: machine.background_work_count,
                 question_count: machine.question_count,
+                approval_count: machine.approval_count,
                 id: machine.id.clone(),
                 label: machine.label.clone(),
                 state: machine.state.clone(),
@@ -402,6 +405,7 @@ pub(super) fn snapshot_from_view(
                     attention_count: space.attention_count,
                     background_work_count: space.background_work_count,
                     question_count: space.question_count,
+                    approval_count: space.approval_count,
                 },
             )
             .collect(),
@@ -452,6 +456,12 @@ fn more_menu(
         any_expanded,
         input.show_hidden,
         input.selected_tag_filters.to_vec(),
+        (
+            input.settings.unified_sidebar,
+            input.settings.unified_group_by_project,
+            input.settings.unified_working_section,
+            input.settings.hide_projects_without_sessions,
+        ),
     );
     if let Some(cached) = &cache.more_menu
         && cached.identity == identity
@@ -484,6 +494,7 @@ fn native_group(
             "attentionCount": core.summary.attention_count,
             "backgroundWorkCount": core.summary.background_work_count,
             "questionCount": core.summary.question_count,
+            "approvalCount": core.summary.approval_count,
             "awakeCount": core.summary.awake_count,
         }),
         collapsed: core.collapsed,
@@ -502,6 +513,7 @@ fn native_group(
                 attention_count: section.attention_count,
                 background_work_count: section.background_work_count,
                 question_count: section.question_count,
+                approval_count: section.approval_count,
                 session_ids: section.session_ids.clone(),
                 menu: menus
                     .section_menu(group, section)
@@ -645,6 +657,7 @@ fn native_collection(
         attention_count: collection.attention_count,
         background_work_count: collection.background_work_count,
         question_count: collection.question_count,
+        approval_count: collection.approval_count,
         menu: collection_menu(collection, view, menus, cache),
     }
 }
@@ -896,6 +909,12 @@ fn build_session(
             "threadLast".to_string(),
             Value::Bool(session.nesting.last_child),
         );
+        if session.nesting.passing_lines != 0 {
+            details.insert(
+                "threadPassingLines".to_string(),
+                Value::from(session.nesting.passing_lines),
+            );
+        }
     }
     if row.is_coordinator {
         let badge = session.nesting.coordinator_badge();
@@ -904,6 +923,7 @@ fn build_session(
             json!({
                 "count": badge.count,
                 "tone": match badge.tone {
+                    ghostex_gx_core::CoordinatorBadgeTone::Approval => "approval",
                     ghostex_gx_core::CoordinatorBadgeTone::Waiting => "waiting",
                     ghostex_gx_core::CoordinatorBadgeTone::Working => "working",
                     ghostex_gx_core::CoordinatorBadgeTone::Idle => "idle",
@@ -913,6 +933,7 @@ fn build_session(
                 "collapsed": session.nesting.collapsed,
                 "older": session.nesting.older_threads,
                 "olderShown": session.nesting.older_threads_shown,
+                "passingLinesBelow": session.nesting.passing_lines_below(),
                 "containsActive": session.nesting.contains_active_session,
             }),
         );
@@ -923,6 +944,7 @@ fn build_session(
                 "attention": folded.attention,
                 "backgroundWork": folded.background_work,
                 "question": folded.question,
+                "approval": folded.approval,
             });
         }
     }
@@ -953,6 +975,7 @@ fn build_session(
         has_background_work: row.has_background_work,
         model_selection_failed: row.model_selection_failed,
         program_status_failed: row.program_status_failed,
+        awaiting_approval: row.awaiting_approval,
         agent_icon: row.agent_icon.clone(),
         kind: row.is_browser.then(|| "browser".to_string()),
         session_kind: row.session_kind.clone(),

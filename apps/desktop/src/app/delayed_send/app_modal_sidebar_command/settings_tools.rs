@@ -173,6 +173,9 @@ impl GhostexGpuiApp {
             "restartSpaceo" => {
                 self.restart_gpui_spaceo(cx);
             }
+            "restartCuaDriver" => {
+                self.restart_gpui_cua_driver(cx);
+            }
             "runManagedToolTerminalCommand" => {
                 if let Some(tool_id) = command.get("toolId").and_then(serde_json::Value::as_str) {
                     self.run_managed_tool_terminal_command(tool_id.to_string(), window, cx);

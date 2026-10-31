@@ -286,11 +286,12 @@ fn pointer_step(step: &str, window: &mut gpui::Window, cx: &mut App) {
         let position = at(&n, 0);
         mouse_move(window, position, None, cx);
         window.dispatch_event(
-            gpui::PlatformInput::ScrollWheel(gpui::ScrollWheelEvent {
+            gpui::PlatformInput::Scroll(gpui::ScrollEvent {
                 position,
                 delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.0), gpui::px(n[2]))),
                 modifiers: gpui::Modifiers::default(),
                 touch_phase: gpui::TouchPhase::Moved,
+                source: gpui::ScrollSource::Pointer,
             }),
             cx,
         );

@@ -19,8 +19,11 @@ pub(crate) fn read_session_chat_launch_selection(
         .and_then(|command| launch_command_selection(agent, command))
         .unwrap_or_default();
     with_remembered_launch_choice(agent, &session, project_id, session_id, &mut selection);
-    (selection.model.is_some() || selection.effort.is_some() || selection.mode.is_some())
-        .then_some(selection)
+    (selection.model.is_some()
+        || selection.effort.is_some()
+        || selection.mode.is_some()
+        || selection.permissions.is_some())
+    .then_some(selection)
 }
 
 /// What the next launch of this session runs that its command line does not spell out, or runs
@@ -126,6 +129,7 @@ pub(crate) fn launch_command_selection(
         words.push((command[start..end].to_string(), word));
     }
     let mut selection = SessionChatDetectedSelection::default();
+    let mut codex_flags: Vec<(String, Option<String>)> = Vec::new();
     let mut index = 0;
     while index < words.len() {
         let (literal, word) = &words[index];
@@ -151,6 +155,9 @@ pub(crate) fn launch_command_selection(
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty());
+        if agent == SessionChatOptionAgent::Codex {
+            codex_flags.push((flag.to_string(), value.map(str::to_string)));
+        }
         match (agent, flag, value) {
             (_, "--model", Some(model)) | (SessionChatOptionAgent::Codex, "-m", Some(model)) => {
                 selection.model = launch_model_choice(family, model);
@@ -178,8 +185,14 @@ pub(crate) fn launch_command_selection(
             _ => {}
         }
     }
-    (selection.model.is_some() || selection.effort.is_some() || selection.mode.is_some())
-        .then_some(selection)
+    if agent == SessionChatOptionAgent::Codex {
+        selection.permissions = codex_launch_permissions(&codex_flags);
+    }
+    (selection.model.is_some()
+        || selection.effort.is_some()
+        || selection.mode.is_some()
+        || selection.permissions.is_some())
+    .then_some(selection)
 }
 
 fn launch_choice(value: &str, label: &str) -> SessionChatDetectedChoice {

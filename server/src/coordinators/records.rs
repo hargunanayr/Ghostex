@@ -94,7 +94,7 @@ pub(crate) fn now_iso() -> String {
 pub(crate) fn sql_error(error: rusqlite::Error) -> DomainStateError {
     DomainStateError {
         code: "internalError",
-        message: format!("SQLite orchestrator error: {error}"),
+        message: format!("SQLite coordinator error: {error}"),
     }
 }
 

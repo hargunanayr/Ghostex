@@ -136,16 +136,19 @@ impl NativeSessionBoardView {
                 .placeholder("Optional")
                 .default_value(title.to_string())
         });
-        let prompt = cx.new(|cx| {
-            TextareaState::new(window, cx).placeholder("What should the agent do?")
-        });
+        let prompt =
+            cx.new(|cx| TextareaState::new(window, cx).placeholder("What should the agent do?"));
         let subscriptions = vec![
-            cx.subscribe_in(&title_input, window, |this, _, event: &InputEvent, _, cx| {
-                if matches!(event, InputEvent::Focus) {
-                    this.input_focused(cx);
-                }
-                cx.notify();
-            }),
+            cx.subscribe_in(
+                &title_input,
+                window,
+                |this, _, event: &InputEvent, _, cx| {
+                    if matches!(event, InputEvent::Focus) {
+                        this.input_focused(cx);
+                    }
+                    cx.notify();
+                },
+            ),
             cx.subscribe_in(&prompt, window, |this, _, event: &InputEvent, _, cx| {
                 if matches!(event, InputEvent::Focus) {
                     this.input_focused(cx);
@@ -225,7 +228,10 @@ impl NativeSessionBoardView {
         cx.spawn_in(window, async move |this, cx| {
             let result = read.await;
             let _ = this.update_in(cx, |this, window, cx| {
-                let Some(panel) = this.panel.as_mut().filter(|panel| panel.editing() == Some(&id))
+                let Some(panel) = this
+                    .panel
+                    .as_mut()
+                    .filter(|panel| panel.editing() == Some(&id))
                 else {
                     return;
                 };
@@ -478,7 +484,9 @@ impl NativeSessionBoardView {
             return;
         };
         self.close_panel(cx);
-        self.app_later(window, cx, move |app, _, cx| app.session_board_close_thread(&card, cx));
+        self.app_later(window, cx, move |app, _, cx| {
+            app.session_board_close_thread(&card, cx)
+        });
     }
 
     fn picker(
@@ -508,7 +516,11 @@ impl NativeSessionBoardView {
             .hover(move |style| style.bg(hover))
             .child(anchor_probe(trigger))
             .child(div().truncate().child(label))
-            .child(titlebar_svg_icon("titlebar/chevron-down.svg", 12.0, p.muted))
+            .child(titlebar_svg_icon(
+                "titlebar/chevron-down.svg",
+                12.0,
+                p.muted,
+            ))
     }
 
     fn static_field(label: String, p: &KanbanPalette) -> AnyElement {
@@ -535,10 +547,7 @@ impl NativeSessionBoardView {
         let Some(panel) = self.panel.as_ref() else {
             return div().into_any_element();
         };
-        let editing_card = panel
-            .editing()
-            .and_then(|id| self.board.card(id))
-            .cloned();
+        let editing_card = panel.editing().and_then(|id| self.board.card(id)).cloned();
         let is_new = matches!(panel.mode, PanelMode::New);
         let loading = matches!(panel.mode, PanelMode::Edit { loading: true, .. });
         let heading = match &editing_card {
@@ -548,7 +557,12 @@ impl NativeSessionBoardView {
         let project_label: SharedString = panel
             .project_id
             .as_deref()
-            .and_then(|id| self.board.projects.iter().find(|project| project.project_id == id))
+            .and_then(|id| {
+                self.board
+                    .projects
+                    .iter()
+                    .find(|project| project.project_id == id)
+            })
             .map(|project| project.label())
             .or_else(|| editing_card.as_ref().map(|card| card.project_label()))
             .unwrap_or_else(|| "Pick a project".to_string())
@@ -727,9 +741,9 @@ impl NativeSessionBoardView {
                                 busy,
                                 p,
                             )
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.delete_task(window, cx)
-                            })),
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.delete_task(window, cx)),
+                            ),
                         )
                     })
                     .child(div().flex_1())
@@ -742,13 +756,15 @@ impl NativeSessionBoardView {
                             busy,
                             p,
                         )
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            if is_new {
-                                this.close_panel(cx);
-                            } else {
-                                this.submit_panel(false, window, cx);
-                            }
-                        })),
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                if is_new {
+                                    this.close_panel(cx);
+                                } else {
+                                    this.submit_panel(false, window, cx);
+                                }
+                            },
+                        )),
                     )
                     .child(
                         kanban_button(
@@ -759,9 +775,11 @@ impl NativeSessionBoardView {
                             busy,
                             p,
                         )
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.submit_panel(!is_new, window, cx);
-                        })),
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                this.submit_panel(!is_new, window, cx);
+                            },
+                        )),
                     ),
             )
             .into_any_element()

@@ -434,6 +434,21 @@ fn score(query: &str, name: &str, context: &str) -> u32 {
     points
 }
 
+/// Whether every word the user said (filler aside) is a word of `title`, or the start of one, as
+/// `score` counts a name match: "the Discord one" for "Discord triage".
+pub(super) fn title_has_every_word(title: &str, query: &str) -> bool {
+    let query_words = words(query);
+    let title_words = words(title);
+    !query_words.is_empty()
+        && query_words.iter().all(|word| {
+            title_words.iter().any(|candidate| {
+                candidate == word
+                    || (word.len() >= 3 && candidate.starts_with(word.as_str()))
+                    || (candidate.len() >= 3 && word.starts_with(candidate.as_str()))
+            })
+        })
+}
+
 pub(super) enum Match<T> {
     One(T),
     Ambiguous(Vec<T>),

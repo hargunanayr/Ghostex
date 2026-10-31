@@ -69,6 +69,10 @@ impl ClaudeSlot {
         format!("{}:{}", self.email.to_lowercase(), self.organization)
     }
 
+    pub(crate) fn organization(&self) -> &str {
+        &self.organization
+    }
+
     /// Whether the default login's `~/.claude.json` names this slot's account, which is when `cswap run` starts plain `claude` on it.
     pub(crate) fn names_default_login(&self, home: &Path) -> bool {
         default_login_matches(home, &self.email, &self.organization)
@@ -95,7 +99,7 @@ impl ClaudeSlot {
 
     /// CDXC:AgentProviders 2026-09-24 WHY:
     /// cswap owns Claude logins, so Ghostex only reads access tokens and never refreshes them: refreshing rotates the refresh token and would strand the copy cswap and Claude Code keep. The newest generation lives where Claude Code last ran as the account (the default login for cswap's active slot, else the slot's session profile), and cswap's vault copy is the last resort. Expired or unusable tokens are skipped; cswap's own usage polling keeps at least one fresh.
-    fn tokens(&self, home: &Path) -> Vec<String> {
+    pub(crate) fn tokens(&self, home: &Path) -> Vec<String> {
         let mut sources = Vec::new();
         if self.active && default_login_matches(home, &self.email, &self.organization) {
             sources.push(keychain("Claude Code-credentials"));
@@ -118,37 +122,58 @@ impl ClaudeSlot {
             "claude-swap",
             &format!("account-{}-{}", self.slot, self.email),
         ));
-        let now = chrono::Utc::now().timestamp_millis();
-        let mut tokens: Vec<String> = Vec::new();
-        for text in sources.into_iter().flatten() {
-            let Ok(value) = serde_json::from_str::<Value>(&text) else {
-                continue;
-            };
-            let oauth = &value["claudeAiOauth"];
-            let Some(token) = oauth["accessToken"]
-                .as_str()
-                .filter(|t| !t.trim().is_empty())
-            else {
-                continue;
-            };
-            if oauth["expiresAt"]
-                .as_i64()
-                .is_some_and(|at| at <= now + 60_000)
-            {
-                continue;
-            }
-            if oauth["scopes"]
-                .as_array()
-                .is_some_and(|scopes| !scopes.iter().any(|s| s == "user:profile"))
-            {
-                continue;
-            }
-            if !tokens.iter().any(|t| t == token) {
-                tokens.push(token.trim().to_string());
-            }
-        }
-        tokens
+        usable_tokens(sources)
     }
+}
+
+/// The access tokens and organization of the default Claude login (`~/.claude`), for a Claude
+/// cloud session that runs on the current CLI login rather than a saved account.
+pub(crate) fn default_login_tokens(home: &Path) -> Option<(Vec<String>, String)> {
+    let config: Value =
+        serde_json::from_slice(&std::fs::read(home.join(".claude.json")).ok()?).ok()?;
+    let organization = config["oauthAccount"]["organizationUuid"]
+        .as_str()
+        .filter(|value| !value.is_empty())?
+        .to_string();
+    let tokens = usable_tokens(vec![
+        keychain("Claude Code-credentials"),
+        file(&home.join(".claude/.credentials.json")),
+    ]);
+    Some((tokens, organization))
+}
+
+/// The unexpired access tokens of credential JSON texts, without duplicates.
+fn usable_tokens(sources: Vec<Option<String>>) -> Vec<String> {
+    let now = chrono::Utc::now().timestamp_millis();
+    let mut tokens: Vec<String> = Vec::new();
+    for text in sources.into_iter().flatten() {
+        let Ok(value) = serde_json::from_str::<Value>(&text) else {
+            continue;
+        };
+        let oauth = &value["claudeAiOauth"];
+        let Some(token) = oauth["accessToken"]
+            .as_str()
+            .filter(|t| !t.trim().is_empty())
+        else {
+            continue;
+        };
+        if oauth["expiresAt"]
+            .as_i64()
+            .is_some_and(|at| at <= now + 60_000)
+        {
+            continue;
+        }
+        if oauth["scopes"]
+            .as_array()
+            .is_some_and(|scopes| !scopes.iter().any(|s| s == "user:profile"))
+        {
+            continue;
+        }
+        if !tokens.iter().any(|t| t == token) {
+            tokens.push(token.trim().to_string());
+        }
+    }
+    tokens
 }
 
 fn default_login_matches(home: &Path, email: &str, organization: &str) -> bool {
@@ -167,7 +192,7 @@ fn default_login_matches(home: &Path, email: &str, organization: &str) -> bool {
 /// The Keychain service Claude Code derives for a `CLAUDE_CONFIG_DIR`: the first eight hex digits of its SHA-256.
 fn hashed_service(config_dir: &str) -> String {
     use sha2::{Digest, Sha256};
-    let digest = format!("{:x}", Sha256::digest(config_dir.as_bytes()));
+    let digest = hex::encode(Sha256::digest(config_dir.as_bytes()));
     format!("Claude Code-credentials-{}", &digest[..8])
 }
 
@@ -199,16 +224,21 @@ fn base64_decode(text: &str) -> Option<Vec<u8>> {
     base64::engine::general_purpose::STANDARD.decode(text).ok()
 }
 
-fn request(method: &str, path: &str, token: &str) -> ureq::Request {
-    ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(25))
+/// `method` is `ureq::Agent::get` or `ureq::Agent::post`.
+fn request<B>(
+    method: impl FnOnce(&ureq::Agent, String) -> ureq::RequestBuilder<B>,
+    path: &str,
+    token: &str,
+) -> ureq::RequestBuilder<B> {
+    method(crate::http_agent::agent(), format!("{API}{path}"))
+        .header("Authorization", format!("Bearer {token}"))
+        .header("anthropic-beta", "oauth-2025-04-20")
+        .header("User-Agent", USER_AGENT)
+        .header("Accept", "application/json")
+        .header("Content-Type", "application/json")
+        .config()
+        .timeout_global(Some(Duration::from_secs(25)))
         .build()
-        .request(method, &format!("{API}{path}"))
-        .set("Authorization", &format!("Bearer {token}"))
-        .set("anthropic-beta", "oauth-2025-04-20")
-        .set("User-Agent", USER_AGENT)
-        .set("Accept", "application/json")
-        .set("Content-Type", "application/json")
 }
 
 /// What the reset panel shows for one Claude account: `None` when Anthropic reports no reset program for the plan.
@@ -223,15 +253,20 @@ fn fetch(home: &Path, slot: &ClaudeSlot) -> Result<Status, String> {
         );
     }
     for token in tokens {
-        match request("GET", "/api/oauth/usage?cedar_ember=1&skip_spend=1", &token).call() {
+        match request(
+            ureq::Agent::get,
+            "/api/oauth/usage?cedar_ember=1&skip_spend=1",
+            &token,
+        )
+        .call()
+        {
             Ok(response) => {
-                let body: Value = response
-                    .into_json()
+                let body: Value = crate::http_agent::read_json(response)
                     .map_err(|_| "Anthropic returned an unreadable reset status.")?;
                 return Ok(parse(&body["cedar_ember"], chrono::Utc::now()));
             }
-            Err(ureq::Error::Status(401 | 403, _)) => continue,
-            Err(ureq::Error::Status(429, _)) => {
+            Err(ureq::Error::StatusCode(401 | 403)) => continue,
+            Err(ureq::Error::StatusCode(429)) => {
                 return Err(
                     "Anthropic is limiting usage requests. Resets will refresh later.".into(),
                 )
@@ -359,10 +394,10 @@ pub(crate) fn claim(
     let path = format!("/api/organizations/{}/reset_rate_limits", slot.organization);
     let body = json!({"program":PROGRAM,"grant_id":grant_id,"request_id":request_id});
     for token in tokens {
-        let response = match request("POST", &path, &token).send_json(body.clone()) {
+        let response = match request(ureq::Agent::post, &path, &token).send_json(body.clone()) {
             Ok(response) => response,
-            Err(ureq::Error::Status(401 | 403, _)) => continue,
-            Err(ureq::Error::Status(429, _)) => {
+            Err(ureq::Error::StatusCode(401 | 403)) => continue,
+            Err(ureq::Error::StatusCode(429)) => {
                 return Outcome::failed("Anthropic is limiting requests. Try again in a moment.")
             }
             Err(_) => {
@@ -373,7 +408,7 @@ pub(crate) fn claim(
             }
         };
         forget(slot);
-        let Ok(value) = response.into_json::<Value>() else {
+        let Ok(value) = crate::http_agent::read_json::<Value>(response) else {
             return Outcome::failed(
                 "The reset could not be confirmed. Check your limits before trying again.",
             );

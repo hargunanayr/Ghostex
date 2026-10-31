@@ -45,14 +45,7 @@ impl GhostexGpuiApp {
         } else {
             (current + 1) % entries.len()
         };
-        match entries[next] {
-            ViewStripEntry::View(next_mode) => {
-                self.open_view_tab(next_mode, window, cx);
-            }
-            ViewStripEntry::Browser(tab) => {
-                self.open_browser_tab_from_view_strip(tab.pane_id, tab.tab_id, window, cx);
-            }
-        }
+        self.show_view_strip_entry(entries[next], window, cx);
         true
     }
 

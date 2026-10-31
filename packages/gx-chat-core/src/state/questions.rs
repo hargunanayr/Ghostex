@@ -88,6 +88,14 @@ pub struct QuestionsState {
     // ---- unanswered questions --------------------------------------------
     /// The Previous question pill's place and the last jump (`crate::questions::open_questions`).
     pub open_questions: crate::questions::open_questions::OpenQuestionsState,
+    /// The For later marks set here that gxserver has not confirmed yet (`crate::questions::later`).
+    pub later: crate::questions::later::LaterState,
+    /// The pages that ask nothing and the charts the ? pill's list names (`crate::questions::content`).
+    pub content: crate::questions::content::ContentScan,
+    /// The form or chart a Resources row opened in the floating modal (`crate::questions::resource_modal`).
+    pub resource_modal: Option<crate::questions::resource_modal::ResourceModal>,
+    /// A "Go to chat" waiting for its item to be among the loaded rows.
+    pub resource_go: Option<crate::questions::resource_modal::ResourceGo>,
 }
 
 /// One question form's picks while it is open, and its send.

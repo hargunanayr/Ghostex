@@ -13,12 +13,15 @@ pub(crate) fn resolve(binary: &str, home: &Path) -> Option<String> {
     crate::agent_hooks::probing::resolve_cli_command(binary, home)
 }
 
-/// The agent's binary on PATH, otherwise in one of the folders its official installer uses.
+/// The agent's binary on PATH, otherwise in one of the folders its official installer uses. An
+/// install-on-demand wrapper counts as not installed yet, because reading its version would install
+/// the agent (`agent_hooks/on_demand.rs`).
 pub(crate) fn resolve_agent(binary: &str, install_dirs: &[PathBuf], home: &Path) -> Option<String> {
-    resolve(binary, home).or_else(|| {
+    let path = resolve(binary, home).or_else(|| {
         crate::platform::live_path::find_in(binary, install_dirs)
             .map(|path| path.to_string_lossy().into_owned())
-    })
+    })?;
+    crate::agent_hooks::on_demand::probe_target(&path, binary, home)
 }
 
 /// Windows PowerShell 5.1, which every Windows has and every vendor installer is written for (Cursor's calls

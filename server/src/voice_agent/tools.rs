@@ -4,13 +4,14 @@
 //!
 //! CDXC:VoiceMode 2026-10-20 DECISION:
 //! User, supersedes the earlier "sends prompts right away without a spoken confirmation": "Please add this to the voice agent's startup instructions for all future voice sessions: before sending any prompt that could be risky or destructive (deleting files, removing projects, changing system settings, running commands with side effects), the voice agent must confirm with the user first and only send after they agree. Non-destructive prompts can still go out immediately." This is an instruction in `prompt.rs` only; `send_prompt` does not block in code.
-//! The voice agent can act on any session, not only the open chat; it says what it sent after a prompt goes out; it answers question cards and approves or denies permission prompts (saying what it approved); and it can start new agents in a project the user names. Each tool reuses the gxserver route the matching `ghostex` verb calls (sessions, read-session-chat, send-session-chat-message, set-session-chat-draft, send-text, send-enter, answer-session-chat-prompt, create-agent).
+//! The voice agent can act on any session, not only the open chat; it says what it sent after a prompt goes out; it answers question cards and approves or denies permission prompts (saying what it approved); and it can start new agents in a project the user names. Each tool reuses the gxserver route the matching `ghostex` verb calls (sessions, read-session-chat, send-session-chat-message, set-session-chat-draft, send-text, send-enter, answer-session-chat-prompt, create-agent, interrupt-session-chat, coordinator create); stopping and starting a coordinator are in `control.rs`.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{json, Map, Value};
 
+use super::control;
 use super::focus::{self, FocusScope, Purpose};
 use super::loopback;
 use super::question_forms;
@@ -36,7 +37,7 @@ fn all_definitions() -> Value {
         {
             "type": "function",
             "name": "list_sessions",
-            "description": "List the user's open agent sessions with title, project, agent and state (working, waiting on a question, waiting on an approval, idle, sleeping). Waiting sessions come first. An orchestrator (orchestrator true) is followed by its sub-threads, the sessions it runs for the user: each has subThreadOf (its orchestrator's title) and is not a top-level session.",
+            "description": "List the user's open agent sessions with title, project, agent and state (working, waiting on a question, waiting on an approval, idle, sleeping). Waiting sessions come first. A coordinator (orchestrator true) is followed by its sub-threads, the sessions it runs for the user: each has subThreadOf (its coordinator's title) and is not a top-level session.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -149,13 +150,38 @@ fn all_definitions() -> Value {
         {
             "type": "function",
             "name": "start_agent",
-            "description": "Start a new agent session in a project, optionally with a first prompt it starts working on.",
+            "description": "Start a new agent session in a project, optionally with a first prompt it starts working on. For a coordinator, call start_coordinator instead.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "project": {"type": "string", "description": "The project, as the user names it."},
                     "agent": {"type": "string", "description": "The agent the user asked for, as they said it (\"Claude\", \"Codex\"). Always pass it when the user named one; leave it out only when they did not, to use their default."},
                     "prompt": {"type": "string", "description": "Optional first prompt for the new agent."}
+                },
+                "required": ["project"]
+            }
+        },
+        {
+            "type": "function",
+            "name": "stop_session",
+            "description": "Stop a session's running turn right away, like pressing Stop in its chat: the agent stops what it is doing and the session stays open, waiting for the user's next prompt. Call it when the user says stop, halt or cancel about a session; never send \"stop\" as a prompt, which only queues behind the running turn. When the user's words fit the session only loosely or fit several, nothing is stopped: the result says needsConfirmation, a card on screen asks the user, and you ask too; call it again with the ref they confirm. It cannot close a session.",
+            "parameters": {
+                "type": "object",
+                "properties": {"session": session},
+                "required": ["session"]
+            }
+        },
+        {
+            "type": "function",
+            "name": "start_coordinator",
+            "description": "Start a new coordinator in a project: an agent session that hands the work to thread sessions it starts and reports back. Call it whenever the user asks for a coordinator or an orchestrator (never start_agent for that). What the user said it should work on becomes its first message.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project": {"type": "string", "description": "The project, as the user names it."},
+                    "message": {"type": "string", "description": "What the user wants it to work on, in their words, as its first message."},
+                    "agent": {"type": "string", "description": "The agent it runs on, only when the user named one (\"Claude\", \"Codex\"); leave it out to use their default."},
+                    "title": {"type": "string", "description": "Its name, only when the user gave one."}
                 },
                 "required": ["project"]
             }
@@ -264,6 +290,8 @@ pub(super) fn label(name: &str, args: &Value, focus_title: Option<&str>) -> Stri
         ("list_projects", _) => "Checking your projects".to_string(),
         ("list_agent_types", _) => "Checking your agents".to_string(),
         ("start_agent", Some(target)) => format!("Starting an agent in {target}"),
+        ("stop_session", Some(target)) => format!("Stopping {target}"),
+        ("start_coordinator", Some(target)) => format!("Starting a coordinator in {target}"),
         ("show_session", Some(target)) => format!("Showing {target}"),
         ("get_active_session", _) => "Checking what's on screen".to_string(),
         ("recall_last_conversation", _) => "Remembering your last conversation".to_string(),
@@ -272,7 +300,7 @@ pub(super) fn label(name: &str, args: &Value, focus_title: Option<&str>) -> Stri
     }
 }
 
-fn failure(message: impl Into<String>) -> ToolOutcome {
+pub(super) fn failure(message: impl Into<String>) -> ToolOutcome {
     ToolOutcome {
         output: json!({"ok": false, "error": message.into()}),
         ok: false,
@@ -283,7 +311,7 @@ fn success(output: Value) -> ToolOutcome {
     ToolOutcome { output, ok: true }
 }
 
-fn arg_text(args: &Value, key: &str) -> String {
+pub(super) fn arg_text(args: &Value, key: &str) -> String {
     args.get(key)
         .and_then(Value::as_str)
         .map(str::trim)
@@ -338,11 +366,11 @@ impl ToolMemory {
         name.trim().to_lowercase()
     }
 
-    fn recall(&self, name: &str) -> Option<String> {
+    pub(super) fn recall(&self, name: &str) -> Option<String> {
         self.names.lock().ok()?.get(&Self::key(name)).cloned()
     }
 
-    fn remember(&self, name: &str, session: &SessionInfo) {
+    pub(super) fn remember(&self, name: &str, session: &SessionInfo) {
         if let Ok(mut names) = self.names.lock() {
             names.insert(Self::key(name), session.reference());
             names.insert(Self::key(&session.title), session.reference());
@@ -420,6 +448,8 @@ async fn run_tool(
         "list_projects" => list_projects(state).await,
         "list_agent_types" => list_agent_types(state).await,
         "start_agent" => return start_agent(state, args).await,
+        "stop_session" => control::stop_session(state, memory, args).await,
+        "start_coordinator" => return control::start_coordinator(state, args).await,
         "get_active_session" => screen::get_active_session(state, memory.client_remote()).await,
         "show_session" => match resolve_session(state, memory, args, Purpose::Read).await {
             Ok(session) if memory.client_remote() => Ok(json!({
@@ -450,6 +480,7 @@ const FOCUSED_TOOLS: &[&str] = &[
     "send_draft",
     "get_pending_prompt",
     "answer_prompt",
+    "stop_session",
     "show_session",
     "widen_call",
 ];
@@ -457,7 +488,7 @@ const FOCUSED_TOOLS: &[&str] = &[
 /// The session the user named, or an error the model can speak (with candidates when ambiguous).
 /// In a focused call, no name means the focused session, only it (and an orchestrator's threads)
 /// can be named, and any other session is refused with the words the user agreed on.
-async fn resolve_session(
+pub(super) async fn resolve_session(
     state: &Arc<AppState>,
     memory: &ToolMemory,
     args: &Value,
@@ -1310,32 +1341,35 @@ async fn list_agent_types(state: &Arc<AppState>) -> Result<Value, String> {
     }))
 }
 
-async fn start_agent(state: &Arc<AppState>, args: &Value) -> ToolOutcome {
-    let project_query = arg_text(args, "project");
-    if project_query.is_empty() {
-        return failure("Say which project.");
+/// The project the user named, or an error the model can speak (with choices when ambiguous).
+pub(super) async fn project_named(
+    state: &Arc<AppState>,
+    query: &str,
+) -> Result<sessions::ProjectInfo, String> {
+    if query.is_empty() {
+        return Err("Say which project.".to_string());
     }
-    let projects = match sessions::list_projects_async(state).await {
-        Ok(projects) => projects,
+    let projects = sessions::list_projects_async(state).await?;
+    match sessions::match_project(&projects, query) {
+        Match::One(project) => Ok(project),
+        Match::Ambiguous(candidates) => Err(format!(
+            "Ambiguous project \"{query}\": {}. Ask the user which one.",
+            candidates
+                .iter()
+                .map(project_choice)
+                .collect::<Vec<_>>()
+                .join(" or ")
+        )),
+        Match::None => Err(format!(
+            "No project matches \"{query}\". Call list_projects."
+        )),
+    }
+}
+
+async fn start_agent(state: &Arc<AppState>, args: &Value) -> ToolOutcome {
+    let project = match project_named(state, &arg_text(args, "project")).await {
+        Ok(project) => project,
         Err(error) => return failure(error),
-    };
-    let project = match sessions::match_project(&projects, &project_query) {
-        Match::One(project) => project,
-        Match::Ambiguous(candidates) => {
-            return failure(format!(
-                "Ambiguous project \"{project_query}\": {}. Ask the user which one.",
-                candidates
-                    .iter()
-                    .map(project_choice)
-                    .collect::<Vec<_>>()
-                    .join(" or ")
-            ))
-        }
-        Match::None => {
-            return failure(format!(
-                "No project matches \"{project_query}\". Call list_projects."
-            ))
-        }
     };
     let (agents, default) = match agent_types(state).await {
         Ok(found) => found,

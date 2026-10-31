@@ -26,35 +26,10 @@ use serde_json::{json, Map, Value};
 use crate::paths::GxserverPaths;
 use crate::workspaces::{project_workspace_id, workspace_exists, DEFAULT_WORKSPACE_ID};
 
-use super::linear_api_key;
+use super::{linear_api_key, WorkSourceId};
 
 /// How long a team's choice read from Convex is trusted before the background pass reads it again.
 const TEAM_TRACKER_TTL: Duration = Duration::from_secs(5 * 60);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum WorkTracker {
-    /// Linear tickets and Linear projects.
-    Linear,
-    /// GitHub issues and GitHub Projects.
-    Github,
-}
-
-impl WorkTracker {
-    pub(crate) fn as_wire(self) -> &'static str {
-        match self {
-            Self::Linear => "linear",
-            Self::Github => "github",
-        }
-    }
-
-    pub(crate) fn from_wire(value: Option<&Value>) -> Option<Self> {
-        match value?.as_str()?.trim() {
-            "linear" => Some(Self::Linear),
-            "github" => Some(Self::Github),
-            _ => None,
-        }
-    }
-}
 
 /// Where a workspace's tracker came from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,7 +54,7 @@ impl WorkTrackerSource {
 
 struct TeamTracker {
     /// `None`: the team has not picked one.
-    tracker: Option<WorkTracker>,
+    tracker: Option<WorkSourceId>,
     fetched_at: Instant,
 }
 
@@ -90,12 +65,12 @@ fn team_trackers() -> &'static Mutex<HashMap<String, TeamTracker>> {
 }
 
 /// The tracker the background pass found for each work-mode project, for the projection.
-fn project_trackers() -> &'static Mutex<HashMap<String, WorkTracker>> {
-    static CACHE: OnceLock<Mutex<HashMap<String, WorkTracker>>> = OnceLock::new();
+fn project_trackers() -> &'static Mutex<HashMap<String, WorkSourceId>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, WorkSourceId>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-pub(crate) fn remember_team_work_tracker(workspace_id: &str, tracker: Option<WorkTracker>) {
+pub(crate) fn remember_team_work_tracker(workspace_id: &str, tracker: Option<WorkSourceId>) {
     if let Ok(mut cache) = team_trackers().lock() {
         cache.insert(
             workspace_id.to_string(),
@@ -113,7 +88,7 @@ fn forget_team_work_tracker(workspace_id: &str) {
     }
 }
 
-fn cached_team_work_tracker(workspace_id: &str) -> Option<WorkTracker> {
+fn cached_team_work_tracker(workspace_id: &str) -> Option<WorkSourceId> {
     team_trackers()
         .lock()
         .ok()?
@@ -141,7 +116,7 @@ pub(crate) fn refresh_team_work_tracker(paths: &GxserverPaths, workspace_id: &st
         return false;
     }
     if let Ok(flow) = crate::team_sync::read_team_flow(paths, &workspace_params(workspace_id)) {
-        remember_team_work_tracker(workspace_id, WorkTracker::from_wire(flow.get("tracker")));
+        remember_team_work_tracker(workspace_id, WorkSourceId::from_wire(flow.get("tracker")));
     }
     true
 }
@@ -156,8 +131,8 @@ pub(crate) fn workspace_params(workspace_id: &str) -> Map<String, Value> {
 pub(crate) fn stored_workspace_work_tracker(
     workspaces: &Value,
     workspace_id: &str,
-) -> Option<WorkTracker> {
-    WorkTracker::from_wire(
+) -> Option<WorkSourceId> {
+    WorkSourceId::from_wire(
         workspaces
             .get("workspaces")
             .and_then(|workspaces| workspaces.get(workspace_id))
@@ -171,7 +146,7 @@ pub(crate) fn workspace_work_tracker(
     paths: &GxserverPaths,
     workspaces: &Value,
     workspace_id: &str,
-) -> (WorkTracker, WorkTrackerSource) {
+) -> (WorkSourceId, WorkTrackerSource) {
     let workspace_id = if workspace_exists(workspaces, workspace_id) {
         workspace_id
     } else {
@@ -184,9 +159,9 @@ pub(crate) fn workspace_work_tracker(
         return (tracker, WorkTrackerSource::Workspace);
     }
     let tracker = if linear_api_key(paths, None, Some(workspace_id)).is_some() {
-        WorkTracker::Linear
+        WorkSourceId::Linear
     } else {
-        WorkTracker::Github
+        WorkSourceId::Github
     };
     (tracker, WorkTrackerSource::Default)
 }
@@ -199,12 +174,12 @@ pub(crate) fn project_work_tracker(
     workspaces: &Value,
     project: &Value,
     projects: &[Value],
-) -> WorkTracker {
+) -> WorkSourceId {
     let workspace_id = project_workspace_id(workspaces, project, projects);
     workspace_work_tracker(paths, workspaces, &workspace_id).0
 }
 
-pub(crate) fn remember_project_work_tracker(project_id: &str, tracker: WorkTracker) {
+pub(crate) fn remember_project_work_tracker(project_id: &str, tracker: WorkSourceId) {
     if let Ok(mut cache) = project_trackers().lock() {
         cache.insert(project_id.to_string(), tracker);
     }
@@ -212,7 +187,7 @@ pub(crate) fn remember_project_work_tracker(project_id: &str, tracker: WorkTrack
 
 /// What the background pass found for this project; before its first pass, Linear when the pass
 /// found a Linear key (the behaviour before trackers existed), otherwise GitHub.
-pub(crate) fn cached_project_work_tracker(project_id: &str) -> WorkTracker {
+pub(crate) fn cached_project_work_tracker(project_id: &str) -> WorkSourceId {
     if let Some(tracker) = project_trackers()
         .lock()
         .ok()
@@ -221,8 +196,8 @@ pub(crate) fn cached_project_work_tracker(project_id: &str) -> WorkTracker {
         return tracker;
     }
     if super::project_linear_key(project_id).is_some() {
-        WorkTracker::Linear
+        WorkSourceId::Linear
     } else {
-        WorkTracker::Github
+        WorkSourceId::Github
     }
 }

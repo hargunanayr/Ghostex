@@ -50,9 +50,24 @@ impl GhostexGpuiApp {
         let header_hover = self.native_sidebar.header_hover.clone();
         let (space_offset, space_opacity) = self.native_sidebar.space_gesture.presentation();
         let appearance = SidebarAppearance::from_hud(&snapshot.hud, window);
-        let sticky_clip_top = self.native_sticky_project_clip_top(&content, &appearance);
-        // The two-column layout takes the list's slot; the rows above and below it stay.
-        let two_column = super::two_column::two_column_enabled(&content);
+        // The Unified sidebar draws its own header and list in the classic ones' places; nothing
+        // else of the sidebar changes (native_sidebar/unified/).
+        let unified = self.native_sidebar.unified.clone();
+        let unified_header = unified
+            .as_ref()
+            .map(|unified| self.render_native_unified_header(unified, &appearance, window, cx));
+        let unified_list = unified.as_ref().map(|unified| {
+            self.render_native_unified_list(unified, &snapshot.hud, &appearance, cx)
+        });
+        let classic = unified.is_none();
+        let sticky_clip_top = if classic {
+            self.native_sticky_project_clip_top(&content, &appearance)
+        } else {
+            None
+        };
+        // The two-column layout takes the list's slot; the rows above and below it stay. It is a
+        // layout of the Project sidebar only, so the Unified sidebar always draws its own list.
+        let two_column = classic && super::two_column::two_column_enabled(&content);
         self.native_sidebar.two_column.active = two_column;
         let two_column_body = two_column
             .then(|| self.render_native_sidebar_two_column(&content, &snapshot, &appearance, cx));
@@ -153,7 +168,10 @@ impl GhostexGpuiApp {
             .child(if two_column {
                 div().into_any_element()
             } else {
-                self.render_native_sidebar_selectors(&snapshot, &appearance, cx)
+                match unified_header {
+                    Some(header) => header,
+                    None => self.render_native_sidebar_selectors(&snapshot, &appearance, cx),
+                }
             })
             /*
             The list and its bottom fade ramp are one child on purpose: the
@@ -234,16 +252,18 @@ impl GhostexGpuiApp {
                                 .min_h_0()
                                 .overflow_y_scroll()
                                 .track_scroll(&self.native_sidebar.scroll)
-                                .on_scroll_wheel(cx.listener(|app, _, _, cx| {
+                                .on_scroll(cx.listener(|app, _, _, cx| {
                                     app.native_sidebar.scroll_animation = None;
                                     app.native_sidebar_scroll_wheel_moved(cx);
                                 }))
-                                .on_mouse_down(
-                                    gpui::MouseButton::Left,
-                                    cx.listener(|app, event: &gpui::MouseDownEvent, _, cx| {
-                                        app.begin_native_space_mouse_drag(event, cx)
-                                    }),
-                                )
+                                .when(classic, |list| {
+                                    list.on_mouse_down(
+                                        gpui::MouseButton::Left,
+                                        cx.listener(|app, event: &gpui::MouseDownEvent, _, cx| {
+                                            app.begin_native_space_mouse_drag(event, cx)
+                                        }),
+                                    )
+                                })
                                 .child(
                                     v_flex()
                                         // Every block but the trailing ungroup drop zone, which is empty list space.
@@ -261,15 +281,14 @@ impl GhostexGpuiApp {
                                         .left(px(space_offset * appearance.scale))
                                         .opacity(space_opacity)
                                         .when(!content.bots_mode, |column| {
-                                            column.child(
-                                                self.render_native_sidebar_ghosts_section(
-                                                    &content.ghosts,
-                                                    &appearance,
-                                                    cx,
-                                                ),
-                                            )
+                                            column.child(self.render_native_sidebar_ghosts_section(
+                                                &content.ghosts,
+                                                &appearance,
+                                                cx,
+                                            ))
                                         })
-                                        .when(content.automations_row, |column| {
+                                        .children(unified_list)
+                                        .when(classic && content.automations_row, |column| {
                                             column.child(
                                                 self.render_native_sidebar_automations_row(
                                                     content.automations_today,
@@ -279,7 +298,8 @@ impl GhostexGpuiApp {
                                             )
                                         })
                                         .when(
-                                            content.order.is_empty()
+                                            classic
+                                                && content.order.is_empty()
                                                 && content.machine_notice.is_none(),
                                             |column| {
                                                 column.child(self.render_native_sidebar_empty(
@@ -289,31 +309,35 @@ impl GhostexGpuiApp {
                                                 ))
                                             },
                                         )
-                                        .children(content.order.iter().filter_map(|item| {
-                                            if item.kind == "collection" {
-                                                content
-                                                    .collections
-                                                    .iter()
-                                                    .find(|collection| {
-                                                        collection.collection_id == item.id
-                                                    })
-                                                    .map(|collection| {
-                                                        self.render_native_collection(
-                                                            collection,
-                                                            &content,
-                                                            &appearance,
-                                                            cx,
-                                                        )
-                                                    })
-                                            } else {
-                                                content
-                                                    .groups
-                                                    .iter()
-                                                    .find(|group| group.group_id == item.id)
-                                                    .filter(|group| !session_groups.nests(group))
-                                                    .map(|group| {
-                                                        // CDXC:Spaces 2026-10-06 WHY: padding, not a margin, so this block's measured bounds (where a press is a row's and not the empty list space that starts a Space drag) cover the project header's box, which reaches left over its chevron; as a margin, a click on the chevron armed the Space drag and showed the grabbing hand.
-                                                        div()
+                                        .children(
+                                            content.order.iter().filter(|_| classic).filter_map(
+                                                |item| {
+                                                    if item.kind == "collection" {
+                                                        content
+                                                            .collections
+                                                            .iter()
+                                                            .find(|collection| {
+                                                                collection.collection_id == item.id
+                                                            })
+                                                            .map(|collection| {
+                                                                self.render_native_collection(
+                                                                    collection,
+                                                                    &content,
+                                                                    &appearance,
+                                                                    cx,
+                                                                )
+                                                            })
+                                                    } else {
+                                                        content
+                                                            .groups
+                                                            .iter()
+                                                            .find(|group| group.group_id == item.id)
+                                                            .filter(|group| {
+                                                                !session_groups.nests(group)
+                                                            })
+                                                            .map(|group| {
+                                                                // CDXC:Spaces 2026-10-06 WHY: padding, not a margin, so this block's measured bounds (where a press is a row's and not the empty list space that starts a Space drag) cover the project header's box, which reaches left over its chevron; as a margin, a click on the chevron armed the Space drag and showed the grabbing hand.
+                                                                div()
                                                             .pl(px(18.0 * appearance.scale))
                                                             .mr(px(5.0 * appearance.scale))
                                                             .mb(px(10.0 * appearance.scale))
@@ -328,9 +352,22 @@ impl GhostexGpuiApp {
                                                                 ),
                                                             )
                                                             .into_any_element()
-                                                    })
-                                            }
-                                        }))
+                                                            })
+                                                    }
+                                                },
+                                            ),
+                                        )
+                                        .children(
+                                            content.show_all_projects_row.filter(|_| classic).map(
+                                                |row| {
+                                                    self.render_native_show_all_projects_row(
+                                                        row,
+                                                        &appearance,
+                                                        cx,
+                                                    )
+                                                },
+                                            ),
+                                        )
                                         .child(
                                             div()
                                                 .id("native-sidebar-ungroup-drop")
@@ -347,13 +384,16 @@ impl GhostexGpuiApp {
                                 ),
                         ))
                         .child(self.render_native_sidebar_list_fade(&appearance))
-                        .when_some(content.machine_notice.as_ref(), |list, notice| {
-                            list.child(self.render_native_sidebar_machine_notice(
-                                notice,
-                                &appearance,
-                                cx,
-                            ))
-                        }),
+                        .when_some(
+                            content.machine_notice.as_ref().filter(|_| classic),
+                            |list, notice| {
+                                list.child(self.render_native_sidebar_machine_notice(
+                                    notice,
+                                    &appearance,
+                                    cx,
+                                ))
+                            },
+                        ),
                 )
             })
             /*
@@ -387,8 +427,9 @@ impl GhostexGpuiApp {
                         header_hover.track(header_view, window);
                         let view = wheel_view.clone();
                         window.on_mouse_event(
-                            move |event: &gpui::ScrollWheelEvent, phase, window, cx| {
-                                if phase == gpui::DispatchPhase::Capture
+                            move |event: &gpui::ScrollEvent, phase, window, cx| {
+                                if classic
+                                    && phase == gpui::DispatchPhase::Capture
                                     && bounds.contains(&event.position)
                                 {
                                     view.update(cx, |app, cx| {
@@ -423,7 +464,7 @@ impl GhostexGpuiApp {
                 .inset_0(),
             )
             .children(
-                (!two_column)
+                (classic && !two_column)
                     .then(|| self.render_native_sticky_project(&content, &appearance, cx))
                     .flatten(),
             )

@@ -375,7 +375,11 @@ pub fn classify_session_chat_terminal_notice(
                 notice.severity = SessionChatTerminalNoticeSeverity::Warning;
                 return Some(notice);
             }
-            return Some(dialog.into_notice(SESSION_CHAT_NOTICE_CLAUDE_INPUT_BLOCKED));
+            let mut notice = dialog.into_notice(SESSION_CHAT_NOTICE_CLAUDE_INPUT_BLOCKED);
+            // The terminal output opens on what Claude printed above the dialog (the chat core's
+            // questions/notice_tail.rs), so the card carries the screen, not the dialog again.
+            notice.screen_tail = screen.screen_tail();
+            return Some(notice);
         }
     }
     if agent == SessionChatOptionAgent::Antigravity {
@@ -402,12 +406,9 @@ pub fn classify_session_chat_terminal_notice(
                 notice.screen_tail = screen.screen_tail();
                 return Some(notice);
             }
-            let update_prompt = dialog.is_codex_update_prompt();
             let mut notice = dialog.into_notice(SESSION_CHAT_NOTICE_CODEX_INPUT_BLOCKED);
-            if update_prompt {
-                // The card's wording replaces Codex's; the terminal output keeps the install command it would run.
-                notice.screen_tail = screen.screen_tail();
-            }
+            // CDXC:SessionChat 2026-10-27 DECISION: the terminal output opens on what Codex printed above its prompt (Q682, the chat core's questions/notice_tail.rs), so every Codex dialog card carries the screen rather than the dialog's own text again. An update prompt's output still shows the install command it would run.
+            notice.screen_tail = screen.screen_tail();
             return Some(notice);
         }
     }

@@ -61,7 +61,7 @@ pub(crate) async fn handle_read_voice_agent_http(
         "keys": {"xai": key_view(Provider::Xai), "openai": key_view(Provider::OpenAi)},
         "secretsSealedWith": crate::vault::vault_backend(paths),
         // Off on Settings > Extensions: `/api/voice` refuses conversations (`feature.rs`); the
-        // keys stay readable because Dictate uses the xAI key.
+        // keys stay readable because Dictate uses the xAI or OpenAI key.
         "enabled": super::feature::voice_agent_on(paths),
         "conversations": registry::summary(),
         // Calls about one session (`focus` on `/api/voice`) are understood here.

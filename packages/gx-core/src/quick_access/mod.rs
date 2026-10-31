@@ -16,6 +16,8 @@ mod prompts;
 mod row_actions;
 mod session_titles;
 mod sessions;
+#[cfg(test)]
+mod sessions_tests;
 mod store_groups;
 mod text;
 mod wire;
@@ -24,9 +26,9 @@ pub use controller::{
     QuickAccessContext, QuickAccessController, QuickAccessEffect, QuickAccessTab,
 };
 pub use data::{
-    HotkeyPlatformWire, QuickAccessCollection, QuickAccessData, QuickAccessHiddenItems,
-    QuickAccessOpenTarget, QuickAccessRecoveredDraft, QuickAccessRunState, QuickAccessSession,
-    QuickAccessStorage, QuickAccessStoreGroup,
+    HotkeyPlatformWire, QuickAccessCollection, QuickAccessData, QuickAccessExtension,
+    QuickAccessHiddenItems, QuickAccessOpenTarget, QuickAccessRecoveredDraft, QuickAccessRunState,
+    QuickAccessSession, QuickAccessStorage, QuickAccessStoreGroup,
 };
 pub use store_groups::quick_access_store_groups;
 pub use text::{FixedClock, HotkeyPlatform, QuickAccessClock};

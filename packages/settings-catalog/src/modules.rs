@@ -147,6 +147,10 @@ pub fn exports(module: &str, platform: Platform) -> Vec<(&'static str, Json)> {
                 DEFAULT_SESSION_CARD_HOVER_BUTTONS.to_json(),
             ),
             (
+                "DEFAULT_UNIFIED_SESSION_CARD_HOVER_BUTTONS",
+                DEFAULT_UNIFIED_SESSION_CARD_HOVER_BUTTONS.to_json(),
+            ),
+            (
                 "SESSION_CARD_HOVER_BUTTON_LABELS",
                 SESSION_CARD_HOVER_BUTTON_LABELS.to_json(),
             ),
@@ -316,6 +320,10 @@ pub fn exports(module: &str, platform: Platform) -> Vec<(&'static str, Json)> {
                 MAX_WINDOW_GLASS_WORK_AREA_TINT_PERCENT.to_json(),
             ),
             (
+                "FILE_CHANGES_OPEN_TARGET_OPTIONS",
+                FILE_CHANGES_OPEN_TARGET_OPTIONS.to_json(),
+            ),
+            (
                 "MEDIA_FILE_OPEN_TARGET_OPTIONS",
                 MEDIA_FILE_OPEN_TARGET_OPTIONS.to_json(),
             ),
@@ -388,6 +396,10 @@ pub fn exports(module: &str, platform: Platform) -> Vec<(&'static str, Json)> {
                 MIN_WINDOW_GLASS_WORK_AREA_TINT_PERCENT.to_json(),
             ),
             (
+                "NEW_SESSION_AGENT_SCOPE_OPTIONS",
+                NEW_SESSION_AGENT_SCOPE_OPTIONS.to_json(),
+            ),
+            (
                 "PANEL_ANIMATION_SPEED_OPTIONS",
                 PANEL_ANIMATION_SPEED_OPTIONS.to_json(),
             ),
@@ -443,6 +455,7 @@ pub fn exports(module: &str, platform: Platform) -> Vec<(&'static str, Json)> {
                 "SIDEBAR_SPACE_SWITCH_BEHAVIOR_OPTIONS",
                 SIDEBAR_SPACE_SWITCH_BEHAVIOR_OPTIONS.to_json(),
             ),
+            ("SIDEBAR_VIEW_OPTIONS", SIDEBAR_VIEW_OPTIONS.to_json()),
             (
                 "SIDEBAR_THEME_SETTING_OPTIONS",
                 SIDEBAR_THEME_SETTING_OPTIONS.to_json(),
@@ -471,10 +484,6 @@ pub fn exports(module: &str, platform: Platform) -> Vec<(&'static str, Json)> {
             (
                 "CHAT_PAGE_OPEN_TARGET_OPTIONS",
                 CHAT_PAGE_OPEN_TARGET_OPTIONS.to_json(),
-            ),
-            (
-                "SESSION_STATUS_SOURCE_OPTIONS",
-                SESSION_STATUS_SOURCE_OPTIONS.to_json(),
             ),
             (
                 "WEB_LINK_OPEN_TARGET_OPTIONS",
@@ -519,10 +528,7 @@ pub fn exports(module: &str, platform: Platform) -> Vec<(&'static str, Json)> {
                 "DIAGNOSTIC_LOGGING_DURATION_OPTIONS",
                 DIAGNOSTIC_LOGGING_DURATION_OPTIONS.to_json(),
             ),
-            (
-                "HOTKEY_SETTINGS_SECTIONS",
-                HOTKEY_SETTINGS_SECTIONS.to_json(),
-            ),
+            ("HOTKEY_SETTINGS_SECTIONS", hotkey_settings_sections()),
             (
                 "MAIN_SETTINGS_SCROLL_TARGET_SETTING_KEYS",
                 MAIN_SETTINGS_SCROLL_TARGET_SETTING_KEYS.to_json(),
@@ -609,3 +615,31 @@ pub const MODULES: &[&str] = &[
     module::TERMINAL_FONT_PRESET,
     module::TITLEBAR_COLOR,
 ];
+
+/// `HOTKEY_SETTINGS_SECTIONS` followed by the Terminal focused section: the terminal-only hotkeys,
+/// then every other hotkey with a Terminal focused binding in the order the sections above list
+/// them. Its `"terminal": true` makes Settings read and save `terminalHotkeys` for its rows.
+fn hotkey_settings_sections() -> Json {
+    let Json::Arr(mut sections) = HOTKEY_SETTINGS_SECTIONS.to_json() else {
+        unreachable!("HOTKEY_SETTINGS_SECTIONS is an array");
+    };
+    let mut ids: Vec<&'static str> = crate::hotkeys::TERMINAL_ONLY_HOTKEY_IDS.to_vec();
+    for section in HOTKEY_SETTINGS_SECTIONS.as_array() {
+        for id in section.get("ids").map(J::as_array).unwrap_or_default() {
+            let Some(id) = id.as_str() else { continue };
+            if crate::hotkeys::hotkey_definition(id)
+                .is_some_and(crate::hotkeys::hotkey_has_terminal_binding)
+                && !ids.contains(&id)
+            {
+                ids.push(id);
+            }
+        }
+    }
+    sections.push(Json::obj([
+        ("id", Json::str("terminalFocused")),
+        ("title", Json::str("Terminal focused")),
+        ("terminal", Json::Bool(true)),
+        ("ids", Json::Arr(ids.into_iter().map(Json::str).collect())),
+    ]));
+    Json::Arr(sections)
+}

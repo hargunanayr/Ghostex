@@ -32,7 +32,11 @@ pub fn ghost_home_dir(paths: &GxserverPaths, ghost_id: &str) -> PathBuf {
 
 pub fn content_hash(text: &str) -> String {
     let digest = Sha256::digest(text.as_bytes());
-    digest.iter().take(8).map(|byte| format!("{byte:02x}")).collect()
+    digest
+        .iter()
+        .take(8)
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn io_error(error: std::io::Error) -> DomainStateError {
@@ -64,10 +68,16 @@ pub fn validate_ghost_file_name(name: &str) -> Result<(), DomainStateError> {
 }
 
 /// Makes the home folder and seeds a missing Soul and Memory.
-pub fn ensure_ghost_home(paths: &GxserverPaths, ghost_id: &str) -> Result<PathBuf, DomainStateError> {
+pub fn ensure_ghost_home(
+    paths: &GxserverPaths,
+    ghost_id: &str,
+) -> Result<PathBuf, DomainStateError> {
     let home = ghost_home_dir(paths, ghost_id);
     fs::create_dir_all(home.join("memory")).map_err(io_error)?;
-    for (name, seed) in [(GHOST_SOUL_FILE, DEFAULT_SOUL), (GHOST_MEMORY_FILE, DEFAULT_MEMORY)] {
+    for (name, seed) in [
+        (GHOST_SOUL_FILE, DEFAULT_SOUL),
+        (GHOST_MEMORY_FILE, DEFAULT_MEMORY),
+    ] {
         let path = home.join(name);
         if !path.exists() {
             write_atomic(&path, seed)?;
@@ -146,7 +156,9 @@ pub fn memory_for_context(memory: &str) -> String {
         if index >= GHOST_MEMORY_CONTEXT_MAX_LINES
             || out.len() + line.len() + 1 > GHOST_MEMORY_CONTEXT_MAX_BYTES
         {
-            out.push_str("\n(More memory is in MEMORY.md; search it with `ghostex ghost memory search`.)\n");
+            out.push_str(
+                "\n(More memory is in MEMORY.md; search it with `ghostex ghost memory search`.)\n",
+            );
             break;
         }
         out.push_str(line);

@@ -68,7 +68,11 @@ pub(crate) struct CompletionOutcome {
     pub(crate) follow_up: Option<CompletionFollowUp>,
 }
 
-fn completion_update(project_id: &str, session_id: &str, completed_at: Value) -> Map<String, Value> {
+fn completion_update(
+    project_id: &str,
+    session_id: &str,
+    completed_at: Value,
+) -> Map<String, Value> {
     let mut update = Map::new();
     update.insert("projectId".to_string(), json!(project_id));
     update.insert("sessionId".to_string(), json!(session_id));
@@ -77,7 +81,11 @@ fn completion_update(project_id: &str, session_id: &str, completed_at: Value) ->
 }
 
 /// A thread that is working has nothing to review yet, and a draft has never been started.
-fn refuse_completion(session: &Value, session_ref: &str, now_iso: &str) -> Result<(), DomainStateError> {
+fn refuse_completion(
+    session: &Value,
+    session_ref: &str,
+    now_iso: &str,
+) -> Result<(), DomainStateError> {
     if crate::session_lifecycle::session_activity(session, now_iso) == "working" {
         return Err(DomainStateError::bad_request(format!(
             "Session {session_ref} is working and cannot be completed."
@@ -103,7 +111,9 @@ pub(crate) fn set_session_completed(
     let session_ref = format!("{project_id}/{session_id}");
     let session = repository
         .get_session(project_id, session_id)?
-        .ok_or_else(|| DomainStateError::not_found(format!("Session {session_ref} does not exist.")))?;
+        .ok_or_else(|| {
+            DomainStateError::not_found(format!("Session {session_ref} does not exist."))
+        })?;
     let already = session_is_completed(&session);
     if !completed {
         if !already {
@@ -126,7 +136,11 @@ pub(crate) fn set_session_completed(
         (session, false)
     } else {
         (
-            repository.update_session(&completion_update(project_id, session_id, json!(now_iso)))?,
+            repository.update_session(&completion_update(
+                project_id,
+                session_id,
+                json!(now_iso),
+            ))?,
             true,
         )
     };

@@ -138,6 +138,10 @@ impl GhostexGpuiApp {
         if self.gx_store_answer_session_menu(&command, cx) {
             return;
         }
+        // The Unified sidebar's filter (gx_store/unified_sidebar.rs).
+        if self.gx_store_run_unified_sidebar_command(&command, cx) {
+            return;
+        }
         // A machine tab's Update item (remote_conn/app_update.rs).
         if command["type"] == "remoteAppUpdate" {
             if let Some(command) = command.as_object() {

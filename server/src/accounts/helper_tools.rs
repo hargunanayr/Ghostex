@@ -327,13 +327,13 @@ fn install_plan(home: &Path, provider: Provider) -> (String, Option<String>) {
 }
 
 fn installed_version(executable: &Path) -> Option<String> {
-    let output = crate::platform::process::background_command(executable)
-        .arg("--version")
-        .stdin(Stdio::null())
-        .output()
-        .ok()
-        .filter(|output| output.status.success())?;
-    managed_tools::tools::version_in(&String::from_utf8_lossy(&output.stdout))
+    let mut command = crate::platform::process::background_command(executable);
+    command.arg("--version");
+    let stdout = crate::agent_hooks::probing::run_command_stdout_with_timeout(
+        command,
+        managed_tools::run::PROBE_TIMEOUT,
+    )?;
+    managed_tools::tools::version_in(&stdout)
 }
 
 static LATEST: Mutex<Option<HashMap<&'static str, (Instant, Result<String, String>)>>> =

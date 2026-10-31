@@ -16,8 +16,72 @@ use crate::app::render::window_drag_region::window_drag_region;
 use crate::*;
 
 /// The narrowest a top-row button gets when the sidebar is too narrow for the full 34pt slots:
-/// its 15pt icon plus a little room, so every button stays visible.
-pub(crate) const SIDEBAR_TOP_ROW_BUTTON_MIN_WIDTH: f32 = 20.0;
+/// its 15pt icon plus 2pt either side, so every button stays visible.
+///
+/// CDXC:Sidebar 2026-10-29 DECISION:
+/// User, asked whether Claude's button may stay hidden at the default macOS sidebar width (235pt,
+/// 1pt short of fitting Claude, Search and the menu at the old 20pt minimum): "Yes, make it fit".
+/// The minimum is 19pt (was 20pt), which only matters while a row is squeezed: at any width where
+/// the buttons fit at their full 34pt slots, nothing changed.
+pub(crate) const SIDEBAR_TOP_ROW_BUTTON_MIN_WIDTH: f32 = 19.0;
+
+/// A built-in extension's button in the sidebar's top row (Claude's), listed by the desktop's
+/// app/claude_web/sidebar_button.rs (the web build lists none).
+pub(crate) struct SidebarExtensionButton {
+    /// The view it opens (`TitlebarMode::Extension`).
+    pub(crate) id: String,
+    pub(crate) title: String,
+    pub(crate) icon: &'static str,
+    /// Its view is the one on screen.
+    pub(crate) showing: bool,
+}
+
+/// The gap between the top row's buttons, in unscaled points (the row's `gap`).
+const SIDEBAR_TOP_ROW_GAP: f32 = 4.0;
+
+/// The row's side padding, in unscaled points.
+const SIDEBAR_TOP_ROW_PADDING: f32 = 5.0;
+
+/// The two leading toggles (Toggle sidebar, Agents Panel) in the docked row, unscaled: each is its
+/// 18pt icon, its 1.5pt left offset and 7pt of padding either side (`header_panel_toggle_button`),
+/// 4pt apart.
+const SIDEBAR_TOP_ROW_TOGGLES_WIDTH: f32 = 2.0
+    * (2.0 * TITLEBAR_BUTTON_HORIZONTAL_PADDING
+        + TITLEBAR_SIDEBAR_COLLAPSE_ICON_SIZE
+        + TITLEBAR_SIDEBAR_COLLAPSE_ICON_LEFT_OFFSET)
+    + 4.0;
+
+/// Whether `button_count` right-aligned buttons all fit in the top row at their narrowest
+/// (`SIDEBAR_TOP_ROW_BUTTON_MIN_WIDTH`). The docked row (`owns_window_corner`) also holds the
+/// leading reserve and the two toggles; the hover-reveal row is buttons only.
+///
+/// CDXC:Sidebar 2026-10-28 WHY:
+/// The sidebar menu is the row's last button, so it is what slides off the edge when the row is
+/// too narrow (GitHub #288). Extension buttons (Claude's) therefore show only while every button
+/// fits at its minimum, so they give way before anything else is clipped.
+///
+/// Narrowest docked width that fits the row at 1x (macOS, 88pt reserve; Windows and Linux need
+/// 78pt less): Claude + Search + menu 233pt (so it shows at the 235pt default), + the bell (or
+/// the Hermes button) 256pt, + both 279pt. Every further button adds 23pt.
+fn sidebar_top_row_fits(
+    sidebar_width: f32,
+    scale: f32,
+    owns_window_corner: bool,
+    button_count: usize,
+) -> bool {
+    let gap = SIDEBAR_TOP_ROW_GAP * scale;
+    let count = button_count as f32;
+    let buttons = count * SIDEBAR_TOP_ROW_BUTTON_MIN_WIDTH * scale + (count - 1.0).max(0.0) * gap;
+    let (reserved, toggles) = if owns_window_corner {
+        (
+            SIDEBAR_TOGGLE_LEADING_X + SIDEBAR_TOP_ROW_PADDING * scale,
+            SIDEBAR_TOP_ROW_TOGGLES_WIDTH + gap,
+        )
+    } else {
+        (2.0 * SIDEBAR_TOP_ROW_PADDING * scale, 0.0)
+    };
+    sidebar_width - reserved + 0.01 >= toggles + buttons
+}
 
 impl GhostexGpuiApp {
     /// CDXC:Sidebar 2026-09-19 DECISION:
@@ -29,6 +93,27 @@ impl GhostexGpuiApp {
         appearance: &SidebarAppearance,
         footer: bool,
         usage_meter_count: usize,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        let owns_window_corner = !footer && !self.sidebar_collapsed;
+        self.render_native_sidebar_row(
+            appearance,
+            footer,
+            usage_meter_count,
+            owns_window_corner,
+            cx,
+        )
+    }
+
+    /// The top row (or with `footer` the bottom bar). `owns_window_corner` draws it as the docked
+    /// sidebar's top row, in the window's top-left corner: the desktop's Claude header draws that
+    /// same row while Claude has the sidebar hidden (app/claude_web/header.rs).
+    pub(crate) fn render_native_sidebar_row(
+        &self,
+        appearance: &SidebarAppearance,
+        footer: bool,
+        usage_meter_count: usize,
+        owns_window_corner: bool,
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
         let scale = appearance.scale;
@@ -46,7 +131,7 @@ impl GhostexGpuiApp {
         };
         // The menu is read when the button is pressed; sharing the snapshot keeps this row from
         // copying the menu's JSON on every frame.
-        let more_menu_snapshot = snapshot.clone();
+        let more_menu_now = self.native_sidebar_more_menu_now(&snapshot.more_menu);
         /*
         CDXC:Sidebar 2026-09-20 DECISION:
         User: with the titlebar row deleted, the sidebar's Search row is what sits in the window's
@@ -64,7 +149,6 @@ impl GhostexGpuiApp {
         occludes it, and a caption press never reaches an `on_click`, so every button in this row
         occludes there.
         */
-        let owns_window_corner = !footer && !self.sidebar_collapsed;
         /*
         CDXC:Sidebar 2026-09-21 DECISION:
         User: the Search and the Commands buttons are icon-only buttons with the icon they already
@@ -98,7 +182,6 @@ impl GhostexGpuiApp {
         let bots_toggle = (!footer && snapshot.bots_enabled && !snapshot.spaces_enabled)
             .then_some(snapshot.bots_mode);
         let bell_visible = !footer && self.titlebar_notification_bell_visible();
-        let work_visible = !footer && !snapshot.work_mode_project_ids().is_empty();
         let icon_path = if footer {
             "titlebar/bolt.svg"
         } else {
@@ -139,35 +222,31 @@ impl GhostexGpuiApp {
             end.
             */
             .flex_shrink_0()
-            .text_color(titlebar_active_text_color().opacity(0.52))
+            .text_color(appearance.chrome_icon)
             /*
             CDXC:Sidebar 2026-09-23 DECISION:
             User: the Toggle sidebar and Agents Panel buttons at the top of the sidebar have the
             same color as the notification bell there, so this row draws their icons in the
-            sidebar's muted color rather than the header's bright one.
+            sidebar's icon grey rather than the header's bright one (since 2026-10-29 that grey is the header's own icon colour, see `SidebarAppearance::chrome_icon`).
             */
             .when(owns_window_corner, |row| {
                 // The row's unscaled leading padding puts the button on the header's x. The spacer
                 // keeps it left of the row's other buttons, which align right.
                 row.child(
-                    div()
-                        .flex_shrink_0()
-                        .child(self.render_sidebar_collapse_button(Some(appearance.muted), cx)),
+                    div().flex_shrink_0().child(
+                        self.render_sidebar_collapse_button(Some(appearance.chrome_icon), cx),
+                    ),
                 )
                 // Right of Toggle sidebar, as in the collapsed header (workarea_header/breadcrumb.rs),
                 // which puts it 4pt after that button: the margin tops the scaled row gap up to it.
-                .child(
-                    div().flex_shrink_0().ml(px(4.0 - 4.0 * scale)).child(
-                        self.render_workarea_header_agents_toggle(Some(appearance.muted), cx),
-                    ),
-                )
+                .child(div().flex_shrink_0().ml(px(4.0 - 4.0 * scale)).child(
+                    self.render_workarea_header_agents_toggle(Some(appearance.chrome_icon), cx),
+                ))
                 // The Board button, right of the Agents Panel one in both places.
                 .when(self.session_board_enabled(), |row| {
-                    row.child(
-                        div().flex_shrink_0().ml(px(4.0 - 4.0 * scale)).child(
-                            self.render_workarea_header_board_toggle(Some(appearance.muted), cx),
-                        ),
-                    )
+                    row.child(div().flex_shrink_0().ml(px(4.0 - 4.0 * scale)).child(
+                        self.render_workarea_header_board_toggle(Some(appearance.chrome_icon), cx),
+                    ))
                 })
                 // The negative margin cancels the row gap this zero-width spacer adds, so the
                 // buttons right of it keep their even 38px slots.
@@ -176,53 +255,27 @@ impl GhostexGpuiApp {
             .when_some(bots_toggle, |row, bots_mode| {
                 row.child(self.render_native_sidebar_bots_toggle(bots_mode, appearance, cx))
             })
-            // CDXC:WorkMode 2026-10-09 DECISION:
-            // User: a briefcase button at the top of the sidebar opens the Work list as a tab in the side panel; it shows only while the window has a project with Work mode on, Personal ones included. (Since 2026-10-24 the view is called Issues and a project has Issues Workflow on once a Linear key or `gh` is set up; CDXC:WorkMode 2026-10-24 in server/src/work_mode/project.rs.)
-            .when(work_visible, |row| {
-                let showing = self.work_view_showing();
-                row.child(
-                    div()
-                        .id("native-sidebar-work")
-                        .role(gpui::Role::Button)
-                        .aria_label("Issues")
-                        .aria_selected(showing)
-                        .when(cfg!(target_os = "windows"), |button| button.occlude())
-                        .h(px(28.0 * scale))
-                        .w(px(34.0 * scale))
-                        .rounded(px(5.0 * scale))
-                        .flex()
-                        .flex_shrink(1.0)
-                        .min_w(px(SIDEBAR_TOP_ROW_BUTTON_MIN_WIDTH * scale))
-                        .items_center()
-                        .justify_center()
-                        .cursor_default()
-                        .when(showing, |button| button.bg(appearance.hover))
-                        .hover(|button| button.bg(appearance.hover))
-                        .child(titlebar_svg_icon(
-                            "titlebar/briefcase.svg",
-                            15.0 * scale,
-                            if showing {
-                                titlebar_active_text_color()
-                            } else {
-                                appearance.muted
-                            },
-                        ))
-                        .on_click(cx.listener(|app, _, _, cx| {
-                            cx.stop_propagation();
-                            app.dispatch_native_sidebar_ui(json!({"type": "openWorkView"}), cx);
-                        }))
-                        .managed_discrete_tooltip_with_placement(
-                            ManagedTooltipPlacement::Right,
-                            tooltip_delay,
-                            |window, cx| {
-                                super::tooltips::sidebar_style_tooltip(
-                                    "Issues".to_string(),
-                                    window,
-                                    cx,
-                                )
-                            },
-                        ),
-                )
+            /*
+            CDXC:Extensions 2026-10-28 DECISION:
+            User: "move the Claude button here up to where 'Issues' button is and make this button
+            match this color #7C828C (shouldn't be orange)". Claude's button sits in the top row,
+            left of Search, and is drawn in the row's icon colour like its neighbours (first #7C828C,
+            since 2026-10-29 the header's icon grey, see `SidebarAppearance::chrome_icon`); selected is a hover fill with a bright icon. The bottom bar keeps
+            Commands. This supersedes the 2026-10-25 bottom-bar placement
+            (app/claude_web/sidebar_button.rs). Issues' briefcase left this row afterwards (see
+            CDXC:WorkMode 2026-10-29 in app/work_view/host.rs), so Claude is the row's first
+            right-aligned button after the Hermes one.
+            */
+            .when(!footer, |row| {
+                // Search, the menu and each button the row shows now.
+                let other_buttons =
+                    2 + usize::from(bots_toggle.is_some()) + usize::from(bell_visible);
+                row.children(self.render_native_sidebar_extension_buttons(
+                    appearance,
+                    owns_window_corner,
+                    other_buttons,
+                    cx,
+                ))
             })
             // CDXC:Workspaces 2026-10-11 DECISION: User: move the workspace picker out of the Spaces row to the bottom left of the app, in the sidebar's bottom bar, with 5px more margin from the sidebar's left side than the bar's own padding so it lines up with the account row above it. The bar's other buttons sit right of the spacer.
             .when(footer, |row| {
@@ -249,7 +302,7 @@ impl GhostexGpuiApp {
                     .child(titlebar_svg_icon(
                         icon_path,
                         15.0 * scale,
-                        titlebar_active_text_color().opacity(0.52),
+                        appearance.chrome_icon,
                     ))
                     .on_click(cx.listener(move |app, _, _, cx| {
                         cx.stop_propagation();
@@ -302,7 +355,7 @@ impl GhostexGpuiApp {
                         .child(titlebar_svg_icon(
                             "titlebar/menu-2.svg",
                             15.0 * scale,
-                            appearance.muted,
+                            appearance.chrome_icon,
                         ))
                         .on_prepaint({
                             let bounds = self.native_sidebar.more_button_bounds.clone();
@@ -318,7 +371,7 @@ impl GhostexGpuiApp {
                                     size: gpui::size(gpui::px(1.0), gpui::px(1.0)),
                                 });
                                 Self::toggle_native_sidebar_more_menu(
-                                    &more_menu_snapshot.more_menu,
+                                    &more_menu_now,
                                     trigger,
                                     event.position,
                                     scale,
@@ -362,7 +415,7 @@ impl GhostexGpuiApp {
                         .child(titlebar_svg_icon(
                             TITLEBAR_ICON_SETTINGS,
                             15.0 * scale,
-                            appearance.muted,
+                            appearance.chrome_icon,
                         ))
                         .on_click(cx.listener(move |app, _, _, cx| {
                             cx.stop_propagation();
@@ -385,5 +438,138 @@ impl GhostexGpuiApp {
                 )
             })
             .into_any_element()
+    }
+
+    /// The top row's extension buttons: the extension's own mark in the row's icon colour, its
+    /// title in the tooltip; while its view is on screen it is drawn like the Issues button.
+    /// They give way first: none shows while the row could not fit them and its other
+    /// `other_buttons` at their minimum width (the view picker still lists the view).
+    fn render_native_sidebar_extension_buttons(
+        &self,
+        appearance: &SidebarAppearance,
+        owns_window_corner: bool,
+        other_buttons: usize,
+        cx: &mut gpui::Context<Self>,
+    ) -> Vec<AnyElement> {
+        let scale = appearance.scale;
+        let tooltip_delay = appearance.tooltip_delay;
+        let buttons = self.sidebar_extension_buttons();
+        if !sidebar_top_row_fits(
+            self.sidebar_width,
+            scale,
+            owns_window_corner,
+            other_buttons + buttons.len(),
+        ) {
+            return Vec::new();
+        }
+        buttons
+            .into_iter()
+            .map(|button| {
+                let SidebarExtensionButton {
+                    id,
+                    title,
+                    icon,
+                    showing,
+                } = button;
+                let click_id = id.clone();
+                let tooltip = title.clone();
+                div()
+                    .id(gpui::SharedString::from(format!(
+                        "native-sidebar-extension-{id}"
+                    )))
+                    .role(gpui::Role::Button)
+                    .aria_label(title)
+                    .aria_selected(showing)
+                    .when(cfg!(target_os = "windows"), |button| button.occlude())
+                    .h(px(28.0 * scale))
+                    .w(px(34.0 * scale))
+                    .rounded(px(5.0 * scale))
+                    .flex()
+                    .flex_shrink(1.0)
+                    .min_w(px(SIDEBAR_TOP_ROW_BUTTON_MIN_WIDTH * scale))
+                    .items_center()
+                    .justify_center()
+                    .cursor_default()
+                    .when(showing, |button| button.bg(appearance.hover))
+                    .hover(|button| button.bg(appearance.hover))
+                    .child(titlebar_svg_icon(
+                        icon,
+                        15.0 * scale,
+                        if showing {
+                            titlebar_active_text_color()
+                        } else {
+                            appearance.chrome_icon
+                        },
+                    ))
+                    .on_click(cx.listener(move |app, _, window, cx| {
+                        cx.stop_propagation();
+                        app.toggle_sidebar_extension_view(&click_id, window, cx);
+                    }))
+                    .managed_discrete_tooltip_with_placement(
+                        ManagedTooltipPlacement::Right,
+                        tooltip_delay,
+                        move |window, cx| {
+                            super::tooltips::sidebar_style_tooltip(tooltip.clone(), window, cx)
+                        },
+                    )
+                    .into_any_element()
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The row's width at which `count` buttons just fit, found by the same rule.
+    fn narrowest_fitting(scale: f32, corner: bool, count: usize) -> f32 {
+        (50..800)
+            .map(|width| width as f32)
+            .find(|width| sidebar_top_row_fits(*width, scale, corner, count))
+            .expect("fits below 800pt")
+    }
+
+    #[test]
+    fn extra_button_needs_one_more_slot() {
+        for corner in [true, false] {
+            let without = narrowest_fitting(1.0, corner, 4);
+            let with = narrowest_fitting(1.0, corner, 5);
+            assert!((with - without - 23.0).abs() <= 1.0);
+        }
+    }
+
+    #[test]
+    fn narrowest_docked_row_matches_the_hand_count() {
+        // Claude, Search, the bell and the menu at 19pt with 4pt gaps = 88pt, plus the two
+        // toggles (67pt) and their gaps (4 + 4), plus the leading reserve and 5pt right padding.
+        let expected = SIDEBAR_TOGGLE_LEADING_X + 5.0 + 67.0 + 4.0 + 4.0 + 88.0;
+        assert_eq!(narrowest_fitting(1.0, true, 4), expected);
+        // Without the bell: Claude, Search and the menu.
+        assert_eq!(narrowest_fitting(1.0, true, 3), expected - 23.0);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn claude_fits_the_default_sidebar_on_macos_without_the_bell() {
+        const DEFAULT_WIDTH: f32 = 235.0;
+        // Claude, Search and the menu.
+        assert!(sidebar_top_row_fits(DEFAULT_WIDTH, 1.0, true, 3));
+        assert!(!sidebar_top_row_fits(232.0, 1.0, true, 3));
+        // With the bell (or Hermes) it needs a wider sidebar, and then it gives way.
+        assert!(!sidebar_top_row_fits(DEFAULT_WIDTH, 1.0, true, 4));
+        assert!(sidebar_top_row_fits(256.0, 1.0, true, 4));
+    }
+
+    #[test]
+    fn scale_grows_the_buttons() {
+        assert!(!sidebar_top_row_fits(280.0, 1.3, false, 10));
+        assert!(sidebar_top_row_fits(280.0, 1.0, false, 10));
+    }
+
+    #[test]
+    fn hover_reveal_row_has_no_toggles() {
+        assert!(sidebar_top_row_fits(130.0, 1.0, false, 5));
+        assert!(!sidebar_top_row_fits(130.0, 1.0, true, 5));
     }
 }

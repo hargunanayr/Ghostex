@@ -239,6 +239,19 @@ pub(crate) struct SetVoiceAgentCallMode {
 #[action(namespace = ghostex_gpui, no_json)]
 pub(crate) struct VoiceCallAllSessions;
 
+/// A row of the header's Claude cloud menu (render/workarea_header/claude_cloud_button.rs) for the
+/// cloud session the work area showed when it opened: `pick` names the row
+/// (`claude_cloud_pick_id`), `account_id` the account an account row runs the session on.
+#[derive(Clone, Debug, PartialEq, Eq, Action)]
+#[action(namespace = ghostex_gpui, no_json)]
+pub(crate) struct ClaudeCloudMenuPicked {
+    pub(crate) shell_session_id: u64,
+    pub(crate) project_id: String,
+    pub(crate) session_id: String,
+    pub(crate) pick: &'static str,
+    pub(crate) account_id: Option<String>,
+}
+
 /// The header headset arrow's "This session: <title>": a call about the session the work area
 /// showed when the menu opened (raw ids of its computer; `remote_machine` names a connected one).
 #[derive(Clone, Debug, PartialEq, Eq, Action)]

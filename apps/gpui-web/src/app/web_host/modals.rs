@@ -33,6 +33,7 @@ fn opens_in_browser(kind: GpuiAppModalKind) -> bool {
             | GpuiAppModalKind::Feedback
             | GpuiAppModalKind::CreateLinearTicket
             | GpuiAppModalKind::WorkLinkPicker
+            | GpuiAppModalKind::AddSessionLink
     )
 }
 
@@ -95,7 +96,7 @@ impl GhostexGpuiApp {
             GpuiAppModalKind::FindPrompts => self.open_gpui_find_prompts_modal(cx),
             GpuiAppModalKind::NewCoordinator => self.open_gpui_new_coordinator_modal(message, cx),
             GpuiAppModalKind::MakeCoordinator => self.open_gpui_make_coordinator_modal(message, cx),
-            GpuiAppModalKind::Feedback => self.open_gpui_feedback_modal(cx),
+            GpuiAppModalKind::Feedback => self.open_gpui_feedback_modal(false, cx),
             GpuiAppModalKind::CreateLinearTicket => {
                 self.open_gpui_create_linear_ticket_modal(message, cx)
             }

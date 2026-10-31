@@ -105,11 +105,10 @@ impl GhostexGpuiApp {
         cx: &mut gpui::Context<Self>,
     ) {
         cx.activate(true);
-        if let Some(url) = session_id
+        if let Some(page) = session_id
             .strip_prefix(crate::app::browser_page_notifications::BROWSER_PAGE_NOTIFICATION_PREFIX)
         {
-            let url = url.to_string();
-            self.open_browser_page_from_notification(&url, window, cx);
+            self.open_browser_page_from_notification(page, window, cx);
             return;
         }
         if let Some(account_id) = session_id
@@ -129,13 +128,21 @@ impl GhostexGpuiApp {
         candidate: GpuiSessionAttentionNotificationCandidate,
         cx: &mut gpui::Context<Self>,
     ) {
-        let background = cx.background_executor().clone();
-        cx.spawn(async move |_this, _cx| {
-            let _ = background
-                .spawn(async move { gpui_deliver_macos_session_attention_notification(candidate) })
-                .await;
-        })
-        .detach();
+        // Linux banners go through GPUI so their click comes back (gpui_show_linux_session_attention_notification).
+        #[cfg(target_os = "linux")]
+        gpui_show_linux_session_attention_notification(candidate, cx);
+        #[cfg(not(target_os = "linux"))]
+        {
+            let background = cx.background_executor().clone();
+            cx.spawn(async move |_this, _cx| {
+                let _ = background
+                    .spawn(
+                        async move { gpui_deliver_macos_session_attention_notification(candidate) },
+                    )
+                    .await;
+            })
+            .detach();
+        }
     }
 
     pub(crate) fn apply_gpui_menu_bar_status_item_state(&self) {

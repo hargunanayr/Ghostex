@@ -75,6 +75,8 @@ pub use group_sleep::plan_group_sleep;
 pub use group_working::{
     owns_group_working_sessions_command, plan_group_working_sessions,
     GROUP_WORKING_SESSIONS_ACTION, GROUP_WORKING_SESSIONS_SETTINGS_SOURCE,
+    HIDE_PROJECTS_WITHOUT_SESSIONS_ACTION, UNIFIED_GROUP_BY_PROJECT_ACTION,
+    UNIFIED_WORKING_SECTION_ACTION,
 };
 pub use lifecycle::{
     apply_lifecycle_answer, owns_lifecycle_message, plan_lifecycle_request, FocusOptions,
@@ -85,8 +87,11 @@ pub use machine_disable::{
 };
 pub use modals::{owns_modal_message, plan_modal_action, rename_seed_title, ModalAction};
 pub use open::{owns_open_command, plan_open_action, OPEN_COMMAND_TYPES};
-pub use plan::{ActionEffect, SidebarActionPlan, ToastLevel};
-pub use read_only::{plan_read_only_action, READ_ONLY_MESSAGE_TYPES};
+pub use plan::{ActionEffect, SidebarActionPlan, ToastButton, ToastLevel};
+pub use read_only::{
+    plan_read_only_action, plan_remote_project_open, RemoteProjectOpen, READ_ONLY_MESSAGE_TYPES,
+    REMOTE_SSH_OPEN_TARGET_IDS,
+};
 pub use reload::{
     owns_reload_message, plan_full_reload, reload_continues_after, ReloadPlan, RELOAD_MESSAGE_TYPES,
 };

@@ -25,11 +25,14 @@ pub struct SelectionOptions {
     pub mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fast_mode: Option<String>,
+    /// Codex's permission mode, one of `CODEX_PERMISSION_MODES`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permissions: Option<String>,
 }
 
 impl SelectionOptions {
     pub fn is_empty(&self) -> bool {
-        self.mode.is_none() && self.fast_mode.is_none()
+        self.mode.is_none() && self.fast_mode.is_none() && self.permissions.is_none()
     }
 }
 
@@ -50,8 +53,13 @@ pub(crate) fn read_options(
         "antigravity" => matches!(mode, "default" | "accept-edits" | "auto" | "plan"),
         _ => false,
     });
+    let valid_permissions = options.permissions.as_deref().is_none_or(|value| {
+        provider == "codex"
+            && crate::session_chat_options::codex_permissions_command(value).is_some()
+    });
     if (options.fast_mode.is_some() && !matches!(provider, "codex" | "claude"))
         || !valid_mode
+        || !valid_permissions
         || !options
             .fast_mode
             .as_deref()
@@ -181,6 +189,7 @@ pub(crate) fn validate_selection(
             | "pi"
             | "omp"
             | "empryo"
+            | "dsh"
     ) || !token(model)
         || (!effort.is_empty() && !token(effort))
     {
@@ -340,6 +349,9 @@ fn enqueue_selection(
         .unwrap_or_default();
     if incoming_options.mode.is_some() {
         options.mode = incoming_options.mode;
+    }
+    if incoming_options.permissions.is_some() {
+        options.permissions = incoming_options.permissions;
     }
     if incoming_options.fast_mode.is_some() {
         options.fast_mode = incoming_options.fast_mode;

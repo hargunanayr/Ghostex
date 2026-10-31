@@ -22,7 +22,7 @@
     {"id":N,"op":"<op>","handle":H,"args":[...]}
     {"batch":[<request>, ...]}          one round trip for a settle round's calls
 
-  Ops (H is the number "new" answered; results mirror modules/gx-chat-core/src/index.ts):
+  Ops (H is the number "new" answered; results mirror src/chat/rust/core-types.ts in the app):
     version                         -> "gx-chat-wasm 0.1.0"
     memoryBytes                     -> the wasm memory's size in bytes (it only ever grows, so the
                                        host reloads the page when no chat is open and this is large)

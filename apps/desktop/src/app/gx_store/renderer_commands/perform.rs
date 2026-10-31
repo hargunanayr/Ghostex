@@ -5,17 +5,15 @@
 //! runtime, exactly what the runtime's renderer handler called), Full Reload, Restart and Close
 //! After Done are the sidebar row's commands, `switch-project` and `focus-group` are the menu bar's
 //! project activation, `move-project` is the sidebar's project drag, `run-command` is the titlebar
-//! Action runner, and `open` is the operating system's open-file request.
+//! Action runner, and `open` / `edit` are routed by `open_paths.rs`.
 //!
 //! SEE-ALSO: packages/gx-core/src/renderer_commands/ (validation and target resolution),
 //! apps/desktop/src/app/status_activation.rs (`dispatch_gpui_status_activation`,
 //! `dispatch_gpui_menu_bar_project_activation`; F3 moves both off the runtime).
 
-use std::path::PathBuf;
-
 use ghostex_gx_core::protocol::RendererCommand;
 use ghostex_gx_core::{
-    OpenPathTarget, OpenPathsMode, RendererCommandError, RendererSession, RendererVerb,
+    OpenPathsMode, RendererCommandError, RendererSession, RendererVerb, SessionGroupOp,
     plan_project_step, plan_renderer_command,
 };
 use gpui::Window;
@@ -28,10 +26,8 @@ use crate::app::consts::{
     GPUI_SIDEBAR_WORKSPACE_TERMINAL_RENAME_COMMAND_MESSAGE_VERSION,
 };
 use crate::app::helpers::{
-    GpuiTitlebarActionRunMode, GpuiTitlebarActionType, gpui_os_integration_project_root_for_path,
-    gpui_sidebar_open_browser_url_from_json,
+    GpuiTitlebarActionRunMode, GpuiTitlebarActionType, gpui_sidebar_open_browser_url_from_json,
 };
-use crate::app::model::{PendingSourceFileOpen, PendingSourceFileOpenOrigin};
 
 /// `{ ghostexId, projectId, sessionId }`, the session block of the old runtime's answers.
 fn session_json(session: &RendererSession) -> Value {
@@ -49,7 +45,11 @@ impl GhostexGpuiApp {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> Result<Value, RendererCommandError> {
-        let verb = plan_renderer_command(&self.gx_store.core, &command.action, &command.payload)?;
+        let payload = super::project_path::with_registered_project_folder(
+            &self.gx_store.core,
+            &command.payload,
+        );
+        let verb = plan_renderer_command(&self.gx_store.core, &command.action, &payload)?;
         let action = command.action.as_str();
         match verb {
             RendererVerb::FocusSession(session) => {
@@ -164,6 +164,7 @@ impl GhostexGpuiApp {
                 project_id,
                 reuse,
                 url,
+                agent_session,
             } => {
                 let mut payload = json!({
                     "reuse": reuse,
@@ -171,14 +172,21 @@ impl GhostexGpuiApp {
                     "url": url,
                     "version": GPUI_SIDEBAR_OPEN_BROWSER_URL_MESSAGE_VERSION,
                 });
-                if let Some(project_id) = project_id {
+                if let Some(project_id) = &project_id {
                     payload["projectId"] = json!(project_id);
                 }
                 if let Ok(message) = gpui_sidebar_open_browser_url_from_json(&payload.to_string()) {
                     self.open_browser_url_from_renderer_command(message, window, cx);
+                    if let (Some(agent_session), Some(project_id)) = (agent_session, &project_id) {
+                        self.note_agent_browser_page(agent_session, project_id);
+                    }
                 }
                 Ok(json!({ "accepted": true, "action": action, "ok": true }))
             }
+            RendererVerb::ListBrowserPages {
+                project_id,
+                agent_session,
+            } => Ok(self.list_agent_browser_pages(&project_id, agent_session.as_deref(), cx)),
             RendererVerb::ReloadSession {
                 session,
                 message_type,
@@ -231,7 +239,8 @@ impl GhostexGpuiApp {
                 Ok(json!({ "accepted": true, "action": action, "moved": moved, "ok": true }))
             }
             RendererVerb::ToggleSidebarCollapsed => {
-                self.toggle_gpui_sidebar_collapsed(cx);
+                // With Claude on, showing the sidebar leaves Claude (app/claude_web/takeover.rs).
+                self.toggle_sidebar_from_user(cx);
                 Ok(json!({
                     "accepted": true,
                     "action": action,
@@ -240,7 +249,7 @@ impl GhostexGpuiApp {
                 }))
             }
             RendererVerb::OpenPaths { mode, targets } => {
-                self.gx_store_open_renderer_paths(targets, cx);
+                self.gx_store_open_cli_paths(mode, targets, cx);
                 let mode = match mode {
                     OpenPathsMode::Open => "open",
                     OpenPathsMode::Edit => "edit",
@@ -249,52 +258,58 @@ impl GhostexGpuiApp {
             }
             // Another device updating this computer's Ghostex (os_integration/app_update_remote_control.rs).
             RendererVerb::AppUpdate(op) => Ok(self.answer_app_update_renderer_command(op, cx)),
-        }
-    }
-
-    /// `ghostex open` / `edit` / `ghostex <path>`: each path's project is added and opened in the
-    /// Code view, the way the operating system's open-file request does it
-    /// (`open_gpui_os_integration_paths`), and the first FILE among them is opened in the editor
-    /// at its line and column once Code is ready for that project, the way a chat file link is.
-    fn gx_store_open_renderer_paths(
-        &mut self,
-        targets: Vec<OpenPathTarget>,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        let background = cx.background_executor().clone();
-        cx.spawn(async move |this, cx| {
-            let paths: Vec<PathBuf> = targets
-                .iter()
-                .map(|target| PathBuf::from(&target.path))
-                .collect();
-            let file = background
-                .spawn(async move {
-                    targets.into_iter().find_map(|target| {
-                        let file_path = PathBuf::from(&target.path);
-                        if !file_path.is_file() {
-                            return None;
-                        }
-                        let project_path = gpui_os_integration_project_root_for_path(&file_path)?;
-                        Some(PendingSourceFileOpen {
-                            column: target.column,
-                            file_path,
-                            line: target.line,
-                            origin: PendingSourceFileOpenOrigin::SessionChat,
-                            project_path,
-                            remote_target: None,
-                            remote_working_directory: None,
-                        })
-                    })
-                })
-                .await;
-            let _ = this.update_in(cx, |this, window, cx| {
-                if let Some(file) = file {
-                    this.pending_source_file_open = Some(file);
+            // The `ghostex` session group verbs, made on the document this app pushes, like a
+            // sidebar gesture (gx-core `workspace_groups/verb_edits.rs`).
+            RendererVerb::SessionGroups(request) => {
+                if !self.gx_store_restore_workspace_groups(cx) {
+                    return Err(RendererCommandError::SessionGroupsLoading);
                 }
-                this.open_gpui_os_integration_paths(paths, window, cx);
-            });
-        })
-        .detach();
+                let outcome = self
+                    .gx_store
+                    .workspace_groups
+                    .sync
+                    .document()
+                    .apply_session_group_request(&request)?;
+                if let Some(document) = outcome.document {
+                    self.gx_store_edit_workspace_groups(document, cx);
+                }
+                let mut answer = json!({ "ok": true });
+                // A delete is the group menu's Close Group (workspace_groups/group_commands.rs):
+                // the members close through the store's own close, then the group goes.
+                if let Some(sidebar_group_id) = outcome.close_group {
+                    if let (Some(project_id), Some(group_id)) =
+                        (request.project_id.as_deref(), outcome.group_id.as_deref())
+                    {
+                        answer["closedSessionIds"] = json!(
+                            self.gx_store
+                                .workspace_groups
+                                .sync
+                                .document()
+                                .subgroup_members(project_id, group_id)
+                        );
+                    }
+                    let message = json!({ "type": "closeGroup", "groupId": sidebar_group_id });
+                    let command = json!({ "type": "command", "message": message });
+                    self.gx_store_run_group_command(&command, &message, cx);
+                }
+                // Only a list prints the groups; an edit answers with the group it touched.
+                if request.op == SessionGroupOp::List {
+                    answer["groups"] = self
+                        .gx_store
+                        .workspace_groups
+                        .sync
+                        .document()
+                        .session_groups_json(request.project_id.as_deref());
+                }
+                if let Some(group_id) = outcome.group_id {
+                    answer["groupId"] = json!(group_id);
+                }
+                if let Some(project_id) = request.project_id {
+                    answer["projectId"] = json!(project_id);
+                }
+                Ok(answer)
+            }
+        }
     }
 
     /// `runGxserverRendererCommandButton`: the active project's Action with this id, launched the

@@ -163,11 +163,11 @@ pub(crate) fn resolve_process_tree_agent_identity(
         if !seen.insert(pid) {
             continue;
         }
-        // Claude's background daemon and everything it runs belong to no pane's agent chain.
-        if rows_by_pid
-            .get(&pid)
-            .is_some_and(|row| is_claude_daemon_process(&row.command))
-        {
+        // Claude's background daemon, a headless Claude and everything they run belong to no
+        // pane's agent chain.
+        if rows_by_pid.get(&pid).is_some_and(|row| {
+            is_claude_daemon_process(&row.command) || is_headless_claude_process(&row.command)
+        }) {
             continue;
         }
         let mut owner = owner;
@@ -267,6 +267,32 @@ fn is_claude_daemon_process(command: &str) -> bool {
                 token.as_str(),
                 "--bg-pty-host" | "bg-pty-host" | "--bg-spare" | "bg-spare"
             )
+        })
+}
+
+/// How far into a command line the scan looks for Claude's print-mode flags; a quoted prompt is one
+/// token, so an app's long flag list still fits.
+const HEADLESS_CLAUDE_FLAG_TOKEN_LIMIT: usize = 64;
+
+/// CDXC:SessionIdentity 2026-10-30 WHY:
+/// A program started from a Ghostex terminal (a desktop app, a script) that spawns `claude -p` or an Agent SDK Claude put that Claude below the pane's zmx with no agent above it, so the scan made a plain terminal session a Claude session for as long as the run lasted and kept it that way (throwaway G11n7, 2026-10-30), and `claude -p --resume <id>` would hand the session that id. A session's own Claude is interactive; print mode (`-p`, `--print`) and the SDK's stream-json flags only work headless. The hooks drop the same runs (nested_agent.rs `hook_agent_runs_headless`).
+fn is_headless_claude_process(command: &str) -> bool {
+    if !resolve_process_command_agent_identity(command).is_some_and(|observation| {
+        matches!(
+            observation.identity.agent_id.as_deref(),
+            Some("claude" | "openclaude")
+        )
+    }) {
+        return false;
+    }
+    split_process_command_prefix(command, HEADLESS_CLAUDE_FLAG_TOKEN_LIMIT)
+        .iter()
+        .skip(1)
+        .any(|token| {
+            let token = token.trim_matches(['"', '\'']);
+            matches!(token, "-p" | "--print")
+                || token.starts_with("--output-format")
+                || token.starts_with("--input-format")
         })
 }
 
@@ -684,6 +710,16 @@ fn infer_agent_id_from_process_executable(
     {
         return Some("omp".to_string());
     }
+    // dsh-tui's launcher starts its terminal app as a second node process running the profile's
+    // `host-entry.js`, which is the process in the foreground while DeepSeek Harness runs.
+    if executable_name == "host-entry"
+        && tokens
+            .get(executable_index)?
+            .replace('\\', "/")
+            .ends_with("/dsh-adapter/host-entry.js")
+    {
+        return Some("dsh".to_string());
+    }
     if executable_name == "acli"
         && normalize_process_token(tokens.get(executable_index + 1).map(String::as_str)).as_deref()
             == Some("rovodev")
@@ -707,6 +743,7 @@ fn infer_agent_id_from_process_executable(
             "droid" => "droid",
             "empryo" | "em" => "empryo",
             "freebuff" => "freebuff",
+            "dsh-tui" | "dst" => "dsh",
             "gemini" => "gemini",
             "grok" => "grok",
             "hermes" => "hermes-agent",
@@ -780,6 +817,10 @@ fn extract_agent_process_session_id(
     }
     if agent_id == "freebuff" {
         return read_agent_process_flag_value(agent_id, args, "--continue");
+    }
+    if agent_id == "dsh" {
+        return read_agent_process_flag_value(agent_id, args, "--resume")
+            .filter(|id| crate::session_chat_dsh::is_safe_dsh_session_id(id));
     }
     if agent_id == "empryo" {
         return ["--session", "--resume", "-s"]

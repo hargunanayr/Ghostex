@@ -69,19 +69,32 @@ impl NativeChatView {
 
     /// CDXC:SessionChat 2026-09-27 DECISION:
     /// User: combine Simple, Verbose and Summary modes in the More actions menu. One View row opens a submenu with the three modes as independent checks, and its detail names the modes that are on. Since 2026-10-20 this is the only Summary control (toolbar.rs `COMPOSER_CONTROLS`). The phone's View row holds the same three modes (apps/mobile/app/src/chat/native/composer/menus.ts).
+    /// CDXC:SessionChat 2026-10-29 DECISION:
+    /// User (Settings cleanup Q11): the View submenu is one choice of detail level, Simple, Detailed
+    /// or Verbose ("call the 2nd option Detailed"), plus the Summary switch; while Summary is on the
+    /// Simple look shows and picking a level turns Summary off (gx-chat-core transcript/actions.rs).
+    /// Supersedes 2026-09-27's three independent checks.
     fn view_modes_row(&self, appearance: &super::appearance::ChatAppearance) -> Value {
         let summary = self
             .composer_control_available("summary")
             .then(|| self.snapshot["summaryMode"] == true);
-        let verbose_icon = if appearance.verbose {
-            "titlebar/eye-filled.svg"
+        let level = if appearance.verbose {
+            "verbose"
+        } else if appearance.simple {
+            "simple"
         } else {
-            "titlebar/eye-off.svg"
+            "detailed"
         };
-        let mut modes = vec![
-            json!({"label":"Simple mode","iconPath":"titlebar/leaf.svg","checked":appearance.simple,"command":{"type":"host","action":"setSimpleMode","enabled":!appearance.simple}}),
-            json!({"label":"Verbose mode","iconPath":verbose_icon,"checked":appearance.verbose,"command":{"type":"setVerbose","enabled":!appearance.verbose}}),
-        ];
+        let mut modes: Vec<Value> = [
+            ("simple", "Simple", "titlebar/leaf.svg"),
+            ("detailed", "Detailed", "titlebar/list-details.svg"),
+            ("verbose", "Verbose", "titlebar/eye-filled.svg"),
+        ]
+        .into_iter()
+        .map(|(value, label, icon)| {
+            json!({"label":label,"iconPath":icon,"checked":level == value,"command":{"type":"setDetailLevel","level":value}})
+        })
+        .collect();
         if let Some(summary) = summary {
             let summary_icon = if summary {
                 "titlebar/list-check.svg"
@@ -90,18 +103,15 @@ impl NativeChatView {
             };
             modes.push(json!({"label":"Summary mode","hotkeyAction":"toggleChatSummaryMode","iconPath":summary_icon,"checked":summary,"command":{"type":"toggleSummary"}}));
         }
-        let on: Vec<&str> = [
-            (appearance.simple, "Simple"),
-            (appearance.verbose, "Verbose"),
-            (summary == Some(true), "Summary"),
-        ]
-        .into_iter()
-        .filter_map(|(enabled, name)| enabled.then_some(name))
-        .collect();
-        let detail = if on.is_empty() {
-            "Standard".to_string()
+        let level_name = match level {
+            "verbose" => "Verbose",
+            "simple" => "Simple",
+            _ => "Detailed",
+        };
+        let detail = if summary == Some(true) {
+            format!("{level_name}, Summary")
         } else {
-            on.join(", ")
+            level_name.to_string()
         };
         json!({"label":"View","iconPath":"titlebar/eye.svg","detail":detail,"openOnHover":false,"children":modes})
     }
@@ -249,6 +259,25 @@ impl NativeChatView {
             )
         }) {
             rows.push(host_row(action));
+        }
+        /*
+        CDXC:SessionChat 2026-10-29 DECISION:
+        User, on the terminal view's More actions menu matching the chat's (Q729, "Yes, add it"): the chat's More actions menu gets a Session note row after Close After Done, opening the same note dialog the terminal row opens, with the same "1" badge when a note exists, on the computer and the phone (apps/mobile/app/src/chat/native/composer/menus.ts). The note toolbar button is never offered (the core's `composerActions.note` is off), so this row is the only way in unless the control folded here itself.
+        */
+        // Only while Session notes is on (Settings > Extensions; CDXC:SessionNotes 2026-10-30).
+        if crate::app::session_notes::session_notes_on()
+            && !(self.composer_control_overflowed("note")
+                && self.composer_control_available("note"))
+            && self.composer_control_available("files")
+        {
+            let mut row = json!({
+                "label":"Session note","iconPath":"titlebar/note.svg","hotkeyAction":"sessionNote",
+                "command":{"type":"host","action":"sessionNote"},
+            });
+            if self.snapshot["composerChrome"]["notePresence"] == true {
+                row["badge"] = json!("1");
+            }
+            rows.push(row);
         }
         for (id, action, label, icon) in super::toolbar::COMPOSER_CONTROLS {
             // An overflowed control folds into this menu only when the host gave it a handler.
@@ -404,6 +433,8 @@ impl NativeChatView {
             self.image_viewer_action(action.command["action"].as_str().unwrap_or_default(), cx);
         } else if action.command["type"] == "appendToDraft" {
             self.append_to_draft(action.command["text"].as_str().unwrap_or_default(), cx);
+        } else if action.command["type"] == "replyToSelection" {
+            self.open_reply_popover(&action.command, window, cx);
         } else if action.command["type"] == "host" {
             self.host(
                 action.command["action"].as_str().unwrap_or_default(),

@@ -980,26 +980,9 @@ pub fn suppressed_turn_presentation(message: &ChatMessage) -> Value {
         return json!({ "kind": "inline", "label": INTERRUPTED_MARKER_TEXT, "text": "" });
     }
 
+    // A background task's end never gets here: it is projected as the tool call it reports
+    // (`background_rows.rs`).
     let raw_text = js_trim(&joined_text(&message.blocks)).to_string();
-
-    if kind == "status" {
-        let statuses = parse_task_notifications(&raw_text);
-        if !statuses.is_empty() {
-            let mut out = Map::new();
-            out.insert("kind".to_string(), "status".into());
-            out.insert("subject".to_string(), "task".into());
-            out.insert("label".to_string(), label.clone().into());
-            out.insert("text".to_string(), raw_text.clone().into());
-            if let Some(tone) = tone {
-                out.insert("tone".to_string(), tone.into());
-            }
-            out.insert(
-                "statuses".to_string(),
-                Value::Array(statuses.iter().map(status_row_value).collect()),
-            );
-            return Value::Object(out);
-        }
-    }
 
     let command = parse_command_envelope(&raw_text);
     let model = model_set_by_command_output(&raw_text);

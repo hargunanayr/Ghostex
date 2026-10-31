@@ -1,7 +1,7 @@
 name: GPUI release - Linux packages
 
 # CDXC:ReleaseChangeAwarePlanning 2026-08-13:
-# One compile, three packages (§7).
+# One compile, three packages (§7); the AppImage (2026-10-26) is a fourth.
 #
 # DEB and RPM used to run as two independent jobs that each executed
 # linux-stage.sh — a full `cargo build --release`, CEF download, and JS bundle —
@@ -10,6 +10,8 @@ name: GPUI release - Linux packages
 #
 # The prefix-preserving `.tar.zst` (Arch, ubi, mise, and the AUR package) is the
 # third wrapper over the same staged root and costs seconds, not a runner.
+# The AppImage is a fourth: it copies opt/ghostex and the desktop entry out of
+# the staged root into its own AppDir, so it never sees DEBIAN/ either way.
 #
 # Ordering matters: linux-rpm.sh and linux-tar.sh archive the whole package
 # root, so both are built BEFORE linux-deb.sh creates DEBIAN/. Keep that order.
@@ -28,7 +30,7 @@ on:
         default: x64
         type: string
       packages:
-        description: Comma-separated package formats to produce (any of deb, rpm, tar)
+        description: Comma-separated package formats to produce (any of deb, rpm, tar, appimage)
         required: true
         type: string
       runtime_artifacts_ready:
@@ -59,9 +61,9 @@ on:
       packages:
         description: Linux package formats
         required: true
-        default: deb,rpm,tar
+        default: deb,rpm,tar,appimage
         type: choice
-        options: [deb, rpm, tar, 'deb,rpm', 'deb,rpm,tar']
+        options: [deb, rpm, tar, appimage, 'deb,rpm', 'deb,rpm,tar', 'deb,rpm,tar,appimage']
       arch:
         description: Linux package architecture
         required: true
@@ -101,7 +103,7 @@ jobs:
           submodules: false
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.4
       # sccache with the GitHub Actions cache backend. The registry cache below
       # only stores crate *sources*; every `cargo build --release` on this
       # runner was a cold compile, ~50% of the 31-minute critical path on 8.5.0.
@@ -147,8 +149,8 @@ jobs:
           SEEN=""
           for FORMAT in "${FORMATS[@]}"; do
             case "$FORMAT" in
-              deb | rpm | tar) ;;
-              *) echo "packages entries must be deb, rpm, or tar; got '$FORMAT'" >&2; exit 2 ;;
+              deb | rpm | tar | appimage) ;;
+              *) echo "packages entries must be deb, rpm, tar, or appimage; got '$FORMAT'" >&2; exit 2 ;;
             esac
             case " $SEEN " in
               *" $FORMAT "*) echo "packages repeats $FORMAT" >&2; exit 2 ;;
@@ -189,13 +191,13 @@ jobs:
       - name: Install native packaging dependencies
         run: |
           tooling/release-gpui/retry.sh 3 5 -- sudo apt-get update
-          tooling/release-gpui/retry.sh 3 5 -- sudo apt-get install -y cmake ninja-build pkg-config rpm zstd libasound2-dev libfontconfig1-dev libfreetype-dev libx11-dev libxcb1-dev libxkbcommon-x11-dev
+          tooling/release-gpui/retry.sh 3 5 -- sudo apt-get install -y cmake ninja-build pkg-config rpm squashfs-tools zsync appstream zstd libasound2-dev libfontconfig1-dev libfreetype-dev libx11-dev libxcb1-dev libxkbcommon-x11-dev
       - name: Install pinned Zig toolchain
         run: |
           tooling/release-gpui/retry.sh 3 5 -- bash -c 'curl -fsSL https://mise.run | sh'
-          tooling/release-gpui/retry.sh 3 5 -- "$HOME/.local/bin/mise" install zig@0.16.0
-          ZIG_BIN="$HOME/.local/share/mise/installs/zig/0.16.0/bin/zig"
-          [[ "$($ZIG_BIN version)" == "0.16.0" ]]
+          tooling/release-gpui/retry.sh 3 5 -- "$HOME/.local/bin/mise" install zig@0.17.0
+          ZIG_BIN="$HOME/.local/share/mise/installs/zig/0.17.0/bin/zig"
+          [[ "$($ZIG_BIN version)" == "0.17.0" ]]
           printf 'ZIG=%s\nGHOSTEX_ZIG=%s\n' "$ZIG_BIN" "$ZIG_BIN" >> "$GITHUB_ENV"
       - name: Install JavaScript dependencies
         run: tooling/release-gpui/retry.sh 3 5 -- bun install --frozen-lockfile
@@ -353,6 +355,38 @@ jobs:
           sudo test -x "$TAR_TEST_ROOT/usr/bin/ghostex"
           sudo test -L "$TAR_TEST_ROOT/usr/bin/gx"
           sudo test ! -e "$TAR_TEST_ROOT/DEBIAN"
+      - name: Build the AppImage
+        if: ${{ contains(inputs.packages, 'appimage') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Empty in a fork: linux-appimage.sh then builds the image unsigned and says so.
+          GHOSTEX_APPIMAGE_SIGNING_KEY: ${{ secrets.GHOSTEX_APPIMAGE_SIGNING_KEY }}
+          GHOSTEX_APPIMAGE_SIGNING_PASSPHRASE: ${{ secrets.GHOSTEX_APPIMAGE_SIGNING_PASSPHRASE }}
+        run: |
+          tooling/release-gpui/linux-appimage.sh "${{ inputs.version }}"
+          # Unpack the published image with its own runtime (no FUSE needed)
+          # and prove what a user's first launch relies on: AppRun, the payload
+          # id it copies by, the desktop entry and icon, and a payload that
+          # still leaves CEF to the on-demand component. Then what AppImage
+          # managers read: the runtime's own answer for the update information,
+          # the zsync file beside the image, the homepage and the metainfo.
+          APPIMAGE_PATH="$(realpath "build/release-gpui/${{ inputs.version }}/linux-appimage-$LINUX_ARCH/ghostex-${{ inputs.version }}-linux-$LINUX_ARCH.AppImage")"
+          test "$("$APPIMAGE_PATH" --appimage-updateinformation)" = "gh-releases-zsync|maddada|Ghostex|latest|ghostex-*-linux-$LINUX_ARCH.AppImage.zsync"
+          grep -qx "Filename: $(basename "$APPIMAGE_PATH")" "$APPIMAGE_PATH.zsync"
+          APPIMAGE_TEST_DIR="$(mktemp -d)"
+          trap 'rm -rf "$APPIMAGE_TEST_DIR"' EXIT
+          (cd "$APPIMAGE_TEST_DIR" && "$APPIMAGE_PATH" --appimage-extract >/dev/null)
+          ROOT="$APPIMAGE_TEST_DIR/squashfs-root"
+          test -x "$ROOT/AppRun"
+          grep -qx "${{ inputs.version }}-[0-9a-f]\{16\}" "$ROOT/.ghostex-appimage"
+          grep -qx 'Exec=ghostex %U' "$ROOT/ghostex.desktop"
+          test -s "$ROOT/ghostex.png"
+          test -x "$ROOT/opt/ghostex/Ghostex"
+          test -x "$ROOT/opt/ghostex/gxserver/bin/ghostex"
+          test ! -e "$ROOT/opt/ghostex/libcef.so"
+          test ! -e "$ROOT/DEBIAN"
+          grep -qx 'X-AppImage-Homepage=https://ghostex.dev' "$ROOT/ghostex.desktop"
+          appstreamcli validate --no-net "$ROOT/usr/share/metainfo/dev.ghostex.ghostex.metainfo.xml"
       - name: Build the DEB package
         if: ${{ contains(inputs.packages, 'deb') }}
         env:
@@ -380,6 +414,11 @@ jobs:
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: build/release-gpui/${{ inputs.version }}/linux-tar-${{ env.LINUX_ARCH }}/ghostex-${{ inputs.version }}-linux-${{ env.LINUX_ARCH }}.tar.zst
+      - name: Attest the AppImage
+        if: ${{ contains(inputs.packages, 'appimage') && !inputs.build_only }}
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: build/release-gpui/${{ inputs.version }}/linux-appimage-${{ env.LINUX_ARCH }}/ghostex-${{ inputs.version }}-linux-${{ env.LINUX_ARCH }}.AppImage
       - name: Attest the DEB package
         if: ${{ contains(inputs.packages, 'deb') && !inputs.build_only }}
         uses: actions/attest-build-provenance@v4
@@ -413,6 +452,13 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - uses: actions/upload-artifact@v7
+        if: ${{ contains(inputs.packages, 'appimage') }}
+        with:
+          name: release-linux-appimage-${{ env.LINUX_ARCH }}
+          path: build/release-gpui/${{ inputs.version }}/linux-appimage-${{ env.LINUX_ARCH }}/
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v7
         if: ${{ contains(inputs.packages, 'deb') }}
         with:
           name: release-linux-deb-${{ env.LINUX_ARCH }}
@@ -431,6 +477,13 @@ jobs:
         with:
           name: release-provenance-linux-tar-${{ env.LINUX_ARCH }}
           path: build/release-gpui/${{ inputs.version }}/linux-tar-${{ env.LINUX_ARCH }}/provenance.json
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v7
+        if: ${{ inputs.plan != '' && contains(inputs.packages, 'appimage') }}
+        with:
+          name: release-provenance-linux-appimage-${{ env.LINUX_ARCH }}
+          path: build/release-gpui/${{ inputs.version }}/linux-appimage-${{ env.LINUX_ARCH }}/provenance.json
           if-no-files-found: error
           retention-days: 14
       - uses: actions/upload-artifact@v7

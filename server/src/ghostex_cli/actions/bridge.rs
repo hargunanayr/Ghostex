@@ -96,6 +96,9 @@ pub enum Parser {
     /// `--client mobile --os <android|ios> [--os-version <v>] [--app-version <v>]`
     /// for the analytics hello (`/api/recordClientEvent`).
     ClientHello,
+    /// `--client mobile --view <mobile_*>` for a phone screen opened
+    /// (`/api/recordClientEvent`, `surface.opened`).
+    ClientView,
 }
 
 #[derive(Clone, Copy, Debug, Default)]

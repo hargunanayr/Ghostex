@@ -95,9 +95,11 @@ pub fn write_artifact(
         ));
     }
     let mut index = read_artifact_index(paths, ghost_id);
-    let existing = write
-        .id
-        .and_then(|id| index.iter().position(|entry| entry["id"].as_str() == Some(id)));
+    let existing = write.id.and_then(|id| {
+        index
+            .iter()
+            .position(|entry| entry["id"].as_str() == Some(id))
+    });
     if write.id.is_some() && existing.is_none() {
         return Err(DomainStateError::not_found("No document has that id."));
     }
@@ -125,10 +127,7 @@ pub fn write_artifact(
             .url
             .filter(|url| url.starts_with("http://") || url.starts_with("https://"))
             .map(str::to_string)
-            .unwrap_or_else(|| format!(
-                "{}{page}",
-                crate::visual_pages::VISUAL_PAGE_ROUTE_PREFIX
-            )));
+            .unwrap_or_else(|| format!("{}{page}", crate::visual_pages::VISUAL_PAGE_ROUTE_PREFIX)));
     }
     if let Some(position) = existing {
         entry["createdAt"] = index[position]["createdAt"].clone();
@@ -145,7 +144,10 @@ pub fn remove_artifact(
     id: &str,
 ) -> Result<(), DomainStateError> {
     let mut index = read_artifact_index(paths, ghost_id);
-    let Some(position) = index.iter().position(|entry| entry["id"].as_str() == Some(id)) else {
+    let Some(position) = index
+        .iter()
+        .position(|entry| entry["id"].as_str() == Some(id))
+    else {
         return Err(DomainStateError::not_found("No document has that id."));
     };
     let entry = index.remove(position);

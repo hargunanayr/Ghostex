@@ -12,24 +12,18 @@ pub(crate) fn chat() -> Section {
             row("autoCloseEmptySessionsMinutes", "Auto close empty sessions", "Close a session you started but never sent anything to once it has gone unopened for this long. Sessions with anything typed, drafted or queued stay open. Only applies when Chat is the default view for that agent; with Terminal it never runs.").num_options(AUTO_SLEEP_IDLE_MINUTE_OPTIONS),
             row("sessionChatFontFamily", "Chat font family", "Use any installed font in chat messages and the prompt composer."),
             row("sessionChatZoomPercent", "Default chat zoom (%)", "Scale every desktop chat, including messages and the prompt composer, from 70% to 200% in 5% steps. Cmd+= and Cmd+- in a chat change it too, and Cmd+0 sets 100%. Default: 100%."),
-            row("sessionChatCustomTranscriptWidthEnabled", "Custom transcript width", "Let the transcript use a different width from the prompt composer."),
-            row("sessionChatTranscriptWidthPercent", "Transcript width", "Set the centered transcript width without changing the prompt composer."),
+            row("sessionChatCustomTranscriptWidthEnabled", "Custom transcript width (set with Transcript width)", "On once Transcript width is dragged to a percentage; off keeps Auto, where the transcript matches the prompt composer's width."),
+            row("sessionChatTranscriptWidthPercent", "Transcript width", "The centered transcript's width on wide panes. Auto matches the prompt composer; drag to set a percentage of the pane instead. The prompt composer keeps its standard width either way."),
             row("sessionChatFileEditPreviews", "Show file edit previews", "Show the first seven code lines in each file edit. Turn off to show only the path and change counts."),
-            row("sessionChatMutedThinking", "Grey thinking", "Show the agent's thinking in grey and its replies in the full text colour, so the two are easy to tell apart."),
+            row("sessionChatMutedThinking", "Show thinking in grey", "Show the agent's thinking in grey and its replies in the full text colour, so the two are easy to tell apart."),
+            row("chatToolCallCards", "Tool call cards (preview)", "Show each run of tool calls as one card: it counts the calls, says what each one is doing and then did, with its result and time, explains a failure, and folds to one line once the agent writes again. Off keeps the current look."),
             row("sessionChatKeepComposerExpanded", "Keep chat box expanded while scrolling", "Keep the desktop chat box at full size while you scroll the transcript instead of shrinking it as you scroll up and growing it back at the end."),
             row("sessionChatConfirmEscapeInterrupt", "Press Escape twice to interrupt", "While the agent is working, the first Escape asks you to press Escape again within 2 seconds before it interrupts. Turn off to interrupt on the first Escape."),
-            row("sessionChatSimpleMode", "Simple mode", "Simplify all chats: hide tool command previews and group file edits behind an expandable file count."),
             row("chatCatchMeUp", "Catch me up button", "Show a Catch me up button at the top right of the chat box while it is empty. It has your Title Generation Agent (a small, cheap model) read the session's last 30 agent messages and shows where the session stands: what needs you, what is done, in progress or untested."),
             row("chatSendOnPick", "Send when you pick an answer", "When a question card asks one question, picking an answer sends it right away, without Send answers. Cards with several questions, multiple-choice questions, Other and text answers still wait for Send."),
             row("chatPageOpenTarget", "Open chat pages in", "Where a page an agent shows in chat (a mockup, a question form, a comparison) opens when you click its card: a popup over the chat, the Files view, or your default web browser. Answers you send from the page reach the agent the same way in all three. The phone always opens pages in its own viewer.").options(CHAT_PAGE_OPEN_TARGET_OPTIONS),
-            row("markedHandovers", "Marked handovers in every session", "Orchestrators and their threads start each part of the message they hand back with a marker such as ❓ Needs you, ✅ Done, ⚠️ Read this, 🧪 Untested or 🛑 Blocked, so a quick skim shows what needs you. Turn this on to have every other agent session do the same. Applies to sessions started or resumed after you change it."),
-            row("markedHandoversEmoji", "Show marker emojis", "Not recommended. Show the marker emoji (❓ ✅ ⚠️ and the rest) at the start of each coloured section, in every style. Off: the colour and the label show the kind. Shown while Marked handovers is on."),
-            row("markedHandoversStyle", "Marked sections style", "How the chat colours the sections an agent marks: coloured labels, a thin left rule, or a coloured badge in place of the emoji. Shown while Marked handovers is on.").options(MARKED_HANDOVERS_STYLE_OPTIONS),
-            row("markedHandoversHeadingStrength", "Handover heading color strength", "How strongly the coloured section headings in agents' handovers (Done, Needs you, Untested and the rest) stand out. 100% is full colour; lower values blend the headings toward the normal text colour, and 0% leaves them in plain bold text."),
-            row("orchestratorPlainReplies", "Orchestrators answer without markers", "Not recommended. Orchestrators answer normally, without marking the sections of their handovers. Their threads still mark the reports they send to the orchestrator. Applies to orchestrators started or resumed after you change it."),
-            row("orchestratorAllEfforts", "Show all effort levels", "Lists every effort level in the orchestrator effort pickers. Anything below High isn't recommended for orchestrators."),
-            row("orchestratorPlaybook", "Orchestrator playbook", "How every orchestrator works: the playbook it follows. Edit it for all projects here, or for one project and its worktrees in Settings > Projects. Orchestrators, existing ones too, follow the edited playbook from their next guide read, and a switch turns an edited playbook off without losing it."),
-            row("sessionChatVerboseMode", "Verbose mode", "Expand thinking blocks to show their tool calls by default. Each chat can override it from its composer."),
+            row("orchestratorAllEfforts", "Every effort level in coordinator pickers", "Lists every effort level in the coordinator effort pickers. Anything below Medium isn't recommended for coordinators."),
+            row("orchestratorPlaybook", "Coordinator playbook", "How every coordinator works: the playbook it follows. Edit it for all projects here, or for one project and its worktrees in Settings > Projects. Coordinators, existing ones too, follow the edited playbook from their next guide read, and a switch turns an edited playbook off without losing it."),
             /*
             CDXC:VoiceMode 2026-10-21 DECISION:
             User (Q26): Read aloud's Voice and Speed are two rows on the existing Chat page, not a page of their own. (Q25) Hidden on Linux, which has no system voice: there the page shows `readAloudUnavailable` instead, pointing to the phone and the browser (`availability.rs`). Speed stays on Linux because Ghostex in a browser uses this computer's Speed.
@@ -45,17 +39,38 @@ pub(crate) fn chat() -> Section {
     )
 }
 
+/// CDXC:Settings 2026-10-29 DECISION (cleanup Q11): Simple mode and Verbose mode left Settings; the
+/// chat's More actions > View menu picks one level per chat (Simple, Detailed or Verbose), and new
+/// chats open Simple. Their keys stay (help/supplemental.rs) so a saved preference still applies.
+/// Q18: Show notification on terminal bell moved here from the Terminal section.
+/// CDXC:Settings 2026-10-29 DECISION (wording Q25): the five marked-handover rows are their own
+/// section of the Chat page instead of sitting loose in the Chat list.
+pub(crate) fn marked_handovers() -> Section {
+    section(
+        "markedHandovers",
+        "Marked handovers",
+        vec![
+            row("markedHandovers", "Marked handovers in every session", "Coordinators and their threads start each part of the message they hand back with a marker such as ❓ Needs you, ✅ Done, ⚠️ Read this, 🧪 Untested or 🛑 Blocked, so a quick skim shows what needs you. Turn this on to have every other agent session do the same. Applies to sessions started or resumed after you change it."),
+            row("markedHandoversEmoji", "Show marker emojis", "Not recommended. Show the marker emoji (❓ ✅ ⚠️ and the rest) at the start of each coloured section, in every style. Off: the colour and the label show the kind. Shown while Marked handovers is on."),
+            row("markedHandoversStyle", "Marked sections style", "How the chat colours the sections an agent marks: coloured labels, a thin left rule, or a coloured badge in place of the emoji. Shown while Marked handovers is on.").options(MARKED_HANDOVERS_STYLE_OPTIONS),
+            row("markedHandoversHeadingStrength", "Heading colour strength", "How strongly the coloured section headings in agents' handovers (Done, Needs you, Untested and the rest) stand out. 100% is full colour; lower values blend the headings toward the normal text colour, and 0% leaves them in plain bold text."),
+            row("orchestratorPlainReplies", "Coordinators answer without markers", "Not recommended. Coordinators answer normally, without marking the sections of their handovers. Their threads still mark the reports they send to the coordinator. Applies to coordinators started or resumed after you change it."),
+        ],
+    )
+}
+
 pub(crate) fn sounds() -> Section {
     section(
         "sounds",
         "Sounds",
         vec![
-            row("completionSound", "Completion Sound", "Sound for terminal completions, or Off.").options(&[opt("Off", "off")]).options_of(COMPLETION_SOUND_OPTIONS, "label", "value"),
-            row("showMacOSAttentionNotifications", "Attention Notifications", "Show a system notification when a session needs attention."),
-            row("resetExpirySystemNotifications", "Reset Expiry Notifications", "Show a system notification when a banked Claude or Codex usage reset expires within 3 days and again within 24 hours. The red notification in the bell stays either way."),
-            row("attentionNotificationActions", "Agent Completion Alert Test", "Test the current completion alert settings or open Notification Settings."),
-            row("actionCompletionSound", "Action Completion Sound", "Sound for action completions.").options_of(COMPLETION_SOUND_OPTIONS, "label", "value"),
-            row("copySound", "Copy Sound", "Play a short sound when copying to the clipboard, including text from the chat composer."),
+            row("showNotificationOnTerminalBell", "Show notification on terminal bell", "Treat terminal bell events as session attention."),
+            row("completionSound", "Agent finished sound", "The sound when an agent finishes a task or needs you, or Off.").options(&[opt("Off", "off")]).options_of(COMPLETION_SOUND_OPTIONS, "label", "value"),
+            row("showMacOSAttentionNotifications", "System notification when a session needs you", "Show a system notification when a session needs attention."),
+            row("resetExpirySystemNotifications", "Warn before a banked usage reset expires", "Show a system notification when a banked Claude or Codex usage reset expires within 3 days and again within 24 hours. The red notification in the bell stays either way."),
+            row("attentionNotificationActions", "Test alerts", "Play the agent finished sound and show the notification as they are set now, or open the system's notification settings for Ghostex."),
+            row("actionCompletionSound", "Command finished sound", "The sound when a command run from the Commands pane finishes.").options_of(COMPLETION_SOUND_OPTIONS, "label", "value"),
+            row("copySound", "Copy sound", "Play a short sound when copying to the clipboard, including text from the chat composer."),
         ],
     )
 }

@@ -487,10 +487,6 @@ pub struct PresentationClaudeCloud {
     /// Why the start failed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-    /// `live` once the session's terminal shows the cloud session itself (`claude --cloud <link>`
-    /// attached), `unavailable` while Claude does not allow attaching for the account.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub attach: Option<String>,
     /// The Saved Claude account the session runs on; its claude.ai page opens in that account's
     /// Browser profile.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -575,6 +571,14 @@ pub struct PresentationSessionWork {
     pub branch: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pull_request: Option<PresentationWorkPullRequest>,
+    /// The tickets of `linear_issues` and `github_issues` (from the branch, or set by hand) as one
+    /// list in the session links' shape (`key` `linear:GHX-142` / `issue:owner/repo#12`,
+    /// `state_group`). It is not the Links panel's list: removals made there are not applied and
+    /// stored links are not added.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tickets: Vec<PresentationSessionLink>,
+    /// CDXC:WorkMode 2026-10-27 WHY:
+    /// The phone app (ghostex-mobile) still reads `linearIssues` and `githubIssues` for a session's work chip, its Link to rows and its Copy rows, so they stay next to the source-generic `tickets` until the phone reads `tickets`; then they go.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub linear_issues: Vec<PresentationWorkLinearIssue>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -636,10 +640,11 @@ pub struct PresentationWorkLinearIssue {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     /// Linear's workflow state type: `triage`, `backlog`, `unstarted`, `started`, `completed` or
-    /// `canceled`. Absent until Linear answered (no API key, or not fetched yet).
+    /// `canceled`, or `notFound` when Linear has no such ticket. Absent until Linear answered (no
+    /// API key, or not fetched yet).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state_type: Option<String>,
-    /// The team's own name for the state, e.g. "In Review".
+    /// The team's own name for the state, e.g. "In Review", or "Not found".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -720,12 +725,16 @@ pub struct PresentationSessionLink {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     /// A PR's `open`, `draft`, `merged` or `closed`; an issue's `open` or `closed`; a Linear
-    /// ticket's state type. Absent until it was read.
+    /// ticket's state type, or `notFound` when Linear has no such ticket. Absent until it was read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state: Option<String>,
-    /// A Linear ticket's state as its team names it ("In Review").
+    /// A Linear ticket's state as its team names it ("In Review"), or "Not found".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state_name: Option<String>,
+    /// A ticket's Work page group (`backlog`, `todo`, `progress`, `review`, `done`, `canceled`, or
+    /// `closed` for a closed GitHub issue), which sorts and colours it whatever its source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_group: Option<String>,
     /// A PR's `passing`, `failing` or `pending`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checks: Option<String>,
@@ -740,7 +749,7 @@ pub struct PresentationSessionLink {
     pub source: String,
     #[serde(default, deserialize_with = "crate::de::null_as_default")]
     pub source_label: String,
-    /// Merged, closed, done or canceled.
+    /// Merged, closed, done or canceled, or a Linear ticket Linear has no record of (`notFound`).
     #[serde(
         default,
         deserialize_with = "crate::de::null_as_default",
@@ -846,6 +855,14 @@ pub struct PresentationSession {
     pub attention: Option<AttentionState>,
     #[serde(default, deserialize_with = "crate::de::lenient_u64")]
     pub pending_question_count: u64,
+    /// The session is stuck on a permission prompt or approval card only the user can grant;
+    /// clients draw the red approval dot. Absent (false) otherwise and on daemons that predate it.
+    #[serde(
+        default,
+        deserialize_with = "crate::de::null_as_default",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    pub awaiting_approval: bool,
     #[serde(default, deserialize_with = "crate::de::null_as_default")]
     pub actions: SessionActions,
     /// Falls back to `createdAt` on the server, so it cannot say whether the session was ever

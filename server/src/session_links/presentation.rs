@@ -16,17 +16,19 @@ use serde_json::{json, Map, Value};
 
 use crate::session_git_status::effective_session_git_cwd;
 use crate::work_mode::{
-    cached_linear_issue, cached_work_github_issue, cached_work_github_issue_url,
+    cached_linear_issue_read, cached_work_github_issue, cached_work_github_issue_url,
     cached_work_pull_request, cached_work_repo, manual_work_links, project_linear_key,
-    work_targets, ManualPullRequest,
+    work_targets, LinearIssueRead, ManualPullRequest, WorkSourceId,
 };
 
 use super::{
     parse_github_url, stored_session_links, SessionLinkKind, SessionLinkRef, SessionLinkSource,
 };
 
-/// Suggestions a session shows at most.
-const MAX_SUGGESTED: usize = 5;
+/// Suggestions a session sends at most: the lists show five and a "Show all" row for the rest
+/// (CDXC:SessionLinks 2026-10-27 on `SUGGESTED_SHOWN_FIRST` in packages/gx-core/src/sidebar_view/links.rs).
+/// The transcript scan keeps no more mentions than this either (`MAX_MENTIONS`).
+const MAX_SUGGESTED: usize = 40;
 /// Removed links the "Removed (N)" group lists at most.
 const MAX_REMOVED: usize = 30;
 
@@ -101,20 +103,18 @@ pub(crate) fn session_link_entries(project: &Value, session: &Value) -> Vec<Sess
             push(entry, &mut entries);
         }
     }
-    for number in &targets.github_issues {
+    for number in targets.github_issue_numbers() {
         if let Some(repo) = &repo {
             let link = SessionLinkRef::Github {
                 kind: SessionLinkKind::Issue,
                 repo: repo.clone(),
-                number: *number,
+                number,
             };
             push(live(link, manual.github_issues.is_some()), &mut entries);
         }
     }
-    for identifier in &targets.linear_issues {
-        let link = SessionLinkRef::Linear {
-            identifier: identifier.clone(),
-        };
+    for identifier in targets.ids_of(WorkSourceId::Linear) {
+        let link = SessionLinkRef::Linear { identifier };
         push(live(link, manual.linear_issues.is_some()), &mut entries);
     }
     for item in stored.items {
@@ -233,6 +233,9 @@ fn insert_text(output: &mut Map<String, Value>, key: &str, value: Option<&str>) 
 }
 
 /// One entry as clients receive it.
+///
+/// CDXC:SessionLinks 2026-10-25 WHY:
+/// A Linear ticket Linear says does not exist (deleted, or never visible to this key) has been read, so it is not `loading`: it is published as state `notFound`, state name "Not found" and finished, which every client already draws as a grey ticket under Merged / Closed (under Pinned when pinned), out of Open and its count (the desktop's icon tooltip says "Not found"), without a change there.
 fn entry_value(
     entry: &SessionLinkEntry,
     cwd: Option<&str>,
@@ -287,18 +290,33 @@ fn entry_value(
         }
         SessionLinkRef::Linear { identifier } => {
             output.insert("identifier".to_string(), json!(identifier));
-            let info = linear_key.and_then(|key| cached_linear_issue(key, identifier));
-            if let Some(info) = &info {
-                insert_text(&mut output, "state", info.state_type.as_deref());
-                insert_text(&mut output, "stateName", info.state_name.as_deref());
-                insert_text(&mut output, "title", info.title.as_deref());
-                finished = matches!(
-                    info.state_type.as_deref(),
-                    Some("completed") | Some("canceled")
-                );
-            }
-            let url = info.and_then(|info| info.url).or_else(|| entry.url.clone());
-            insert_text(&mut output, "url", url.as_deref());
+            let read = linear_key.map_or(LinearIssueRead::Unread, |key| {
+                cached_linear_issue_read(key, identifier)
+            });
+            let url = match read {
+                LinearIssueRead::Found(info) => {
+                    insert_text(&mut output, "state", info.state_type.as_deref());
+                    insert_text(&mut output, "stateName", info.state_name.as_deref());
+                    insert_text(&mut output, "title", info.title.as_deref());
+                    finished = matches!(
+                        info.state_type.as_deref(),
+                        Some("completed") | Some("canceled")
+                    );
+                    info.url
+                }
+                LinearIssueRead::NotFound => {
+                    output.insert("state".to_string(), json!("notFound"));
+                    output.insert("stateName".to_string(), json!("Not found"));
+                    finished = true;
+                    None
+                }
+                LinearIssueRead::Unread => None,
+            };
+            insert_text(
+                &mut output,
+                "url",
+                url.or_else(|| entry.url.clone()).as_deref(),
+            );
         }
     }
     if finished {

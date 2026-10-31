@@ -40,6 +40,8 @@ const EMPTY_HEIGHT: f32 = 44.0;
 const FILTER_HEIGHT: f32 = 36.0;
 /// The list's height, whatever it holds: the panel keeps one size so it never moves while open.
 const LIST_HEIGHT: f32 = 280.0;
+/// Projects expanded when the panel opens (user decision 2026-10-28, see `project_list.rs`).
+const OPEN_PROJECTS: usize = 3;
 
 #[derive(Clone)]
 pub(crate) struct PanelSession {
@@ -242,7 +244,7 @@ impl GhostexGpuiApp {
                             app: observed.clone(),
                             focus: focus.clone(),
                             filter: filter.clone(),
-                            list: ListState::default(),
+                            list: ListState::panel(OPEN_PROJECTS),
                             _observe: observe,
                             _activation: activation,
                             _filtered: filtered,
@@ -687,7 +689,7 @@ impl CapturePanelView {
 
     fn render_list(&self, projects: Vec<PanelProject>, cx: &mut Context<Self>) -> AnyElement {
         let mut cards = Vec::new();
-        for project in projects {
+        for (rank, project) in projects.into_iter().enumerate() {
             let titles: Vec<&str> = project
                 .sessions
                 .iter()
@@ -695,7 +697,7 @@ impl CapturePanelView {
                 .collect();
             let open = match self
                 .list
-                .shown(&project.project_id, &project.title, &titles)
+                .shown(rank, &project.project_id, &project.title, &titles)
             {
                 Shown::Hidden => continue,
                 Shown::Collapsed => None,
@@ -709,7 +711,7 @@ impl CapturePanelView {
                 open.is_some(),
             )
             .on_click(cx.listener(move |this, _, window, cx| {
-                if this.list.toggle(&project_id) {
+                if this.list.toggle(rank, &project_id) {
                     this.filter
                         .update(cx, |input, cx| input.set_value("", window, cx));
                 }

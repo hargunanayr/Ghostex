@@ -185,6 +185,19 @@ pub fn fold_state(previous: Option<&FoldedSnapshot>, incoming: StateCarrier<'_>)
         .retired_async_question_ids
         .clone()
         .or_else(|| previous_side.and_then(|state| state.retired_async_question_ids.clone()));
+    folded.result.state.later_question_ids = side
+        .later_question_ids
+        .clone()
+        .or_else(|| previous_side.and_then(|state| state.later_question_ids.clone()));
+    folded.result.state.removed_question_ids = side
+        .removed_question_ids
+        .clone()
+        .or_else(|| previous_side.and_then(|state| state.removed_question_ids.clone()));
+
+    folded.result.state.resource_index = side
+        .resource_index
+        .clone()
+        .or_else(|| previous_side.and_then(|state| state.resource_index.clone()));
 
     folded.result.state.async_questions_since = match &side.async_questions_since {
         Tri::Absent => previous_side
@@ -341,10 +354,12 @@ pub fn merge_options_detail(
     let Some(incoming) = incoming else {
         return (current.cloned(), false);
     };
-    let stronger = ["model", "effort", "mode"].iter().any(|field| {
-        evidence_priority(choice_source(incoming, field))
-            > evidence_priority(current.and_then(|current| choice_source(current, field)))
-    });
+    let stronger = ["model", "effort", "mode", "permissions"]
+        .iter()
+        .any(|field| {
+            evidence_priority(choice_source(incoming, field))
+                > evidence_priority(current.and_then(|current| choice_source(current, field)))
+        });
     let mut kept_current = false;
     let chosen = match current {
         Some(current)

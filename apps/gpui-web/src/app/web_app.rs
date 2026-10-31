@@ -30,9 +30,11 @@ pub(crate) struct GhostexGpuiApp {
     pub(crate) gx_store: crate::app::gx_store::GxStoreHost,
     pub(crate) sidebar_width: f32,
     pub(crate) sidebar_collapsed: bool,
-    /// The header's Session details button: on or off for the page, where it was painted (the
-    /// floating card opens under it), and when a click on the chat last closed that card.
-    pub(crate) session_details_open: bool,
+    /// The header's Session details button: each chat's choice for this page (the page has no
+    /// settings file, so it starts closed), where it was painted (the floating card opens under
+    /// it), and when a click on the chat last closed that card.
+    pub(crate) session_details_choices:
+        crate::app::native_chat::session_details::SessionDetailsChoices,
     pub(crate) session_details_button_bounds: Rc<std::cell::Cell<Bounds<Pixels>>>,
     pub(crate) session_details_dismissed_at: Option<web_time::Instant>,
     pub(crate) sidebar_usage_visible: bool,
@@ -71,6 +73,12 @@ pub(crate) struct GhostexGpuiApp {
     pub(crate) native_app_modal: Option<crate::app::native_app_modal_lifecycle::NativeAppModal>,
     /// The Git menu the header's Git button opens, as the desktop's titlebar holds it (`gx_store/git/hud.rs` writes it).
     pub(crate) titlebar_git_menu_state: Option<crate::app::model::GpuiTitlebarGitMenuState>,
+    /// The Changes view (the desktop's `app/native_changes/`), drawn beside the chat while
+    /// `changes_open` (`web_host/changes.rs`).
+    pub(crate) native_changes: Option<Entity<crate::app::native_changes::ChangesView>>,
+    pub(crate) native_changes_preset: Option<crate::app::native_changes::ChangesPreset>,
+    pub(crate) changes_open: bool,
+    pub(crate) changes_width: f32,
     /// Handoff / Export's Reveal path; an export never lands on a page's disk, so it stays empty.
     pub(crate) pending_export_transcript_reveal_path: Option<String>,
     /// The agents a worktree or New Thread dialog offers (the HUD's `agents`).
@@ -102,7 +110,7 @@ impl GhostexGpuiApp {
             gx_store: Default::default(),
             sidebar_width: 300.0,
             sidebar_collapsed: false,
-            session_details_open: false,
+            session_details_choices: Default::default(),
             session_details_button_bounds: Rc::default(),
             session_details_dismissed_at: None,
             sidebar_usage_visible: false,
@@ -113,6 +121,10 @@ impl GhostexGpuiApp {
             shown_sessions: Default::default(),
             chat_grid_claims: Default::default(),
             native_chats: HashMap::new(),
+            native_changes: None,
+            native_changes_preset: None,
+            changes_open: false,
+            changes_width: 620.0,
             chat_presentations: HashMap::new(),
             terminals: HashMap::new(),
             show_terminal: false,
@@ -293,6 +305,9 @@ impl GhostexGpuiApp {
         _cx: &mut Context<Self>,
     ) {
     }
+    /// The page has no view panel (the desktop's `workspace_reconcile/project_switch.rs`), so a
+    /// project switch never leaves a saved view waiting to be restored.
+    pub(crate) fn finish_project_view_restore(&mut self, _cx: &mut Context<Self>) {}
 
     // Workspaces (`gx_store/workspaces.rs`): a page is one window with nothing to save it in, so
     // its workspace lasts for the page; it has no other windows and no Settings window.

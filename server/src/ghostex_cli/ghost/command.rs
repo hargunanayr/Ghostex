@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 
 use crate::ghostex_cli::{
     agents,
-    args::{parse_args, Flags, FlagValue, ParsedArgs},
+    args::{parse_args, FlagValue, Flags, ParsedArgs},
     coordinator,
     output::print_json,
     rpc::{call_gxserver_rpc, CliError, CliResult},
@@ -142,7 +142,11 @@ fn print_ghost_line(ghost: &Value) {
         "{}  {}  projects: {}",
         agents::text(ghost, "ghostId"),
         agents::text(ghost, "name"),
-        if projects.is_empty() { "none" } else { &projects }
+        if projects.is_empty() {
+            "none"
+        } else {
+            &projects
+        }
     );
 }
 
@@ -199,7 +203,8 @@ fn create(parsed: &ParsedArgs) -> CliResult<()> {
         params["projectIds"] = json!(resolve_project_ids(&list, &flags)?);
     }
     let model = flag_text(parsed, "model").or_else(|| {
-        (family == Some("claude")).then(|| coordinator::DEFAULT_CLAUDE_COORDINATOR_MODEL.to_string())
+        (family == Some("claude"))
+            .then(|| coordinator::DEFAULT_CLAUDE_COORDINATOR_MODEL.to_string())
     });
     if let Some(model) = model {
         params["agentModel"] = json!(model);
@@ -226,7 +231,11 @@ fn whoami(parsed: &ParsedArgs) -> CliResult<()> {
         print_json(&ghost);
         return Ok(());
     }
-    println!("You are {} ({}).", agents::text(&ghost, "name"), agents::text(&ghost, "ghostId"));
+    println!(
+        "You are {} ({}).",
+        agents::text(&ghost, "name"),
+        agents::text(&ghost, "ghostId")
+    );
     println!("Home: {}", agents::text(&ghost, "homePath"));
     println!("Projects you hold:");
     let projects = ghost["projects"].as_array().cloned().unwrap_or_default();
@@ -271,7 +280,8 @@ fn update(parsed: &ParsedArgs) -> CliResult<()> {
 fn delete(parsed: &ParsedArgs) -> CliResult<()> {
     if flag_text(parsed, "ghost").is_none() {
         return Err(CliError::Other(
-            "delete needs --ghost <name or id>, so a Ghost never deletes itself by accident.".into(),
+            "delete needs --ghost <name or id>, so a Ghost never deletes itself by accident."
+                .into(),
         ));
     }
     let ghost = target_ghost(parsed)?;
@@ -306,9 +316,7 @@ fn start_thread(parsed: &ParsedArgs) -> CliResult<()> {
         ))
     })?;
     let mut forwarded = parsed.clone();
-    forwarded
-        .flags
-        .insert_text("projectId", &project_id);
+    forwarded.flags.insert_text("projectId", &project_id);
     forwarded.flags.0.remove("project");
     forwarded.flags.0.remove("ghost");
     let chat = &ghost["chatSession"];
@@ -337,7 +345,13 @@ fn memory(parsed: &ParsedArgs) -> CliResult<()> {
     let action = parsed.rest.first().map(String::as_str).unwrap_or("search");
     let flags = flags(parsed);
     let ghost = target_ghost(parsed)?;
-    let words = parsed.rest.iter().skip(1).cloned().collect::<Vec<_>>().join(" ");
+    let words = parsed
+        .rest
+        .iter()
+        .skip(1)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" ");
     let words = (!words.trim().is_empty()).then_some(words);
     if action == "read" {
         let file = match flag_text(parsed, "topic") {
@@ -397,11 +411,19 @@ fn memory(parsed: &ParsedArgs) -> CliResult<()> {
     match action {
         "search" => {
             for hit in result["matches"].as_array().into_iter().flatten() {
-                println!("{}: {}", agents::text(hit, "file"), agents::text(hit, "line"));
+                println!(
+                    "{}: {}",
+                    agents::text(hit, "file"),
+                    agents::text(hit, "line")
+                );
             }
         }
         "remove" => println!("Removed from {}.", agents::text(&result, "file")),
-        _ => println!("Saved to {}: {}", agents::text(&result, "file"), agents::text(&result, "line")),
+        _ => println!(
+            "Saved to {}: {}",
+            agents::text(&result, "file"),
+            agents::text(&result, "line")
+        ),
     }
     Ok(())
 }
@@ -428,7 +450,13 @@ fn soul(parsed: &ParsedArgs) -> CliResult<()> {
         "update" => {
             let text = match coordinator::text_or_file(parsed, "text")? {
                 Some(text) => text,
-                None => parsed.rest.iter().skip(1).cloned().collect::<Vec<_>>().join(" "),
+                None => parsed
+                    .rest
+                    .iter()
+                    .skip(1)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(" "),
             };
             if text.trim().is_empty() {
                 return Err(CliError::Other(
@@ -460,7 +488,9 @@ fn skills(parsed: &ParsedArgs) -> CliResult<()> {
     let action = parsed.rest.first().map(String::as_str).unwrap_or("list");
     let name = parsed.rest.get(1).cloned().unwrap_or_default();
     if matches!(action, "add" | "remove") && name.is_empty() {
-        return Err(CliError::Other(format!("skills {action} needs a skill name.")));
+        return Err(CliError::Other(format!(
+            "skills {action} needs a skill name."
+        )));
     }
     let result = call_gxserver_rpc(
         "/api/ghostSkills",
@@ -477,7 +507,11 @@ fn skills(parsed: &ParsedArgs) -> CliResult<()> {
         println!("  none yet");
     }
     for skill in own {
-        println!("  {}  {}", agents::text(&skill, "name"), agents::text(&skill, "description"));
+        println!(
+            "  {}  {}",
+            agents::text(&skill, "name"),
+            agents::text(&skill, "description")
+        );
     }
     if action == "list" {
         let available = result["available"].as_array().map(Vec::len).unwrap_or(0);

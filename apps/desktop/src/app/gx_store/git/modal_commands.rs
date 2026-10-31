@@ -184,11 +184,20 @@ impl GhostexGpuiApp {
         {
             message.insert("requestId".to_string(), json!(request_id));
         }
-        copy_strings(command, &mut message, &["agentId"]);
+        copy_strings(
+            command,
+            &mut message,
+            &["agentId", "targetMachineId", "targetProjectId"],
+        );
         copy_bools(
             command,
             &mut message,
-            &["includeCommands", "includePatches", "includeReasoning"],
+            &[
+                "includeCommands",
+                "includePatches",
+                "includeReasoning",
+                "includeMarkdown",
+            ],
         );
         self.git_export_transcript_modal_command(&Value::Object(message), cx);
         true

@@ -207,6 +207,11 @@ pub struct ChatMessage {
     /// (`server_error`, `rate_limit`, …). Omitted on every other row.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_error: Option<String>,
+    /// On a user row that has `@` mentions: the ones gxserver found on disk, in the spelling
+    /// `bare_file_paths` gives them; only these become file pills
+    /// (server/src/session_chat_mention_paths.rs). Absent on every other row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mention_paths: Option<Vec<String>>,
 }
 
 /// Where an accepted send stands with the terminal, as the sending client sees it.
@@ -218,6 +223,10 @@ pub struct StartupDelivery {
     pub state: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,
+    /// Why gxserver still holds it, in the user's words; set once the row has waited about a
+    /// minute (server/src/session_chat_queue_runtime/wait_reason.rs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -241,7 +250,8 @@ pub struct TurnLifecycle {
 /// | `screenProbed` | not probed yet (sticky once true) |
 /// | `agentSessionId` | snapshot or replaced: cleared; state: unchanged |
 /// | `accountSwitch`, `apiRetry`, `pendingModelSelection`, `asyncQuestionsSince`, `forkedAt` | a daemon without queue support; otherwise always written, `null` meaning none |
-/// | `retiredAsyncQuestionIds` | a daemon without queue support; otherwise always written |
+/// | `retiredAsyncQuestionIds`, `laterQuestionIds`, `removedQuestionIds` | a daemon without queue support; otherwise always written |
+/// | `resourceIndex` | UNCHANGED (a daemon before 2026-10-30 never writes it) |
 ///
 /// Payload shapes are kept loose (`Value`) until the native chat needs each one typed; every one
 /// has a TypeScript interface in `packages/shared/session-chat.ts`.
@@ -301,6 +311,23 @@ pub struct ChatSideState {
     pub forked_at: Tri<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retired_async_question_ids: Option<Vec<String>>,
+    /// The question forms and pages the user put off "For later" (form or page ids,
+    /// server/src/session_chat_open_questions.rs): still answerable, but not counted as waiting.
+    /// Absent means unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub later_question_ids: Option<Vec<String>>,
+    /// The question forms and pages the user removed without answering (form or page ids,
+    /// server/src/session_chat_open_questions.rs): no longer counted as waiting. Absent means
+    /// unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub removed_question_ids: Option<Vec<String>>,
+    /// The session's resource index (`ResourceEntry` records, gx-chat-core
+    /// `questions/resource_index.rs`; server/src/session_chat_resources.rs): every question form,
+    /// page and chart the whole conversation held, so the Resources list and count cover more than
+    /// the loaded rows. A coordinator's also lists the pages its threads posted. Absent means
+    /// unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_index: Option<Vec<Value>>,
 }
 
 /// `sessionChatSnapshot` and `sessionChatReplaced`: an authoritative tail window.

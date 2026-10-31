@@ -10,8 +10,8 @@ use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnchoredPositionMode, AnyElement, AppContext as _, Bounds, Context, Entity, FontWeight,
     InteractiveElement as _, IntoElement, KeyDownEvent, MouseDownEvent, ParentElement as _, Pixels,
-    ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
-    Window, anchored, deferred, div, point, px, rgb, svg,
+    ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Window,
+    anchored, deferred, div, point, px, rgb, svg,
 };
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::{Sizable as _, Size as ComponentSize, h_flex, v_flex};
@@ -187,9 +187,7 @@ impl NativeSessionBoardView {
             return;
         };
         match (picker.target, row) {
-            (PickerTarget::Filter, PickerRow::All) => {
-                self.set_filter(BoardFilter::All, window, cx)
-            }
+            (PickerTarget::Filter, PickerRow::All) => self.set_filter(BoardFilter::All, window, cx),
             (PickerTarget::Filter, PickerRow::Project(id)) => {
                 self.set_filter(BoardFilter::Project(id), window, cx)
             }
@@ -199,7 +197,9 @@ impl NativeSessionBoardView {
                 }
             }
             (_, PickerRow::Space(id)) => {
-                self.app_later(window, cx, move |app, _, cx| app.select_native_space(&id, cx));
+                self.app_later(window, cx, move |app, _, cx| {
+                    app.select_native_space(&id, cx)
+                });
             }
             (PickerTarget::TaskProject | PickerTarget::Space, PickerRow::All)
             | (PickerTarget::Space, PickerRow::Project(_)) => {}
@@ -207,7 +207,12 @@ impl NativeSessionBoardView {
         cx.notify();
     }
 
-    fn picker_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn picker_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let rows = self.picker_rows(cx);
         let Some(highlight) = self.picker.as_ref().map(|picker| picker.highlight) else {
             return;
@@ -275,7 +280,9 @@ impl NativeSessionBoardView {
             ),
         };
         let leading = match row {
-            PickerRow::All => titlebar_svg_icon("titlebar/folder.svg", 15.0, p.muted).into_any_element(),
+            PickerRow::All => {
+                titlebar_svg_icon("titlebar/folder.svg", 15.0, p.muted).into_any_element()
+            }
             PickerRow::Space(id) => {
                 let light = ChatAppearance::current(&serde_json::Value::Null).light;
                 let space = self.board.spaces.iter().find(|space| &space.space_id == id);

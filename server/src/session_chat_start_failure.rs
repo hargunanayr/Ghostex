@@ -65,7 +65,48 @@ pub(crate) fn agent_start_failure(
     )
     // An unreadable snapshot proves nothing.
     .map_or(true, |identities| identities.contains_key(&zmx_name));
-    (!running).then_some(notice)
+    (!running).then(|| with_missing_agent_command(notice))
+}
+
+/// The failed-start card, reworded when what failed is an agent's own command not being found
+/// (`agent_command_missing_notice`).
+fn with_missing_agent_command(notice: SessionChatTerminalNotice) -> SessionChatTerminalNotice {
+    let Some(command) = notice
+        .error_lines
+        .as_deref()
+        .and_then(crate::session_chat_notice::missing_start_command)
+    else {
+        return notice;
+    };
+    let Some(definition) = crate::agent_cli::catalog::CATALOG
+        .iter()
+        .find(|definition| definition.binary == command)
+    else {
+        return notice;
+    };
+    let agent_name = crate::agents::default_agent_session_title_name(&definition.agent_id)
+        .unwrap_or(definition.binary.as_str());
+    let home = crate::resume_lookup::home_dir();
+    // A session planned before Ghostex ran mise-installed agents through mise: Try again now does.
+    if crate::agent_cli::launch_path::with_reachable_program(&command) != command {
+        let mut notice = notice;
+        notice.title = format!("{agent_name} is ready to start again");
+        notice.detail = Some(format!(
+            "{agent_name} was installed with mise, which this terminal hadn't set up. Try again starts it through mise. A message you send meanwhile waits in the chat and goes out once the agent is up."
+        ));
+        return notice;
+    }
+    let installed_at = crate::agent_cli::process::resolve_agent(
+        &definition.binary,
+        &definition.install_dirs(&home),
+        &home,
+    );
+    crate::session_chat_notice::agent_command_missing_notice(
+        notice,
+        agent_name,
+        &command,
+        installed_at.as_deref(),
+    )
 }
 
 /// Whether the session's agent has written a conversation, so it came up at least once.

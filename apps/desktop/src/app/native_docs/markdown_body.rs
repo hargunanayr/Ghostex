@@ -187,7 +187,7 @@ pub(crate) fn render_markdown_body(
                             .relative()
                             .flex_1()
                             .min_w_0()
-                            .text_size(px(14.0))
+                            .text_size(px(crate::ui_fonts::FILES_TEXT_SIZE))
                             .text_color(text_color)
                             .font_family(if body.source {
                                 super::fonts::DOCS_MONO

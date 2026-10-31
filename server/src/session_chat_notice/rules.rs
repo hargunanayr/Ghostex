@@ -883,6 +883,7 @@ pub(super) fn notice_rules(agent: SessionChatOptionAgent) -> &'static [NoticeRul
         // catalog; the other agents rely on measured composer readiness.
         SessionChatOptionAgent::Antigravity
         | SessionChatOptionAgent::Copilot
+        | SessionChatOptionAgent::Dsh
         | SessionChatOptionAgent::Empryo
         | SessionChatOptionAgent::Grok
         | SessionChatOptionAgent::Hermes

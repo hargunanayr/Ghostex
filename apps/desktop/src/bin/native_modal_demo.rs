@@ -24,6 +24,8 @@ mod fold_motion;
 mod hotkey_label;
 #[path = "../app/window/native_modal_kit/mod.rs"]
 mod native_modal_kit;
+#[path = "../app/window/session_handoff_modal.rs"]
+mod session_handoff_modal;
 #[path = "../ui_fonts.rs"]
 mod ui_fonts;
 // DEMO-MODULES: one `#[path]` include per converted modal, plus its demo module under native_modal_demo/.
@@ -113,8 +115,15 @@ mod space_editor_modal;
 mod update_available_demo;
 #[path = "../app/window/update_available_modal.rs"]
 mod update_available_modal;
+/// The voice panel's confirm card reads `super::controls` and `super::rows`, as in the panel.
+#[path = "../app/voice_agent/panel_confirm_card.rs"]
+mod voice_confirm_card;
 #[path = "../app/voice_agent/panel_controls.rs"]
 mod voice_panel_controls;
+use voice_panel_controls as controls;
+#[allow(dead_code)]
+#[path = "../app/voice_agent/rows.rs"]
+mod rows;
 #[path = "native_modal_demo/voice_panel.rs"]
 mod voice_panel_demo;
 #[path = "native_modal_demo/web_runtime_prompt.rs"]
@@ -263,10 +272,94 @@ fn deliver_export_result(
     });
 }
 
+/// This computer, and two connected ones: one with the repository, one without it.
+fn demo_handoff_computers() -> Vec<ExportTranscriptComputer> {
+    let project = |id: &str, title: &str, path: &str, same_repo: bool| ExportTranscriptProject {
+        project_id: id.to_string(),
+        title: title.to_string(),
+        path: Some(path.to_string()),
+        same_repo,
+    };
+    vec![
+        ExportTranscriptComputer {
+            machine_id: "local".to_string(),
+            label: "This computer".to_string(),
+            is_source: true,
+            projects: vec![
+                project("p-acme", "acme-web", "~/dev/acme-web", false),
+                project("p-docs", "gamma-docs", "~/dev/gamma-docs", false),
+            ],
+            preferred_project_id: None,
+            missing_repository: None,
+        },
+        ExportTranscriptComputer {
+            machine_id: "machine-studio".to_string(),
+            label: "studio-mac".to_string(),
+            is_source: false,
+            projects: vec![
+                project("p-ghostex", "Ghostex", "~/dev/Ghostex", true),
+                project("p-site", "website", "~/sites/website", false),
+            ],
+            preferred_project_id: Some("p-ghostex".to_string()),
+            missing_repository: None,
+        },
+        ExportTranscriptComputer {
+            machine_id: "machine-linux".to_string(),
+            label: "linux-box".to_string(),
+            is_source: false,
+            projects: vec![project("p-notes", "notes", "~/notes", false)],
+            preferred_project_id: None,
+            missing_repository: Some("ghostex".to_string()),
+        },
+    ]
+}
+
+/// `GHOSTEX_NATIVE_MODAL_DEMO_STATE=working` shows the message for a session that is still working.
+fn open_session_handoff(demo: &DemoEnv, cx: &mut App) {
+    use session_handoff_modal::*;
+    let agents = ["claude", "codex"]
+        .into_iter()
+        .map(|id| ExportTranscriptAgent {
+            agent_id: id.to_string(),
+            name: {
+                let mut name = id.to_string();
+                name[..1].make_ascii_uppercase();
+                name
+            },
+            family: Some(id.to_string()),
+        })
+        .collect();
+    let config = SessionHandoffModalConfig {
+        project_title: "acme-web".to_string(),
+        agents,
+        default_agent_id: Some("claude".to_string()),
+        working_agent: (demo.state == "working").then(|| "Claude".to_string()),
+        palette: demo.palette,
+    };
+    let host: SessionHandoffModalHost = Rc::new(move |command, cx: &mut App| match command {
+        SessionHandoffModalCommand::Confirm {
+            agent_id,
+            close_source,
+            warned,
+        } => {
+            eprintln!("handoff to {agent_id}: close_source={close_source} warned={warned}");
+            cx.quit();
+        }
+        SessionHandoffModalCommand::Cancel => cx.quit(),
+    });
+    open_modal_window(
+        SESSION_HANDOFF_MODAL_WIDTH,
+        SESSION_HANDOFF_MODAL_INITIAL_HEIGHT,
+        move |window, cx| cx.new(|cx| GpuiSessionHandoffModalWindow::new(config, host, window, cx)),
+        cx,
+    );
+}
+
 fn open_export_transcript(demo: &DemoEnv, cx: &mut App) {
     let initial_mode = match env("GHOSTEX_EXPORT_MODAL_DEMO_MODE").as_str() {
         "export" => Some(ExportTranscriptMode::Export),
         "handoff" => Some(ExportTranscriptMode::Handoff),
+        "remote" => Some(ExportTranscriptMode::HandoffAdvanced),
         _ => None,
     };
     let agents = if demo.state == "noagents" {
@@ -281,6 +374,7 @@ fn open_export_transcript(demo: &DemoEnv, cx: &mut App) {
                     name[..1].make_ascii_uppercase();
                     name
                 },
+                family: Some(id.to_string()),
             })
             .collect()
     };
@@ -289,9 +383,9 @@ fn open_export_transcript(demo: &DemoEnv, cx: &mut App) {
     let host_slot = slot.clone();
     let fail = demo.state == "failed";
     let host: ExportTranscriptModalHost = Rc::new(move |command, cx: &mut App| match command {
-        ExportTranscriptModalCommand::RunExport(include) => {
+        ExportTranscriptModalCommand::RunExport { include, carry } => {
             eprintln!(
-                "run export: commands={} patches={} reasoning={}",
+                "run export: commands={} patches={} reasoning={} carry={carry}",
                 include.commands, include.patches, include.reasoning
             );
             let slot = host_slot.clone();
@@ -304,8 +398,30 @@ fn open_export_transcript(demo: &DemoEnv, cx: &mut App) {
             })
             .detach();
         }
-        ExportTranscriptModalCommand::StartConversation { agent_id } => {
-            eprintln!("handoff to {agent_id}");
+        ExportTranscriptModalCommand::StartConversation { agent_id, target } => {
+            eprintln!("handoff to {agent_id} at {target:?}");
+            cx.quit();
+        }
+        ExportTranscriptModalCommand::TargetChanged(target) => {
+            eprintln!("target {target:?}");
+            let slot = host_slot.clone();
+            cx.defer(move |cx| {
+                let open = slot.borrow().clone();
+                if let Some((window, view)) = open {
+                    let _ = window.update(cx, |_, _window, cx| {
+                        view.update(cx, |modal, cx| {
+                            let line = (target.machine_id == "machine-studio").then(|| {
+                                "This session is on feature-x; the project on studio-mac is on main."
+                                    .to_string()
+                            });
+                            modal.set_branch_notice(target, line, cx);
+                        });
+                    });
+                }
+            });
+        }
+        ExportTranscriptModalCommand::AddProjectOn { machine_id, picks } => {
+            eprintln!("add project on {machine_id}, reopen with {picks:?}");
             cx.quit();
         }
         ExportTranscriptModalCommand::Cancel => {
@@ -321,10 +437,12 @@ fn open_export_transcript(demo: &DemoEnv, cx: &mut App) {
     let config = ExportTranscriptModalConfig {
         agents,
         default_agent_id: Some("codex".to_string()),
-        target_agent_id: None,
+        handoff_target: None,
         palette: demo.palette,
         prefs_path: None,
         initial_mode,
+        computers: demo_handoff_computers(),
+        restore: None,
     };
     let (window, view) = open_modal_window(
         EXPORT_TRANSCRIPT_MODAL_WIDTH,
@@ -350,6 +468,7 @@ fn main() {
             ui_fonts::register(cx);
             match demo.modal.as_str() {
                 "export-transcript" => open_export_transcript(&demo, cx),
+                "session-handoff" => open_session_handoff(&demo, cx),
                 // DEMO-ARMS: one arm per converted modal.
                 "add-project" => add_project_demo::open(&demo, cx),
                 "new-thread-picker" => new_thread_picker_demo::open(&demo, cx),

@@ -13,13 +13,13 @@ serve it from the Ghostex root (gxserver must be running):
 cargo xtask start-web
 ```
 
-Its README covers the toolchain it needs (`wasm-bindgen-cli`, Zig 0.16) and the dev server.
+Its README covers the toolchain it needs (`wasm-bindgen-cli`, Zig 0.17) and the dev server.
 
 ### Building from source
 
 `cargo xtask start` builds and launches the desktop app. On macOS, `cargo xtask build` only packages it.
-The desktop crate (`apps/desktop/`) and the gxserver crate (`server/`) both pin Rust 1.95.0 in
-their `rust-toolchain.toml` files. Besides Bun, Rust, CMake, Ninja, and Zig 0.16, local
+The desktop crate (`apps/desktop/`) and the gxserver crate (`server/`) both pin Rust 1.99.1 in
+their `rust-toolchain.toml` files. Besides Bun, Rust, CMake, Ninja, and Zig 0.17, local
 Rust builds require **sccache**:
 
 ```sh
@@ -39,14 +39,14 @@ cargo xtask start
 ```
 
 `setup-windows` installs the pinned Rust toolchain without changing your global default,
-downloads and verifies Zig 0.16.0 into `build/toolchains/`, and installs sccache through
+downloads and verifies Zig 0.17.0 into `build/toolchains/`, and installs sccache through
 WinGet if it is missing. Without WinGet, install sccache with `cargo install sccache --locked`.
 It also prepares the pinned desktop submodules and downloads the published WSL components.
 It does not build, install, or launch the desktop app. Use `cargo xtask start --prepare-only` to
 repeat source preparation without launching the app.
 Open a new PowerShell window after installing sccache if it is not yet on PATH.
 The build loads the installed Visual Studio environment, so a Developer PowerShell window
-is not required. Set `GHOSTEX_ZIG` to use an existing Zig 0.16.0 executable.
+is not required. Set `GHOSTEX_ZIG` to use an existing Zig 0.17.0 executable.
 
 `start` initializes missing desktop submodules at their pinned revisions and preserves
 existing checkouts. It checks the build tools before downloading the WSL runtime components.

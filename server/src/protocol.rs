@@ -396,11 +396,18 @@ pub fn endpoint_for(path: &str) -> Option<EndpointDescriptor> {
         // CDXC:AgentBox 2026-10-01 WHY: same reasoning as switchDraftAgent above; where a draft
         // runs is decided by the daemon that owns the row and runs its CLI.
         | "/api/draftRunLocation"
+        // CDXC:Worktrees 2026-10-31 WHY: a new chat's worktree tray asks the daemon that owns the
+        // draft, like draftRunLocation above; it takes ids, a branch name, an opaque worktree key
+        // from that daemon's own list and the message, never a path.
+        | "/api/draftWorktree"
         // CDXC:AgentProviders 2026-09-03: same reasoning as switchDraftAgent
         // above; the resume command is built by the daemon that owns the row.
         | "/api/switchSessionAgent"
         | "/api/agentCliMaintenance"
         | "/api/managedTools"
+        // CDXC:RemoteMachines 2026-10-26 WHY: remote-allowed like managedTools; a client looking at a
+        // machine asks that machine which skills it has, and installs only skills gxserver lists.
+        | "/api/machineIntegrations"
         /*
         CDXC:AgentBox 2026-10-01 WHY:
         Remote-allowed like managedTools beside it: the boxes and the agentbox CLI belong to the machine that owns the project, so a client looking at a remote machine asks that machine. Setup commands come back as text gxserver chose, never text the caller supplied.
@@ -417,6 +424,7 @@ pub fn endpoint_for(path: &str) -> Option<EndpointDescriptor> {
         | "/api/readSidebarHud"
         | "/api/mutateSidebarHudSettings"
         | "/api/updateWorkspaceSessionGroups"
+        | "/api/readWorkspaceSessionGroups"
         /*
         CDXC:Navigation 2026-08-19:
         Titlebar Back/Forward walks a daemon-owned trail of previously active
@@ -578,6 +586,10 @@ pub fn endpoint_for(path: &str) -> Option<EndpointDescriptor> {
         without asking.
         */
         | "/api/readSessionTerminalTail"
+        // CDXC:SessionChat 2026-10-25 WHY: remote-allowed like readSessionTerminalTail: Copy Report reads the screen, queue and send log of the machine that runs the session.
+        | "/api/readSessionChatReport"
+        // CDXC:SessionChat 2026-10-31 WHY: remote-allowed like readSessionChat: the transcript it reads lives on the machine that runs the session.
+        | "/api/readSessionChatResource"
         // CDXC:CatchMeUp 2026-10-11 WHY: remote-allowed like readSessionChat: the transcript and the summary agent live on the machine that runs the session.
         | "/api/catchUpSession"
         // CDXC:FilesAndLinks 2026-10-12 WHY: remote-allowed like readSessionChat: the transcripts it reads live on the machine that runs the sessions.

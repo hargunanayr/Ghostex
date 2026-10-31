@@ -14,15 +14,15 @@ use crate::storage::open_gxserver_database;
 use crate::work_mode::{
     cached_project_work_tracker, issues_workflow_parts, issues_workflow_settings,
     presentation_session_work, project_work_mode, refresh_issues_workflow_setup,
-    refresh_work_caches, work_display_title, IssuesWorkflowParts, WorkTracker,
+    refresh_work_caches, work_display_title, IssuesWorkflowParts, WorkSourceId,
 };
 
 /// What each project last published of Issues Workflow (which parts it has, and its tracker), so a
 /// pass republishes a project whose Linear key was set or removed, whose tracker changed, or every
 /// project once `gh` is signed in or out.
-fn published_linear_projects() -> &'static Mutex<HashMap<String, (IssuesWorkflowParts, WorkTracker)>>
-{
-    static PUBLISHED: OnceLock<Mutex<HashMap<String, (IssuesWorkflowParts, WorkTracker)>>> =
+fn published_linear_projects(
+) -> &'static Mutex<HashMap<String, (IssuesWorkflowParts, WorkSourceId)>> {
+    static PUBLISHED: OnceLock<Mutex<HashMap<String, (IssuesWorkflowParts, WorkSourceId)>>> =
         OnceLock::new();
     PUBLISHED.get_or_init(|| Mutex::new(HashMap::new()))
 }

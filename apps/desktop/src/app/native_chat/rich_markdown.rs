@@ -25,6 +25,9 @@ use serde_json::{Value, json};
  * packages/core-ui/styles/chat.css until 2026-09-25.
  */
 
+/// The transcript's prose size at 100% zoom, which the text inside a visual block takes too
+/// (`gxv::Theme::text_size`, `visual.rs`).
+pub(super) const PROSE_SIZE: f32 = 14.0;
 /// The transcript's prose line height, which a fenced block's code lines take too.
 pub(super) const PROSE_LINE_HEIGHT: f32 = 22.75;
 /// The padding a fenced block's code sits in under its header (GPUI Kit's `p_3`).
@@ -680,7 +683,7 @@ impl NativeChatView {
             })
             .selectable(true)
             .style(style)
-            .text_size(px(14.0 * p.scale))
+            .text_size(px(PROSE_SIZE * p.scale))
             .line_height(px(PROSE_LINE_HEIGHT * p.scale))
             .text_color(label_color.unwrap_or(p.prose))
             .when(label_color.is_some(), |view| {

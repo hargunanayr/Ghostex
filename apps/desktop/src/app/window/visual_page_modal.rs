@@ -290,6 +290,7 @@ impl GpuiVisualPageModalWindow {
                     None,
                     true,
                     Some(popup_open_handler),
+                    None,
                     Some(page_closed),
                     None,
                     None,

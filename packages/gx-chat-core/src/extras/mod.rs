@@ -16,6 +16,7 @@ pub mod document;
 pub mod minimap;
 pub mod minimap_rail;
 pub mod panels;
+pub mod report;
 pub mod save_markdown;
 pub mod save_markdown_paths;
 pub mod search;
@@ -30,6 +31,7 @@ pub mod time;
 pub mod transcript_search;
 pub mod welcome;
 pub mod working_card;
+pub mod working_card_label;
 pub mod working_strip;
 pub mod working_words;
 

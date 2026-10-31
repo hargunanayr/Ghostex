@@ -64,7 +64,11 @@ impl GhostexGpuiApp {
             return;
         }
         self.native_session_board.showing = true;
-        if self.native_session_board.restore_sidebar_collapsed.is_none() {
+        if self
+            .native_session_board
+            .restore_sidebar_collapsed
+            .is_none()
+        {
             self.native_session_board.restore_sidebar_collapsed = Some(self.sidebar_collapsed);
             if !self.sidebar_collapsed {
                 self.toggle_gpui_sidebar_collapsed(cx);
@@ -99,7 +103,11 @@ impl GhostexGpuiApp {
 
     /// A card's chat opens beside the lanes. Its thread is focused behind the Board, in its own
     /// project, because a chat lives in the Agents workspace; leaving the Board shows it there.
-    pub(crate) fn session_board_open_chat(&mut self, card: BoardCard, cx: &mut gpui::Context<Self>) {
+    pub(crate) fn session_board_open_chat(
+        &mut self,
+        card: BoardCard,
+        cx: &mut gpui::Context<Self>,
+    ) {
         let sidebar_session_id = card.sidebar_session_id.clone();
         self.set_session_board_chat(Some(card), cx);
         self.dispatch_native_sidebar_ui(

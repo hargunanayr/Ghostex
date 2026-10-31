@@ -52,6 +52,10 @@ impl NativeChatView {
         p: &ChatAppearance,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
+        // Settings > Chat > Tool call cards: the calls and edits are one card (`tool_card.rs`).
+        if message["toolCard"].is_object() {
+            return self.tool_card(message, p, cx).into_iter().collect();
+        }
         let tools = message["tools"].as_array().cloned().unwrap_or_default();
         if tools.is_empty() {
             return Vec::new();
@@ -664,63 +668,83 @@ impl NativeChatView {
                 .into_any_element()
         });
         if (expanded || motion.is_some()) && has_detail {
-            let detail = self.row_detail(&key, "tool", message_id, index as u64);
-            let input = text(&detail, "input");
-            let output = text(&detail, "output");
-            let has_call = tool["hasCall"] == true;
-            let command = tool["glyph"] == "terminal";
-            // The first block's label row carries the copy button, which copies the whole call.
-            let mut copy = Some(text(&detail, "copyText")).filter(|copy| !copy.is_empty());
-            let mut detail: Vec<AnyElement> = Vec::new();
-            if !input.is_empty() {
-                let label = if command {
-                    Some("Command")
-                } else if !output.is_empty() {
-                    Some("Input")
-                } else {
-                    None
-                };
-                detail.push(self.tool_body(
-                    format!("input:{key}"),
-                    label,
-                    input,
-                    false,
-                    copy.take(),
-                    p,
-                ));
-            }
-            if !output.is_empty() {
-                let label = has_call.then_some("Result");
-                detail.push(self.tool_body(
-                    format!("output:{key}"),
-                    label,
-                    output,
-                    failed,
-                    copy.take(),
-                    p,
-                ));
-            }
-            if !detail.is_empty() {
-                let body = disclosure_body(
-                    p,
-                    DisclosureRail::ToolDetail,
-                    8.0,
-                    key.clone(),
-                    format!("Collapse {}", tool["name"].as_str().unwrap_or_default()),
-                    detail,
-                    cx,
-                );
-                // The rail hangs from the middle of the glyph tile, which the row's padding moved
-                // right of the marker column the rail is measured from.
-                let body = div()
-                    .pl(px((ROW_PAD_X + TILE / 2.0 - 10.0) * s))
-                    .min_w_0()
-                    .child(body)
-                    .into_any_element();
+            if let Some(body) = self.tool_detail_body(&key, message_id, index, tool, p, cx) {
                 row = row.child(self.disclosure_body_motion(&key, motion, 4.0 * s, body));
             }
         }
         row.into_any_element()
+    }
+
+    /// An open tool row's detail: the command or arguments and the result, each a labelled block,
+    /// on the rail that hangs from the row's glyph tile. The tool-call card opens its rows onto
+    /// the same detail (`tool_card.rs`).
+    pub(super) fn tool_detail_body(
+        &mut self,
+        key: &str,
+        message_id: &str,
+        index: usize,
+        tool: &Value,
+        p: &ChatAppearance,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let s = p.scale;
+        let failed = tool["failed"] == true;
+        let detail = self.row_detail(key, "tool", message_id, index as u64);
+        let input = text(&detail, "input");
+        let output = text(&detail, "output");
+        let has_call = tool["hasCall"] == true;
+        let command = tool["glyph"] == "terminal";
+        // The first block's label row carries the copy button, which copies the whole call.
+        let mut copy = Some(text(&detail, "copyText")).filter(|copy| !copy.is_empty());
+        let mut detail: Vec<AnyElement> = Vec::new();
+        if !input.is_empty() {
+            let label = if command {
+                Some("Command")
+            } else if !output.is_empty() {
+                Some("Input")
+            } else {
+                None
+            };
+            detail.push(self.tool_body(
+                format!("input:{key}"),
+                label,
+                input,
+                false,
+                copy.take(),
+                p,
+            ));
+        }
+        if !output.is_empty() {
+            let label = has_call.then_some("Result");
+            detail.push(self.tool_body(
+                format!("output:{key}"),
+                label,
+                output,
+                failed,
+                copy.take(),
+                p,
+            ));
+        }
+        if !detail.is_empty() {
+            let body = disclosure_body(
+                p,
+                DisclosureRail::ToolDetail,
+                8.0,
+                key.to_string(),
+                format!("Collapse {}", tool["name"].as_str().unwrap_or_default()),
+                detail,
+                cx,
+            );
+            // The rail hangs from the middle of the glyph tile, which the row's padding moved
+            // right of the marker column the rail is measured from.
+            let body = div()
+                .pl(px((ROW_PAD_X + TILE / 2.0 - 10.0) * s))
+                .min_w_0()
+                .child(body)
+                .into_any_element();
+            return Some(body);
+        }
+        None
     }
 
     /// One labelled block of a tool's detail: its arguments, the command it ran,
@@ -761,6 +785,7 @@ impl NativeChatView {
                     this.child(super::code_block::action(
                         SharedString::from(format!("copy:{key}")),
                         "titlebar/copy.svg",
+                        "Copy",
                         p,
                         move |cx| {
                             crate::app::helpers::gpui_copy_to_clipboard(

@@ -136,6 +136,8 @@ async fn renaming_a_worktree_updates_the_project_path_and_every_session_cwd() {
         "Codex Session",
         "2026-07-29T00:00:00.000Z",
     );
+    // A new session's cwd has to be a folder (`/api/createSession` refuses a missing one).
+    std::fs::create_dir_all(worktree.join("packages/app")).expect("session folder");
     let created = route_http(
         state.clone(),
         rpc_request(

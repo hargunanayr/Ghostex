@@ -244,12 +244,25 @@ impl GhostexGpuiApp {
                     probes
                         .into_iter()
                         .map(|(machine_id, generation, target)| {
-                            let healthy = gpui_remote_authenticated_health(
+                            let probe = gpui_remote_health_probe(
                                 target.local_port,
                                 target.token.as_str(),
+                                GPUI_REMOTE_GXSERVER_HEALTH_TIMEOUT,
+                            );
+                            // A chat read or sidebar call answered since the last probe proves the
+                            // tunnel too, which matters when a big read holds the link.
+                            let answered_meanwhile = gpui_remote_tunnel_answered_within(
+                                target.local_port,
+                                GPUI_REMOTE_GXSERVER_WATCHDOG_INTERVAL
+                                    + GPUI_REMOTE_GXSERVER_HEALTH_TIMEOUT,
+                            );
+                            (
+                                machine_id,
+                                generation,
+                                target.local_port,
+                                probe,
+                                answered_meanwhile,
                             )
-                            .is_some();
-                            (machine_id, generation, target.local_port, healthy)
                         })
                         .collect::<Vec<_>>()
                 })
@@ -259,7 +272,7 @@ impl GhostexGpuiApp {
                     this.remote_gxserver_watchdog_probe_in_flight = false;
                 }
                 let mut failed_machine_ids = Vec::new();
-                for (machine_id, generation, local_port, healthy) in results {
+                for (machine_id, generation, local_port, probe, answered_meanwhile) in results {
                     if !this.gpui_remote_gxserver_connect_generation_is_current(
                         machine_id.as_str(),
                         generation,
@@ -275,16 +288,16 @@ impl GhostexGpuiApp {
                     if connection.local_port != local_port {
                         continue;
                     }
-                    if healthy {
-                        connection.health_check_failures = 0;
-                        continue;
-                    }
-                    connection.health_check_failures =
-                        connection.health_check_failures.saturating_add(1);
-                    if wake_validation
-                        || connection.health_check_failures
-                            >= GPUI_REMOTE_GXSERVER_WATCHDOG_FAILURE_THRESHOLD
-                    {
+                    // Slow is still connected: the sidebar, the chat and the terminal (which has
+                    // its own SSH) keep agreeing that the machine is there (GitHub #361). After
+                    // a wake any unconfirmed tunnel is replaced at once, as before.
+                    let verdict = connection.liveness.record(&probe, answered_meanwhile);
+                    let dropped = match verdict {
+                        GpuiRemoteTunnelVerdict::Live => false,
+                        GpuiRemoteTunnelVerdict::Slow => wake_validation,
+                        GpuiRemoteTunnelVerdict::Dropped => true,
+                    };
+                    if dropped {
                         failed_machine_ids.push(machine_id);
                     }
                 }

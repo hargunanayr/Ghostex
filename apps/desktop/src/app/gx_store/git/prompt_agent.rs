@@ -281,8 +281,11 @@ impl GhostexGpuiApp {
                     this.git_select_created_session(&focused, open_in_chat, cx);
                 });
                 // A promptless local create (Handoff / Export's follow-up) leaves the provider to
-                // the attach, as the old runtime did.
-                if !prompt.trim().is_empty() || rename_command.is_some() {
+                // the attach, as the old runtime did. A page has no attach.
+                if !prompt.trim().is_empty()
+                    || rename_command.is_some()
+                    || cfg!(target_arch = "wasm32")
+                {
                     start_and_send(remote, &session, rename_command, &prompt)
                         .await
                         .map_err(|error| error.message)?;

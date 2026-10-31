@@ -363,13 +363,16 @@ validate_ghosttykit_archive() {
 	if [[ ! -f "$ghostty_kit/Headers/ghostty.h" || "$has_shader_api" != "1" ]]; then
 		echo "Missing or outdated repo-local GhosttyKit static archive: $ghostty_kit" >&2
 		echo "gpui/build.rs links this archive by exact path; the dev build does not build it." >&2
+		local zig_hint
+		# shellcheck source=../../../tooling/zig-toolchain.sh
+		zig_hint="$(source "$REPO_ROOT/tooling/zig-toolchain.sh" && ghostex_find_zig "$REPO_ROOT" 2>/dev/null || echo zig)"
 		echo "Build it from the vendored Ghostty source with:" >&2
-		echo "  (cd \"$REPO_ROOT/.dependencies/ghostty\" && ZIG=\${ZIG:-\$(command -v zig)} && \\" >&2
+		echo "  (cd \"$REPO_ROOT/.dependencies/ghostty\" && ZIG=\"$zig_hint\" && \\" >&2
 		echo "     env DEVELOPER_DIR=\"\$(xcode-select -p)\" \\" >&2
 		echo "       SDKROOT=\"\$(DEVELOPER_DIR=\"\$(xcode-select -p)\" xcrun --sdk macosx --show-sdk-path)\" \\" >&2
 		echo "       GHOSTTY_METAL_DEVELOPER_DIR=\"\$(xcode-select -p)\" \\" >&2
 		echo "       \"\$ZIG\" build -Demit-xcframework -Dxcframework-target=universal -Demit-macos-app=false -Doptimize=ReleaseSafe)" >&2
-		echo "Requires Zig 0.16.x (\`mise install zig@0.16.0\` or \`brew install zig\`) and the Metal toolchain." >&2
+		echo "Requires the Zig the vendored Ghostty pins (\`mise install zig@<series>.0\`; see tooling/zig-toolchain.sh) and the Metal toolchain." >&2
 		exit 1
 	fi
 }
@@ -1376,6 +1379,12 @@ stage_tree_if_changed "$GXSERVER_SOURCE_DIR" "$WEB_DIR/gxserver"
 # SEE-ALSO: gpui_upload_install_bundled_remote_gxserver_and_read_token_inner in apps/desktop/src/app/helpers/remote/install.rs, current_cli_executable in server/src/ghostex_cli/launchers.rs.
 ln -sfh gxserver "$WEB_DIR/gxserver/bin/ghostex"
 ln -sfh ../../bin/zmx "$WEB_DIR/gxserver/bin/zmx"
+for linked_tool in ghostex zmx; do
+	if [[ ! -x "$WEB_DIR/gxserver/bin/$linked_tool" ]]; then
+		echo "The gxserver package's bin/$linked_tool link does not resolve inside the bundle." >&2
+		exit 1
+	fi
+done
 if [[ "$GHOSTEX_ON_DEMAND_ASSETS" == "1" ]]; then
 	rm -rf "$WEB_DIR/code-server"
 	rm -f "$WEB_DIR/local-start-code-server-root"

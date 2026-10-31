@@ -320,12 +320,13 @@ fn main() {
             let keys = env("GHOSTEX_NATIVE_DOCS_DEMO_KEYS");
             if !keys.is_empty() {
                 let handle: gpui::AnyWindowHandle = window.into();
+                let os = cx.platform_info().os;
                 cx.spawn(async move |cx| {
                     cx.background_executor()
                         .timer(std::time::Duration::from_secs(3))
                         .await;
                     for key in keys.split_whitespace() {
-                        let Ok(keystroke) = gpui::Keystroke::parse(key) else {
+                        let Ok(keystroke) = gpui::Keystroke::parse_with_os(key, os) else {
                             continue;
                         };
                         let _ = cx.update_window(handle, |_, window, cx| {

@@ -137,7 +137,7 @@ pub(crate) fn project_presentation_project(project: &Value) -> Value {
 pub(crate) fn insert_issues_workflow_fields(
     output: &mut Map<String, Value>,
     parts: crate::work_mode::IssuesWorkflowParts,
-    tracker: crate::work_mode::WorkTracker,
+    tracker: crate::work_mode::WorkSourceId,
 ) {
     if !parts.any() {
         return;
@@ -215,6 +215,11 @@ pub(crate) fn project_presentation_session(
             0
         }),
     );
+    // Present only while true, like a daemon that predates it (CDXC:SessionStatus 2026-10-27 in
+    // server/src/session_approval.rs).
+    if crate::session_approval::session_awaits_approval(session, generated_at) {
+        output.insert("awaitingApproval".to_string(), Value::Bool(true));
+    }
     insert_optional_string(
         &mut output,
         "agentName",

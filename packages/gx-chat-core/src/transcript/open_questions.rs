@@ -103,6 +103,11 @@ pub struct Asker {
     /// Asked before this session was forked from another (`mark_inherited`): it waits in the
     /// parent, not here.
     pub inherited: bool,
+    /// What the questions list (`questions/open_questions.rs`) calls it: a page's title, or a
+    /// form's first question (its title is often just "Open questions").
+    pub title: String,
+    /// When the reply that holds it arrived (epoch ms), if the transcript says.
+    pub at: Option<i64>,
 }
 
 impl Asker {
@@ -181,6 +186,13 @@ pub fn asker_entries(messages: &[ChatMessage], prior: &[Found]) -> Vec<Found> {
                     .filter(|question| !question.tag.is_empty())
                     .map(|question| (question.tag.clone(), question.key.clone()))
                     .collect();
+                let title = form
+                    .questions
+                    .iter()
+                    .map(|question| question.title.trim())
+                    .find(|title| !title.is_empty())
+                    .unwrap_or(form.title.trim())
+                    .to_string();
                 Asker {
                     id: form.id,
                     kind: AskerKind::Form,
@@ -193,6 +205,8 @@ pub fn asker_entries(messages: &[ChatMessage], prior: &[Found]) -> Vec<Found> {
                     skipped: Vec::new(),
                     superseded: Vec::new(),
                     inherited: false,
+                    title,
+                    at: message.timestamp,
                 }
             } else if ghostex_gx_visual::is_visual_language(&language) {
                 let Some(page) = ghostex_gx_visual::page_reference(&body) else {
@@ -213,6 +227,8 @@ pub fn asker_entries(messages: &[ChatMessage], prior: &[Found]) -> Vec<Found> {
                     skipped: Vec::new(),
                     superseded: Vec::new(),
                     inherited: false,
+                    title: page.title.trim().to_string(),
+                    at: message.timestamp,
                 }
             } else {
                 continue;

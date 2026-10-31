@@ -5,7 +5,9 @@
 //! Every page entity implements [`SettingsPage`]; the field functions take the page, build their
 //! element with listeners on it, and save through its store. Widget state that must outlive a
 //! render (text buffers, slider positions, open dropdowns) lives in the page's [`FieldStates`].
+pub(crate) mod advanced;
 pub(crate) mod checkbox;
+pub(crate) mod chips;
 pub(crate) mod color;
 pub(crate) mod controls;
 pub(crate) mod diagnostic_logging;
@@ -31,7 +33,9 @@ pub(crate) mod tag_list;
 pub(crate) mod text;
 pub(crate) mod textarea;
 
+pub(crate) use advanced::*;
 pub(crate) use checkbox::*;
+pub(crate) use chips::*;
 pub(crate) use color::*;
 pub(crate) use controls::*;
 pub(crate) use diagnostic_logging::*;
@@ -116,7 +120,6 @@ impl FieldStates {
 /// The icon paths the fields draw (Tabler outline icons, copied into assets/modals/settings/).
 pub(crate) mod icon {
     pub(crate) const ALERT_TRIANGLE: &str = "modals/settings/alert-triangle.svg";
-    pub(crate) const ARROW_BIG_UP: &str = "modals/settings/arrow-big-up.svg";
     pub(crate) const ASTERISK: &str = "modals/settings/asterisk.svg";
     pub(crate) const CHEVRON_DOWN: &str = "modals/settings/chevron-down.svg";
     pub(crate) const CHEVRON_RIGHT: &str = "modals/settings/chevron-right.svg";

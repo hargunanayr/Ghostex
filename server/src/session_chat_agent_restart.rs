@@ -36,8 +36,14 @@ pub(crate) async fn restart(
     }
     match params.get("actionId").and_then(Value::as_str) {
         Some(SESSION_CHAT_NOTICE_ACTION_SIGN_IN) => return sign_in(state, params).await,
+        Some(crate::session_chat_notice::SESSION_CHAT_NOTICE_ACTION_RECONNECT) => {
+            return crate::session_chat_account_sign_in::reconnect(state, params).await
+        }
         Some(crate::agent_cli::opencode::ACTION_INSTALL) => {
             return install_opencode2(state, params).await
+        }
+        Some(crate::session_chat_notice::SESSION_CHAT_NOTICE_ACTION_INSTALL_AGENT) => {
+            return install_agent_cli(state, params).await
         }
         Some(crate::agent_cli::opencode::ACTION_RESTART) => {
             return restart_on_opencode2(state, params).await
@@ -105,6 +111,64 @@ async fn install_opencode2(
                 &target.session_id,
             )
             .await;
+        }
+    });
+    Ok(())
+}
+
+/// Install on the card of an agent whose command is not on this computer
+/// (`agent_command_missing_notice`): installs the CLI the screen named with the method Settings >
+/// Agents would pick, in the background, then restarts the session. The job shows on the Agents page
+/// like any other install.
+async fn install_agent_cli(
+    state: &AppState,
+    params: &Map<String, Value>,
+) -> Result<(), DomainStateError> {
+    let target = resolve_session_chat_send_target(state, params, "installAgentCli")?;
+    let read_state = state.clone();
+    let (project_id, session_id) = (target.project_id.clone(), target.session_id.clone());
+    let command = tokio::task::spawn_blocking(move || {
+        let db = open_gxserver_database(&read_state.paths).ok()?;
+        let repository = DomainRepository::new(&db, &read_state.metadata.server_id);
+        let screen =
+            crate::zmx::read_zmx_session_history_capture(&repository, &project_id, &session_id)
+                .ok()?;
+        let notice = crate::session_chat_start_failure::agent_start_failure(
+            &repository,
+            &project_id,
+            &session_id,
+            &screen.text,
+        )?;
+        notice
+            .error_lines
+            .as_deref()
+            .and_then(crate::session_chat_notice::missing_start_command)
+    })
+    .await
+    .ok()
+    .flatten()
+    .ok_or_else(|| {
+        invalid("The terminal no longer shows a missing agent command, so nothing was installed.")
+    })?;
+    let agent_id = crate::agent_cli::catalog::CATALOG
+        .iter()
+        .find(|definition| definition.binary == command)
+        .map(|definition| definition.agent_id.clone())
+        .ok_or_else(|| invalid(format!("Ghostex doesn't know how to install {command}.")))?;
+    let state = state.clone();
+    tokio::spawn(async move {
+        match crate::agent_cli::endpoint::install_default_and_wait(&state.paths, &agent_id).await {
+            Ok(_) => {
+                let _ = crate::session_chat_queue_runtime::cycle_session(
+                    &state,
+                    &target.project_id,
+                    &target.session_id,
+                )
+                .await;
+            }
+            Err(reason) => {
+                eprintln!("gxserver: installing {agent_id} from a chat card failed: {reason}")
+            }
         }
     });
     Ok(())

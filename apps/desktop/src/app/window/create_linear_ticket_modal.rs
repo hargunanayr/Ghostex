@@ -406,8 +406,12 @@ impl GpuiCreateLinearTicketModalWindow {
                 cx.notify();
             });
             let mut start_params = match identifier.strip_prefix('#') {
-                Some(number) => json!({ "projectId": project_id, "githubIssue": number }),
-                None => json!({ "projectId": project_id, "linearIssue": identifier }),
+                Some(number) => {
+                    json!({ "projectId": project_id, "source": "github", "ticketId": number })
+                }
+                None => {
+                    json!({ "projectId": project_id, "source": "linear", "ticketId": identifier })
+                }
             };
             if let Some(agent_id) = agent_id {
                 start_params["agentId"] = json!(agent_id);

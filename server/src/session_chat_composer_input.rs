@@ -42,6 +42,36 @@ pub(super) fn antigravity_input_region(lines: &[String]) -> Option<Range<usize>>
     rule_input_region(&lines[..=head], &['>'])
 }
 
+/// The hints Antigravity CLI 1.4.9 shows in its empty input row after Shift+Tab leaves Default
+/// mode (Default shows none). Read from the shipped binary and checked live on 2026-10-29.
+const ANTIGRAVITY_MODE_HINTS: &[&str] = &[
+    "Accept-edits mode: file edits auto-approved (shift+tab to cycle)",
+    "Auto mode: edits & safe commands auto-approved (shift+tab to cycle)",
+    "Plan mode: research & plan only (shift+tab to cycle)",
+    "Best-of-N mode: fork into parallel arms and pick a winner (shift+tab to cycle)",
+];
+
+/// CDXC:AgentScreenDetection 2026-10-29 WHY:
+/// Antigravity CLI 1.4.7 and 1.4.9 show a mode hint where typed text goes (`> Accept-edits mode: file edits auto-approved (shift+tab to cycle)`, cut to `(shif...` on a narrow pane), drawn in a muted colour rather than SGR faint (256-colour 109, which zmx's capture serializes as RGB 154,160,166). Read as a draft, it could never be cleared, so every chat or queued send to a fresh Accept-edits session failed after about 6 s with composerNotCleared (issue #349). The hint is empty input when it spells a known mode hint, whole or cut with `...`, or the `<Name> mode: … (shift+tab to cycle)` shape of a newer mode, and every character carries an explicit colour: typed text is drawn in the terminal's default colour, so a draft with the same words stays a draft.
+fn is_antigravity_mode_hint(text: &str, body: &[&(char, Style)]) -> bool {
+    let text = text.trim();
+    let spelled = ANTIGRAVITY_MODE_HINTS.iter().any(|hint| {
+        *hint == text
+            || text
+                .strip_suffix("...")
+                .or_else(|| text.strip_suffix('…'))
+                .is_some_and(|cut| !cut.trim().is_empty() && hint.starts_with(cut))
+    }) || (text.ends_with("(shift+tab to cycle)")
+        && text
+            .split_once(" mode: ")
+            .is_some_and(|(name, _)| !name.is_empty() && !name.contains(' ')));
+    spelled
+        && !body.is_empty()
+        && body
+            .iter()
+            .all(|(_, style)| style.foreground_index.is_some() || style.foreground_rgb.is_some())
+}
+
 /// One row of Antigravity's active-items list: a status glyph, the task's start time in brackets,
 /// then its command and state.
 fn is_antigravity_active_item(line: &str) -> bool {
@@ -119,6 +149,9 @@ pub(super) fn freebuff_input_region(lines: &[String]) -> Option<Range<usize>> {
         })
         .then_some(head + 1..foot)
 }
+
+#[path = "session_chat_dsh_composer.rs"]
+pub(super) mod dsh_composer;
 
 const FREEBUFF_PLACEHOLDERS: &[&str] = &[
     "enter a coding task or / for commands",
@@ -1103,6 +1136,10 @@ pub fn session_chat_composer_input(agent: &str, screen: &str) -> Option<SessionC
         let lines: Vec<String> = screen.lines().map(strip_ansi_sgr).collect();
         return freebuff_composer_input(&lines);
     }
+    if agent == "dsh" {
+        let lines: Vec<String> = screen.lines().map(strip_ansi_sgr).collect();
+        return dsh_composer::dsh_composer_input(&lines);
+    }
     let mut lines = styled_lines(screen);
     if agent == "empryo" {
         return empryo_composer_input(screen, &lines);
@@ -1191,14 +1228,15 @@ pub fn session_chat_composer_input(agent: &str, screen: &str) -> Option<SessionC
     .trim()
     .to_string();
     // Cursor's caret inverts the first placeholder character while the rest stays faint.
-    let placeholder = !body.is_empty()
+    let placeholder = (!body.is_empty()
         && body.iter().enumerate().all(|(index, (_, style))| {
             style.faint
                 // Hermes's prompt_toolkit placeholder is italic; editable input inherits the terminal style.
                 || (agent == "hermes-agent" && style.italic)
                 || (agent == "cursor" && index == 0 && style.inverse && body.len() > 1)
         })
-        && !text.to_lowercase().contains("[paste");
+        && !text.to_lowercase().contains("[paste"))
+        || (agent == "antigravity" && is_antigravity_mode_hint(&text, &body));
     let mut input = SessionChatComposerInput {
         text,
         rows: region.len(),
@@ -1243,5 +1281,161 @@ mod zcode_tests {
                 .blocks_message_for(Some("zcode")));
             assert!(session_chat_composer_input("zcode", &blocked).is_none());
         }
+    }
+}
+
+#[cfg(test)]
+mod claude_status_line_tests {
+    use super::*;
+
+    /// The bottom of session G14iv's screen on 2026-10-27 (200 columns, trimmed): a titled top
+    /// rule and a statusline three rows tall, the last with Claude's own "← for agents · 2
+    /// feedback drafts" notes.
+    fn screen(input_rows: &[&str]) -> String {
+        let rule = "─".repeat(120);
+        let mut lines = vec![
+            "✻ Churned for 6s · done 8:33 AM".to_string(),
+            format!("{:>100}", "◉ xhigh · /effort"),
+            format!("{} Mr Big Chungus ─", "─".repeat(100)),
+        ];
+        lines.extend(input_rows.iter().map(|row| row.to_string()));
+        lines.push(rule);
+        lines.push("  Opus 5.5 (1M) | xhigh | Ctx 57% | $757.85".to_string());
+        lines.push("  ff8d2575-b069-47b5-b375-69750cc8353f | …/Ghostex".to_string());
+        lines.push(
+            "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents · 2 feedback drafts"
+                .to_string(),
+        );
+        lines.join("\n")
+    }
+
+    #[test]
+    fn statusline_rows_under_the_input_box_are_never_draft_text() {
+        assert_eq!(claude_composer_draft(&screen(&["❯ "])).as_deref(), Some(""));
+        assert_eq!(
+            crate::session_chat_composer::claude_composer_input_text(&screen(&["❯ "])),
+            None
+        );
+        assert_eq!(
+            claude_composer_draft(&screen(&["❯ first line", "  second line", "  ```"])).as_deref(),
+            Some("first line second line ```")
+        );
+    }
+}
+
+#[cfg(test)]
+mod antigravity_mode_hint_tests {
+    use super::*;
+    use crate::session_chat_composer::detect_session_chat_composer_ready;
+
+    /// The issue #349 screen (Antigravity CLI 1.4.9, account and folder lines removed) with the
+    /// styles a live 1.4.9 draws: `>` in 256-colour 111, the hint in 109, typed text in the
+    /// default colour.
+    fn screen(input_row: &str) -> String {
+        let rule = format!("\u{1b}[38;5;238m{}", "─".repeat(55));
+        [
+            "  Antigravity CLI 1.4.9",
+            "  Gemini 3.8 Flash (Medium)",
+            "",
+            &rule,
+            &format!("\u{1b}[38;5;111m>\u{1b}[39m {input_row}"),
+            &rule,
+            "\u{1b}[38;5;109m? for shortcuts\u{1b}[39m",
+        ]
+        .join("\n")
+    }
+
+    fn hint(text: &str) -> String {
+        format!("\u{1b}[38;5;109m{text}\u{1b}[39m")
+    }
+
+    #[test]
+    fn mode_hints_read_as_an_empty_input() {
+        for text in [
+            // The issue's capture.
+            "Accept-edits mode: file edits auto-approved (shif...",
+            // Live 1.4.9 at 120 columns.
+            "Accept-edits mode: file edits auto-approved (shift+tab to cycle)",
+            "Auto mode: edits & safe commands auto-approved (shift+tab to cycle)",
+            "Plan mode: research & plan only (shift+tab to cycle)",
+            "Best-of-N mode: fork into parallel arms and pick a winner (shift+tab to cycle)",
+            // Live 1.4.9 at 57 columns.
+            "Accept-edits mode: file edits auto-approved (shift+...",
+            "Auto mode: edits & safe commands auto-approved (shi...",
+            // A mode a newer Antigravity may add.
+            "Review mode: every change waits for you (shift+tab to cycle)",
+        ] {
+            let screen = screen(&hint(text));
+            assert!(
+                !detect_session_chat_composer_ready(Some("antigravity"), &screen)
+                    .blocks_message_for(Some("antigravity")),
+                "{text}"
+            );
+            let input = session_chat_composer_input("antigravity", &screen).unwrap();
+            assert!(input.is_empty(), "{text}");
+        }
+        // Default mode shows no hint.
+        assert!(session_chat_composer_input("antigravity", &screen(""))
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn typed_text_with_the_same_words_stays_a_draft() {
+        for text in [
+            "Accept-edits mode: file edits auto-approved (shift+tab to cycle)",
+            "Accept-edits mode: file edits auto-approved (shif...",
+            "Plan mode: research & plan only",
+            "Plan mode: research & plan only (shift+tab to cycle) and then fix #349",
+        ] {
+            let input = session_chat_composer_input("antigravity", &screen(text)).unwrap();
+            assert!(!input.is_empty(), "{text}");
+            assert_eq!(input.text, text);
+        }
+        // Coloured, but not a hint Antigravity draws.
+        for text in ["Plan the release", "Accept-edits mode: on (shift+tab)"] {
+            assert!(
+                !session_chat_composer_input("antigravity", &screen(&hint(text)))
+                    .unwrap()
+                    .is_empty(),
+                "{text}"
+            );
+        }
+    }
+
+    /// The input rows of zmx 0.8.1's VT capture (`zmx history --vt --screen`, the capture
+    /// gxserver reads) of a live Antigravity CLI 1.4.9, which serializes its colours as RGB.
+    #[test]
+    fn zmx_captures_tell_the_hint_from_typed_text() {
+        let rule = "\u{1b}[0m\u{1b}[38;2;60;64;67m────────────────────────────────────────";
+        let capture = |row: &str| {
+            format!("{rule}\n\u{1b}[0m\u{1b}[38;2;138;180;248m>\u{1b}[1C\u{1b}[0m{row}\n{rule}\n\u{1b}[0m? for shortcuts")
+        };
+        let hint = capture("\u{1b}[38;2;154;160;166mAccept-edits mode: file edits auto-approved (shift+tab to cycle)\u{1b}[0m");
+        assert!(session_chat_composer_input("antigravity", &hint)
+            .unwrap()
+            .is_empty());
+        let typed =
+            session_chat_composer_input("antigravity", &capture("Accept-edits mode: file edits"))
+                .unwrap();
+        assert!(!typed.is_empty());
+        assert_eq!(typed.text, "Accept-edits mode: file edits");
+    }
+
+    #[test]
+    fn a_message_pasted_over_the_hint_reads_as_the_message() {
+        // Typing replaces the hint, so paste verification reads the message, not the hint.
+        let input =
+            session_chat_composer_input("antigravity", &screen("fix the failing test")).unwrap();
+        assert!(!input.is_empty());
+        assert_eq!(input.text, "fix the failing test");
+        // A message that spells the hint itself still reads as typed.
+        let typed = "Accept-edits mode: file edits auto-approved (shift+tab to cycle)";
+        assert_eq!(
+            session_chat_composer_input("antigravity", &screen(typed))
+                .unwrap()
+                .text,
+            typed
+        );
     }
 }

@@ -349,12 +349,19 @@ fn cursor_launch_appends_only_normalized_resume_chat_ids() {
 #[test]
 fn resume_and_fork_plans_shape_agent_commands() {
     let project = json!({ "path": "/tmp/project", "customAgents": [], "launchSettings": {} });
+    // A written rollout: a Codex thread that was never saved starts fresh instead.
+    let rollouts = tempfile::tempdir().expect("tempdir");
+    let rollout = rollouts
+        .path()
+        .join("rollout-12345678-1234-1234-1234-123456789abc.jsonl");
+    std::fs::write(&rollout, "{}\n").expect("rollout");
     let session = json!({
         "agentId": "codex",
         "launchSettings": {},
         "runtimeSettings": {
             "agentCommand": "codex",
             "agentSessionId": "12345678-1234-1234-1234-123456789abc",
+            "agentSessionPath": rollout.to_string_lossy(),
             "titleSource": "terminal-auto"
         },
         "title": "Investigate bug",
@@ -516,12 +523,19 @@ fn opencode_resume_keeps_lookup_command_separate_from_runtime_accept_all() {
 #[test]
 fn attach_startup_text_uses_agent_resume_plan_and_settings() {
     let project = json!({ "path": "/tmp/project", "customAgents": [], "launchSettings": {} });
+    // A written rollout: a Codex thread that was never saved starts fresh instead.
+    let rollouts = tempfile::tempdir().expect("tempdir");
+    let rollout = rollouts
+        .path()
+        .join("rollout-12345678-1234-1234-1234-123456789abc.jsonl");
+    std::fs::write(&rollout, "{}\n").expect("rollout");
     let session = json!({
         "agentId": "codex",
         "launchSettings": {},
         "runtimeSettings": {
             "agentCommand": "codex",
-            "agentSessionId": "12345678-1234-1234-1234-123456789abc"
+            "agentSessionId": "12345678-1234-1234-1234-123456789abc",
+            "agentSessionPath": rollout.to_string_lossy()
         },
         "title": "Restorable Codex",
     });

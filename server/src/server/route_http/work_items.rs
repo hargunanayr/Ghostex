@@ -118,12 +118,11 @@ async fn list_work_items(
     })
     .await
     .map_err(task_error)??;
-    let github_cwds = plan.github_cwds();
     let mut refreshing = false;
-    if force || work_feeds_stale(&plan.linear, &github_cwds) {
-        let linear = plan.linear.clone();
+    if force || work_feeds_stale(&plan) {
+        let refresh_plan = plan.clone();
         let refresh = tokio::task::spawn_blocking(move || {
-            refresh_work_feeds(&linear, &github_cwds, force);
+            refresh_work_feeds(&refresh_plan, force);
         });
         refreshing = tokio::time::timeout(WORK_LIST_WAIT, refresh).await.is_err();
     }
@@ -168,14 +167,12 @@ async fn list_work_items(
     Ok(list)
 }
 
-/// `{ projectId?, projectIds?, linearIssue? | githubIssue? | pullRequest?, force? }`.
+/// `{ projectId?, projectIds?, source + ticketId | pullRequest, force? }`.
 async fn read_work_item_route(
     state: Arc<AppState>,
     params: Map<String, Value>,
 ) -> Result<Value, DomainStateError> {
-    let item_ref = WorkItemRef::from_params(&params).ok_or_else(|| {
-        DomainStateError::bad_request("Pass linearIssue, githubIssue or pullRequest.")
-    })?;
+    let item_ref = WorkItemRef::from_params(&params).map_err(DomainStateError::bad_request)?;
     let refresh_state = state.clone();
     let task = tokio::task::spawn_blocking(move || {
         let project_id = params

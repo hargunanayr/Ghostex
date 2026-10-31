@@ -5,7 +5,7 @@ use std::{
     time::UNIX_EPOCH,
 };
 
-use rand::RngCore;
+use rand::TryRng;
 use serde_json::json;
 
 /// The largest prepared page gxserver stores, local images included.
@@ -25,7 +25,9 @@ pub(super) fn visual_pages_dir(gxserver_state_dir: &Path) -> PathBuf {
 /// 128 random bits from the operating system's generator, as 32 lowercase hex characters.
 fn new_page_id() -> String {
     let mut bytes = [0u8; 16];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    rand::rngs::SysRng
+        .try_fill_bytes(&mut bytes)
+        .expect("the operating system's random generator failed");
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
@@ -197,6 +199,24 @@ pub(super) fn store_scroll(
         return Ok(());
     }
     record["scrollY"] = json!(y);
+    write_record(gxserver_state_dir, id, &record).map_err(StoreAnswersError::Io)
+}
+
+/// Notes on the record that the reader closed the old-layout notice (notice.rs). Closing it again
+/// keeps the first time.
+pub(super) fn dismiss_layout_notice(
+    gxserver_state_dir: &Path,
+    id: &str,
+) -> Result<(), StoreAnswersError> {
+    let _guard = RECORD_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut record = read_record(gxserver_state_dir, id).ok_or(StoreAnswersError::NotFound)?;
+    if record.get("layoutNoticeDismissedAt").is_some() {
+        return Ok(());
+    }
+    record["layoutNoticeDismissedAt"] =
+        json!(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
     write_record(gxserver_state_dir, id, &record).map_err(StoreAnswersError::Io)
 }
 

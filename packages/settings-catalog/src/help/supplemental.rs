@@ -8,16 +8,18 @@ use crate::json::{opt, Opt};
 /// A Settings page as the Help files name it: its id and title.
 pub(crate) type Tab = (&'static str, &'static str);
 
-pub(crate) const GENERAL: Tab = ("settings", "General");
 /// The Theme page renders the `appearance` group's sections (Theme, App Icon) on its own tab.
 pub(crate) const THEME: Tab = ("theme", "Theme");
-const EXTENSIONS: Tab = ("extensions", "Store");
+/// The Terminal page, one of the pages General split into (layout.rs).
+const TERMINAL: Tab = ("terminal", "Terminal");
+const CHAT: Tab = ("chat", "Chat");
+const EXTENSIONS: Tab = ("extensions", "Extensions");
 const AGENTS: Tab = ("agents", "Agents");
 const PROJECTS: Tab = ("projects", "Projects");
 const OPEN_TARGETS: Tab = ("openTargets", "Open In");
 const HOTKEYS: Tab = ("hotkeys", "Hotkeys");
 const INTEGRATIONS: Tab = ("integrations", "Integrations");
-const ABOUT: Tab = ("about", "About");
+pub(crate) const ABOUT: Tab = ("about", "About");
 const ACCOUNTS: Tab = ("accounts", "Accounts");
 const REMOTE: Tab = ("remote", "Remote");
 
@@ -35,6 +37,29 @@ pub(crate) struct Supplemental {
 }
 
 pub(crate) const SUPPLEMENTAL_ROWS: &[Supplemental] = &[
+    // CDXC:Settings 2026-10-29 (cleanup Q11, general/chat.rs): no Settings row; the chat's View menu picks the level per chat.
+    Supplemental {
+        key: "sessionChatSimpleMode",
+        tab: CHAT,
+        group: None,
+        section: "chat",
+        section_title: "Chat",
+        title: "Simple mode by default",
+        subtitle: "New chats open in Simple mode (on by default). More actions > View in a chat picks Simple, Detailed or Verbose for that chat.",
+        options: &[],
+        user_only: false,
+    },
+    Supplemental {
+        key: "sessionChatVerboseMode",
+        tab: CHAT,
+        group: None,
+        section: "chat",
+        section_title: "Chat",
+        title: "Verbose mode by default",
+        subtitle: "New chats open in Verbose mode when Simple mode by default is off. More actions > View in a chat picks the level for that chat.",
+        options: &[],
+        user_only: false,
+    },
     Supplemental {
         key: "agentAcceptAllEnabled",
         tab: AGENTS,
@@ -102,24 +127,13 @@ pub(crate) const SUPPLEMENTAL_ROWS: &[Supplemental] = &[
         user_only: false,
     },
     Supplemental {
-        key: "showAdvancedSettings",
-        tab: GENERAL,
-        group: None,
-        section: "settingsModal",
-        section_title: "Settings window",
-        title: "Show Advanced settings",
-        subtitle: "Show the rows marked Advanced in Settings.",
-        options: &[],
-        user_only: false,
-    },
-    Supplemental {
         key: "codeViewTabHidden",
         tab: EXTENSIONS,
         group: None,
         section: "viewOrder",
         section_title: "Views",
-        title: "Hide Code view",
-        subtitle: "Stop offering the Code view, so it is missing from the view panel tab strip, its + menu and the view picker.",
+        title: "Hide VS Code view",
+        subtitle: "Stop offering the VS Code view, so it is missing from the view panel tab strip, its + menu and the view picker.",
         options: &[],
         user_only: false,
     },
@@ -164,6 +178,17 @@ pub(crate) const SUPPLEMENTAL_ROWS: &[Supplemental] = &[
         section_title: "Views",
         title: "Hide Automate view",
         subtitle: "Stop offering the Automate view, so it is missing from the view panel tab strip, its + menu and the view picker.",
+        options: &[],
+        user_only: false,
+    },
+    Supplemental {
+        key: "changesViewTabHidden",
+        tab: EXTENSIONS,
+        group: None,
+        section: "viewOrder",
+        section_title: "Views",
+        title: "Hide Changes view",
+        subtitle: "Stop offering the Changes view, so it is missing from the view panel tab strip, its + menu and the view picker.",
         options: &[],
         user_only: false,
     },
@@ -218,7 +243,7 @@ pub(crate) const SUPPLEMENTAL_ROWS: &[Supplemental] = &[
         section: "viewOrder",
         section_title: "Views",
         title: "Hide Sentry view",
-        subtitle: "Enable Sentry in Settings > Extensions > Store, then choose its home URL when opening the view. Disabled by default.",
+        subtitle: "Enable Sentry in Settings > Extensions, then choose its home URL when opening the view. Disabled by default.",
         options: &[],
         user_only: false,
     },
@@ -229,7 +254,7 @@ pub(crate) const SUPPLEMENTAL_ROWS: &[Supplemental] = &[
         section: "viewOrder",
         section_title: "Views",
         title: "Hide Figma view",
-        subtitle: "Enable Figma in Settings > Extensions > Store, then choose its home URL when opening the view. Disabled by default.",
+        subtitle: "Enable Figma in Settings > Extensions, then choose its home URL when opening the view. Disabled by default.",
         options: &[],
         user_only: false,
     },
@@ -240,7 +265,7 @@ pub(crate) const SUPPLEMENTAL_ROWS: &[Supplemental] = &[
         section: "viewOrder",
         section_title: "Views",
         title: "Hide Vercel view",
-        subtitle: "Enable Vercel in Settings > Extensions > Store, then choose its home URL when opening the view. Disabled by default.",
+        subtitle: "Enable Vercel in Settings > Extensions, then choose its home URL when opening the view. Disabled by default.",
         options: &[],
         user_only: false,
     },
@@ -251,7 +276,7 @@ pub(crate) const SUPPLEMENTAL_ROWS: &[Supplemental] = &[
         section: "viewOrder",
         section_title: "Views",
         title: "Hide Supabase view",
-        subtitle: "Enable Supabase in Settings > Extensions > Store, then choose its home URL when opening the view. Disabled by default.",
+        subtitle: "Enable Supabase in Settings > Extensions, then choose its home URL when opening the view. Disabled by default.",
         options: &[],
         user_only: false,
     },
@@ -262,7 +287,7 @@ pub(crate) const SUPPLEMENTAL_ROWS: &[Supplemental] = &[
         section: "viewOrder",
         section_title: "Views",
         title: "Hide GitHub Actions view",
-        subtitle: "Enable GitHub Actions in Settings > Extensions > Store, then choose its home URL when opening the view. Disabled by default.",
+        subtitle: "Enable GitHub Actions in Settings > Extensions, then choose its home URL when opening the view. Disabled by default.",
         options: &[],
         user_only: false,
     },
@@ -273,7 +298,7 @@ pub(crate) const SUPPLEMENTAL_ROWS: &[Supplemental] = &[
         section: "viewOrder",
         section_title: "Views",
         title: "Hide PostHog view",
-        subtitle: "Enable PostHog in Settings > Extensions > Store, then choose its home URL when opening the view. Disabled by default.",
+        subtitle: "Enable PostHog in Settings > Extensions, then choose its home URL when opening the view. Disabled by default.",
         options: &[],
         user_only: false,
     },
@@ -284,7 +309,7 @@ pub(crate) const SUPPLEMENTAL_ROWS: &[Supplemental] = &[
         section: "viewOrder",
         section_title: "Views",
         title: "Hide Custom Website view",
-        subtitle: "Enable Custom Website in Settings > Extensions > Store, then choose its home URL when opening the view. Disabled by default.",
+        subtitle: "Enable Custom Website in Settings > Extensions, then choose its home URL when opening the view. Disabled by default.",
         options: &[],
         user_only: false,
     },
@@ -487,6 +512,28 @@ pub(crate) const SUPPLEMENTAL_ROWS: &[Supplemental] = &[
         user_only: false,
     },
     Supplemental {
+        key: "sessionNotesHidden",
+        tab: EXTENSIONS,
+        group: None,
+        section: "official",
+        section_title: "Built-in",
+        title: "Turn off Session notes",
+        subtitle: "Turn off Session notes: Note in a session's menu and hover buttons, the note dot on its card, Session note in the chat's More actions, the Session Note hotkey and the ghostex session-note command, here and in the phone app. Off by default; notes you wrote are kept and come back when you turn it on.",
+        options: &[],
+        user_only: false,
+    },
+    Supplemental {
+        key: "claudeWebHidden",
+        tab: EXTENSIONS,
+        group: None,
+        section: "official",
+        section_title: "Built-in",
+        title: "Turn off Claude",
+        subtitle: "Turn off Claude: the Claude button in the sidebar's top row and the Claude view, which shows claude.ai with a bar to switch between your saved Claude accounts. Off by default; each account's claude.ai sign-in is kept.",
+        options: &[],
+        user_only: false,
+    },
+    Supplemental {
         key: "connectorsHidden",
         tab: EXTENSIONS,
         group: None,
@@ -515,7 +562,7 @@ pub(crate) const SUPPLEMENTAL_ROWS: &[Supplemental] = &[
         section: "official",
         section_title: "Built-in",
         title: "Turn off Debugging",
-        subtitle: "Leave the Debugging page out of Settings. On by default, and shown only while Show Advanced is on (a search still finds it).",
+        subtitle: "Leave the Debugging page out of Settings. On by default.",
         options: &[],
         user_only: false,
     },
@@ -526,7 +573,7 @@ pub(crate) const SUPPLEMENTAL_ROWS: &[Supplemental] = &[
         section: "official",
         section_title: "Built-in",
         title: "Turn off the voice agent",
-        subtitle: "Turn off the voice agent everywhere: the headset at the top of the window and its arrow menu, voice calls about one session, the call rows on Settings > Extensions > Voice agent and the voice agent hotkeys, on this computer and in the phone app connected to it. A call that is running ends. Dictate keeps working, and the xAI key stays on Settings > Extensions > Voice agent. On by default; your voice settings are kept.",
+        subtitle: "Turn off the voice agent everywhere: the headset at the top of the window and its arrow menu, voice calls about one session, the call rows on Settings > Extensions > Voice agent and the voice agent hotkeys, on this computer and in the phone app connected to it. A call that is running ends. Dictate keeps working, and the xAI and OpenAI keys stay on Settings > Extensions > Voice agent. On by default; your voice settings are kept.",
         options: &[],
         user_only: false,
     },
@@ -620,19 +667,22 @@ pub(crate) const SUPPLEMENTAL_ROWS: &[Supplemental] = &[
     },
     Supplemental {
         key: "windowsTerminalBackend",
-        tab: GENERAL,
-        group: Some("terminal"),
+        tab: TERMINAL,
+        group: None,
         section: "terminal",
         section_title: "Terminal",
         title: "Windows Environment",
         subtitle: "Windows only. PowerShell (default) runs native Windows projects and agents. WSL runs Linux projects. Changing environments prompts you to restart Ghostex.",
-        options: &[opt("PowerShell (Native)", "powershell"), opt("WSL (Linux)", "wsl")],
+        options: &[
+            opt("PowerShell (Native)", "powershell"),
+            opt("WSL (Linux)", "wsl"),
+        ],
         user_only: false,
     },
     Supplemental {
         key: "windowsWslDistribution",
-        tab: GENERAL,
-        group: Some("terminal"),
+        tab: TERMINAL,
+        group: None,
         section: "terminal",
         section_title: "Terminal",
         title: "WSL distribution",

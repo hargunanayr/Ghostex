@@ -5,8 +5,8 @@
 //! list could not be read: Try again), `loading` (agents not read yet), `boxes`
 //! (the Run on row with Docker, Hetzner, an SSH host and Daytona ready, Docker
 //! picked), `boxes-ssh` (the same, the SSH host picked: the chips scroll to it),
-//! `noboxes` (agentbox installed, no box ready: the Settings link). Every other
-//! state has no Run on row.
+//! `noboxes` (agentbox installed, no box ready: the Settings link), `many`
+//! (sixteen agents, so the list scrolls). Every other state has no Run on row.
 use super::new_thread_picker::*;
 use gpui::{App, AppContext as _, Entity, WindowHandle};
 use gpui_component::Root;
@@ -18,6 +18,7 @@ fn agent(light: bool, agent_id: &str, name: &str, icon: Option<&str>) -> NewThre
     let (icon_path, icon_svg_size, icon_accent) = match icon {
         Some("codex") => (Some("agent-icons/codex.svg"), 10.5, 0xffffff),
         Some("claude") => (Some("agent-icons/claude.svg"), 11.0, 0xd97757),
+        Some("claude-cloud") => (Some("agent-icons/claude-cloud.svg"), 13.0, 0xd67556),
         Some("cursor-cli") => (Some("agent-icons/cursor-cli.svg"), 11.5, 0xedecec),
         Some("grok-build") => (Some("agent-icons/grok-build.svg"), 11.5, 0xffffff),
         Some("hermes-agent") => (Some("agent-icons/hermes-agent.svg"), 11.5, 0xf3c46b),
@@ -109,6 +110,12 @@ pub(super) fn open(demo: &super::DemoEnv, cx: &mut App) {
         vec![
             agent(light, "codex", "Codex", Some("codex")),
             agent(light, "claude", "Claude", Some("claude")),
+            agent(
+                light,
+                "claude-cloud",
+                "Claude (cloud)",
+                Some("claude-cloud"),
+            ),
             agent(light, "cursor", "Cursor CLI", Some("cursor-cli")),
             agent(light, "grok", "Grok Build", Some("grok-build")),
             agent(light, "hermes", "Hermes Agent", Some("hermes-agent")),
@@ -122,6 +129,15 @@ pub(super) fn open(demo: &super::DemoEnv, cx: &mut App) {
             ),
             agent(light, "zcode", "ZCode", Some("zcode")),
         ]
+    };
+    let agents = if state == "many" {
+        let mut agents = agents;
+        for name in ["Gemini", "Copilot", "Kiro", "Qoder", "Amp", "Droid"] {
+            agents.push(agent(light, &name.to_lowercase(), name, None));
+        }
+        agents
+    } else {
+        agents
     };
     let slot: Rc<RefCell<Option<(WindowHandle<Root>, Entity<GpuiNewThreadPickerWindow>)>>> =
         Rc::new(RefCell::new(None));

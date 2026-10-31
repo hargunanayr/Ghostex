@@ -11,10 +11,10 @@ use serde_json::{Map, Value};
 
 use crate::effect::Effect;
 use crate::session::constants::{
-    not_found_retry_delay_ms, resync_retry_delay_ms, MAX_RESYNC_FOLLOW_UPS,
-    NOT_FOUND_RETRY_WINDOW_MS, PAGE, READ_TIMEOUT_MS, RESYNC_FOLLOW_UP_DELAY_MS,
-    TIMER_READ_DEADLINE, TIMER_RESYNC_FOLLOW_UP, TIMER_RESYNC_RETRY, TIMER_SEED_RETRY,
-    UNREACHABLE_RETRY_DELAY_MS,
+    not_found_retry_delay_ms, resync_retry_delay_ms, unreachable_retry_delay_ms,
+    MAX_RESYNC_FOLLOW_UPS, NOT_FOUND_RETRY_WINDOW_MS, PAGE, READ_TIMEOUT_MS,
+    RESYNC_FOLLOW_UP_DELAY_MS, TIMER_READ_DEADLINE, TIMER_RESYNC_FOLLOW_UP, TIMER_RESYNC_RETRY,
+    TIMER_SEED_RETRY,
 };
 use crate::state::{ChatContext, ChatState, OutstandingRead, ReadKind};
 use crate::wire::ChatRpcMethod;
@@ -215,6 +215,9 @@ pub fn is_unreachable(code: Option<&str>) -> bool {
 /// Records that the service answered, or that it did not. A change publishes, because the loading
 /// hold's skeleton follows it.
 pub fn note_reachable(state: &mut ChatState, context: &ChatContext, reachable: bool) {
+    if reachable {
+        state.messages.unreachable_failures = 0;
+    }
     let since = &mut state.messages.unreachable_since_ms;
     match (reachable, since.is_some()) {
         (true, true) => *since = None,
@@ -225,8 +228,8 @@ pub fn note_reachable(state: &mut ChatState, context: &ChatContext, reachable: b
 }
 
 /// What each lane does with a read that failed, including by timeout. `unreachable` is a failure
-/// the service never answered (see [`is_unreachable`]): those are retried every
-/// [`UNREACHABLE_RETRY_DELAY_MS`] without limit and never turn the view into an error.
+/// the service never answered (see [`is_unreachable`]): those are retried without limit on the
+/// [`unreachable_retry_delay_ms`] ladder and never turn the view into an error.
 pub fn fail_read(
     state: &mut ChatState,
     context: &ChatContext,
@@ -239,21 +242,24 @@ pub fn fail_read(
     if !matches!(read.kind, ReadKind::Page) {
         note_reachable(state, context, !unreachable);
     }
+    let unreachable_delay = || unreachable_retry_delay_ms(state.messages.unreachable_failures);
     match read.kind {
         ReadKind::Resync if unreachable => {
+            let delay = unreachable_delay();
+            state.messages.unreachable_failures += 1;
             state.messages.resync.in_flight = false;
-            state.core.timers.arm(
-                TIMER_RESYNC_RETRY,
-                context.now_ms,
-                UNREACHABLE_RETRY_DELAY_MS as f64,
-            );
+            state
+                .core
+                .timers
+                .arm(TIMER_RESYNC_RETRY, context.now_ms, delay as f64);
         }
         ReadKind::Seed if unreachable && !state.messages.position.frame_arrived => {
-            state.core.timers.arm(
-                TIMER_SEED_RETRY,
-                context.now_ms,
-                UNREACHABLE_RETRY_DELAY_MS as f64,
-            );
+            let delay = unreachable_delay();
+            state.messages.unreachable_failures += 1;
+            state
+                .core
+                .timers
+                .arm(TIMER_SEED_RETRY, context.now_ms, delay as f64);
         }
         ReadKind::Resync => {
             state.messages.resync.in_flight = false;
@@ -294,4 +300,82 @@ pub fn fail_read(
 /// Whether a settled payload is a chat read at all.
 pub fn parse_read(result: &Value) -> Option<ReadSessionChatResult> {
     serde_json::from_value::<ReadSessionChatResult>(result.clone()).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::constants::UNREACHABLE_RETRY_DELAYS_MS;
+
+    fn context(now_ms: f64) -> ChatContext {
+        ChatContext {
+            now_ms,
+            ..Default::default()
+        }
+    }
+
+    fn read(kind: ReadKind, request_id: u64) -> OutstandingRead {
+        OutstandingRead {
+            request_id,
+            kind,
+            generation: 0,
+            before_offset: None,
+            started_at_ms: 0.0,
+        }
+    }
+
+    /// Fails one unanswered read of `kind` at `now` and returns the delay its retry was armed for.
+    fn fail_unanswered(state: &mut ChatState, kind: ReadKind, now: f64) -> u64 {
+        fail_read(state, &context(now), &read(kind, 1), true);
+        state
+            .core
+            .timers
+            .next_wake_ms(now)
+            .expect("a retry is armed")
+    }
+
+    #[test]
+    fn unanswered_reads_retry_every_two_seconds_then_back_off() {
+        let mut state = ChatState::default();
+        let mut now = 1_000_000.0;
+        let mut delays = Vec::new();
+        for _ in 0..10 {
+            let delay = fail_unanswered(&mut state, ReadKind::Resync, now);
+            delays.push(delay);
+            now += delay as f64;
+        }
+        assert_eq!(
+            delays,
+            [2_000, 2_000, 2_000, 2_000, 2_000, 4_000, 8_000, 15_000, 15_000, 15_000]
+        );
+        // An hour of a dead tunnel is now a few hundred reads per chat, not 1,800.
+        let per_hour =
+            3_600_000 / UNREACHABLE_RETRY_DELAYS_MS[UNREACHABLE_RETRY_DELAYS_MS.len() - 1];
+        assert!(per_hour <= 240);
+        // The view never turns into an error for a service that is not answering.
+        assert_eq!(state.session.error, None);
+    }
+
+    #[test]
+    fn any_answer_starts_the_ladder_over() {
+        let mut state = ChatState::default();
+        let mut now = 1_000_000.0;
+        for _ in 0..8 {
+            now += fail_unanswered(&mut state, ReadKind::Seed, now) as f64;
+        }
+        assert_eq!(fail_unanswered(&mut state, ReadKind::Seed, now), 15_000);
+        assert!(state.messages.unreachable_since_ms.is_some());
+        note_reachable(&mut state, &context(now), true);
+        assert_eq!(state.messages.unreachable_since_ms, None);
+        assert_eq!(fail_unanswered(&mut state, ReadKind::Seed, now), 2_000);
+    }
+
+    #[test]
+    fn a_refusal_keeps_its_own_resync_backoff() {
+        let mut state = ChatState::default();
+        // A refusal is an answer: it does not climb the unanswered ladder.
+        fail_read(&mut state, &context(0.0), &read(ReadKind::Resync, 1), false);
+        assert_eq!(state.messages.unreachable_failures, 0);
+        assert_eq!(state.core.timers.next_wake_ms(0.0), Some(1_000));
+    }
 }

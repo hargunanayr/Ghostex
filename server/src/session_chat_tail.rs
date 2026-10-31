@@ -339,6 +339,10 @@ pub fn read_session_chat_transcript_tail_file(
         codex_stats.observe(&header, true);
     }
     newest_first.reverse();
+    let mut previous_timestamp = None;
+    for (message, _) in newest_first.iter_mut() {
+        stamp_user_row_after_predecessor(message, &mut previous_timestamp);
+    }
     queue_ops.reverse();
     let outstanding = replay_transcript_queue(&queue_ops);
     let still_queued: HashSet<u64> = outstanding.iter().map(|(_, offset)| *offset).collect();

@@ -417,12 +417,49 @@ pub(crate) fn link_skill_into_agent_root(
         return Ok(false);
     }
     fs::create_dir_all(parent).map_err(|error| skill_install_io_error("create", parent, error))?;
-    remove_path_of_any_kind(destination)
-        .map_err(|error| skill_install_io_error("replace", destination, error))?;
     let target = fsx::link_target_for(destination, canonical_dir);
-    fsx::create_dir_link(&target, destination)
-        .map_err(|error| skill_install_io_error("link", destination, error))?;
+    replace_with_link(destination, |destination| {
+        fsx::create_dir_link(&target, destination).map(|_| ())
+    })?;
     Ok(true)
+}
+
+/// Puts a link at `destination`, keeping whatever was there aside until the link exists: a link
+/// that can't be made (a Windows directory junction failed too, fsx.rs) leaves the old entry back
+/// in place and reports the link's error.
+///
+/// CDXC:AgentSync 2026-10-27 WHY: the old entry used to be removed first, so a refused link left the agent without the skill at all (the user's "restore on failure", Q614, in packages/agent-sync/src/fsx.rs).
+pub(crate) fn replace_with_link(
+    destination: &Path,
+    link: impl FnOnce(&Path) -> std::io::Result<()>,
+) -> Result<(), DomainStateError> {
+    let aside = fs::symlink_metadata(destination).is_ok().then(|| {
+        let name = destination
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        destination.with_file_name(format!(".{name}.ghostex-replaced-{}", std::process::id()))
+    });
+    if let Some(aside) = &aside {
+        let _ = remove_path_of_any_kind(aside);
+        fs::rename(destination, aside)
+            .map_err(|error| skill_install_io_error("replace", destination, error))?;
+    }
+    match link(destination) {
+        Ok(()) => {
+            if let Some(aside) = &aside {
+                let _ = remove_path_of_any_kind(aside);
+            }
+            Ok(())
+        }
+        Err(error) => {
+            if let Some(aside) = &aside {
+                let _ = remove_path_of_any_kind(destination);
+                let _ = fs::rename(aside, destination);
+            }
+            Err(skill_install_io_error("link", destination, error))
+        }
+    }
 }
 
 /// Replace `destination` with a fresh copy of `source_dir`. The copy is staged
@@ -532,7 +569,10 @@ fn remove_path_of_any_kind(path: &Path) -> std::io::Result<()> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error),
     };
-    if metadata.is_dir() {
+    if metadata.file_type().is_symlink() {
+        // A Windows folder link (symlink or junction) is removed as a folder, never followed.
+        ghostex_agent_sync::fsx::remove_link(path)
+    } else if metadata.is_dir() {
         fs::remove_dir_all(path)
     } else {
         fs::remove_file(path)
@@ -1102,7 +1142,7 @@ fn file_matches_shipped_retired_skill_content(path: &Path) -> bool {
     let Ok(bytes) = fs::read(path) else {
         return false;
     };
-    let digest = format!("{:x}", Sha256::digest(&bytes));
+    let digest = hex::encode(Sha256::digest(&bytes));
     RETIRED_GHOSTEX_AGENT_SKILL_SHIPPED_SHA256.contains(&digest.as_str())
 }
 
@@ -1161,8 +1201,8 @@ pub fn remove_retired_ghostex_agent_skills(paths: &GxserverPaths) -> Vec<String>
             };
             let remove_result = if metadata.file_type().is_symlink() {
                 // A symlinked skill points at user-managed content; remove
-                // only the link itself.
-                fs::remove_file(&skill_dir)
+                // only the link itself (a Windows folder link or junction too).
+                ghostex_agent_sync::fsx::remove_link(&skill_dir)
             } else if metadata.is_dir() && retired_skill_dir_is_unmodified_shipped_copy(&skill_dir)
             {
                 fs::remove_dir_all(&skill_dir)
@@ -1182,6 +1222,49 @@ mod tests {
     use super::*;
     use crate::paths::get_gxserver_paths;
     use std::io;
+
+    #[test]
+    fn a_link_that_cannot_be_made_puts_the_old_entry_back() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let destination = temp.path().join("ghostex-help");
+        write_skill(&destination, "ghostex-help");
+        let error = replace_with_link(&destination, |_| {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "A required privilege is not held by the client. (os error 1314)",
+            ))
+        })
+        .expect_err("refused");
+        // The error the user already saw, and the agent keeps its skill.
+        assert!(error.message.contains("could not link"));
+        assert!(error.message.contains("os error 1314"));
+        assert!(destination.join("SKILL.md").is_file());
+        assert_eq!(fs::read_dir(temp.path()).expect("dir").count(), 1);
+    }
+
+    #[test]
+    fn a_link_that_works_replaces_the_old_entry() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let canonical = temp.path().join("canonical");
+        write_skill(&canonical, "ghostex-help");
+        let destination = temp.path().join("agent").join("ghostex-help");
+        write_skill(&destination, "ghostex-help");
+        fs::write(destination.join("old.txt"), "old").expect("old file");
+        replace_with_link(&destination, |link| symlink_dir(&canonical, link)).expect("linked");
+        assert!(ghostex_agent_sync::fsx::is_symlink(&destination));
+        assert!(!destination.join("old.txt").exists());
+        // Nothing was left aside next to it.
+        assert_eq!(
+            fs::read_dir(temp.path().join("agent"))
+                .expect("dir")
+                .count(),
+            1
+        );
+        // A first install, with nothing there yet.
+        let fresh = temp.path().join("agent").join("ghostex-cli");
+        replace_with_link(&fresh, |link| symlink_dir(&canonical, link)).expect("linked");
+        assert!(ghostex_agent_sync::fsx::is_symlink(&fresh));
+    }
 
     #[tokio::test]
     async fn install_agent_skills_rejects_explicit_empty_skill_names() {

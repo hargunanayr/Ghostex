@@ -208,6 +208,7 @@ fn collect(
 ) -> Result<Vec<Plan>, DomainStateError> {
     let db = open_gxserver_database(&state.paths).map_err(store::error)?;
     let repo = DomainRepository::new(&db, &state.metadata.server_id);
+    let _ = super::login_expired::heal(state, &db);
     let registry = store::read(&db)?;
     let selected = selected.filter(|_| !restart);
     // CDXC:AgentProviders 2026-10-23 WHY:
@@ -557,6 +558,8 @@ fn plan_session(
     let Some(provider) = launch::provider(&project, old) else {
         return Ok(None);
     };
+    // Ahead of the Continue automatically check too: a login a session reported expired marks its account Needs sign-in whatever this session's policy says.
+    let _ = super::login_expired::observe(state, db, old, provider);
     // Ahead of the Continue automatically check: a disabled login is marked out of automatic switching whatever this session's policy says.
     if super::disabled::recover(state, db, repo, snapshot, &project, old, provider)? {
         return Ok(None);

@@ -64,6 +64,7 @@ pub extern "C" fn GhostexGpuiKeyboardOwnerUsesRendererEditHotkeys(
                     GpuiKeyboardOwner::FirstResponder(FirstResponderTarget::CefSurface(
                         FirstResponderCefSurface::ProjectWorkarea(
                             ProjectWorkareaCefSurfaceSlotKey::Source
+                                | ProjectWorkareaCefSurfaceSlotKey::CodeWindow(_)
                                 | ProjectWorkareaCefSurfaceSlotKey::Manage
                         )
                     ))

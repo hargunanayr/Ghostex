@@ -97,6 +97,9 @@ pub fn pending_with_startup_sends(
             error_message: queue_field(prompt, "errorMessage")
                 .filter(|value| !value.is_empty())
                 .map(str::to_string),
+            wait_reason: queue_field(prompt, "waitReason")
+                .filter(|value| !value.is_empty())
+                .map(str::to_string),
         };
         match at {
             Some(at) => {
@@ -112,7 +115,12 @@ pub fn pending_with_startup_sends(
                         .startup_delivery
                         .as_ref()
                         .and_then(|value| value.error_message.clone())
-                        != delivery.error_message;
+                        != delivery.error_message
+                    || entry
+                        .startup_delivery
+                        .as_ref()
+                        .and_then(|value| value.wait_reason.clone())
+                        != delivery.wait_reason;
                 if changed {
                     entry.queued_prompt_id = Some(prompt_id.to_string());
                     entry.startup_delivery = Some(delivery);

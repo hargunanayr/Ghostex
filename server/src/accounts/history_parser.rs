@@ -85,7 +85,7 @@ impl Parser {
                 .as_str()
                 .or_else(|| record["uuid"].as_str())
                 .map(str::to_owned)
-                .unwrap_or_else(|| format!("{:x}", Sha256::digest(line)));
+                .unwrap_or_else(|| hex::encode(Sha256::digest(line)));
             return Some(Entry {
                 key,
                 day: timestamp?.with_timezone(&Local).date_naive(),
@@ -150,7 +150,7 @@ impl Parser {
             let session = self.session.as_deref().unwrap_or(file);
             let snapshot = totals
                 .map(|t| t.to_string())
-                .unwrap_or_else(|| format!("{:x}", Sha256::digest(line)));
+                .unwrap_or_else(|| hex::encode(Sha256::digest(line)));
             (format!("{session}:{snapshot}"), tokens)
         } else {
             return None;

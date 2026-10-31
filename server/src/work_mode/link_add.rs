@@ -7,13 +7,16 @@
 //! The added ticket joins the session's effective list here, where the branch's links are known,
 //! and the undo restores each touched key as it was stored (absent = automatic again).
 
+use std::collections::HashMap;
+
 use serde_json::{json, Map, Value};
 
 use crate::domain::DomainStateError;
 
 use super::*;
 
-/// The keys a request may carry to add instead of set.
+/// The keys a request may carry to add instead of set, besides a ticket named by `source` +
+/// `ticketId` (the Work page): `ghostex link-session`, the link picker and the phone send these.
 const ADD_KEYS: &[&str] = &["addLinearIssues", "addGithubIssues", "addPullRequest"];
 
 /// What a request with `add…` keys becomes: the `setSessionWorkLinks` request to merge, and the
@@ -30,13 +33,31 @@ pub(crate) fn expand_added_work_links(
     existing: Option<&Map<String, Value>>,
     params: &Map<String, Value>,
 ) -> Result<Option<AddedWorkLinks>, DomainStateError> {
-    if !ADD_KEYS.iter().any(|key| params.contains_key(*key)) {
-        return Ok(None);
+    let ticket = TicketRef::from_params(params)
+        .transpose()
+        .map_err(DomainStateError::bad_request)?;
+    let mut added: HashMap<WorkSourceId, Vec<Value>> = WorkSourceId::BUILT_IN
+        .into_iter()
+        .filter_map(|source| {
+            params
+                .get(added_work_link_field(source))
+                .map(|value| (source, list_values(value)))
+        })
+        .collect();
+    match ticket {
+        Some(ticket) => added
+            .entry(ticket.source)
+            .or_default()
+            .push(json!(ticket.id)),
+        None if !ADD_KEYS.iter().any(|key| params.contains_key(*key)) => return Ok(None),
+        None => {}
     }
     let targets = work_targets(project, session);
     let mut request: Map<String, Value> = params
         .iter()
-        .filter(|(key, _)| !ADD_KEYS.contains(&key.as_str()))
+        .filter(|(key, _)| {
+            !ADD_KEYS.contains(&key.as_str()) && !matches!(key.as_str(), "source" | "ticketId")
+        })
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
     let mut undo = Map::new();
@@ -47,9 +68,10 @@ pub(crate) fn expand_added_work_links(
             .unwrap_or(Value::Null)
     };
 
-    if let Some(added) = params.get("addLinearIssues") {
-        let mut identifiers = targets.linear_issues.clone();
-        for item in list_values(added) {
+    if let Some(added) = added.remove(&WorkSourceId::Linear) {
+        let linked = targets.ids_of(WorkSourceId::Linear);
+        let mut identifiers = linked.clone();
+        for item in added {
             let text = item.as_str().unwrap_or_default();
             let identifier = normalize_linear_identifier(text).ok_or_else(|| {
                 DomainStateError::bad_request(format!(
@@ -60,14 +82,15 @@ pub(crate) fn expand_added_work_links(
                 identifiers.push(identifier);
             }
         }
-        if identifiers != targets.linear_issues {
+        if identifiers != linked {
             undo.insert("linearIssues".to_string(), previous("linearIssues"));
             request.insert("linearIssues".to_string(), json!(identifiers));
         }
     }
-    if let Some(added) = params.get("addGithubIssues") {
-        let mut numbers = targets.github_issues.clone();
-        for item in list_values(added) {
+    if let Some(added) = added.remove(&WorkSourceId::Github) {
+        let linked = targets.github_issue_numbers();
+        let mut numbers = linked.clone();
+        for item in added {
             let number = item
                 .as_u64()
                 .or_else(|| {
@@ -82,7 +105,7 @@ pub(crate) fn expand_added_work_links(
                 numbers.push(number);
             }
         }
-        if numbers != targets.github_issues {
+        if numbers != linked {
             undo.insert("githubIssues".to_string(), previous("githubIssues"));
             request.insert("githubIssues".to_string(), json!(numbers));
         }

@@ -4,17 +4,17 @@
 //! Ported from the family b arms of `action` in
 //! `packages/shared/session-chat-controller/native-host.ts`, plus `native-message-actions.ts`.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::action::{ActionKind, UserAction};
 use crate::effect::{Effect, OpenTarget};
 use crate::state::{ChatContext, ChatState, OpenRow, RewindRequest};
 use crate::transcript::deferred_work::{
-    DeferredWalk, WalkStep, DEFERRED_WORK_PAGE_LIMIT, WORK_HISTORY_UNREADABLE,
+    DEFERRED_WORK_PAGE_LIMIT, DeferredWalk, WORK_HISTORY_UNREADABLE, WalkStep,
 };
 use crate::transcript::file_position::FilePosition;
 use crate::transcript::jsstr::js_trim;
-use crate::transcript::links::{classify_link_href, file_position_from_href, LinkTarget};
+use crate::transcript::links::{LinkTarget, classify_link_href, file_position_from_href};
 use crate::transcript::rows;
 use crate::wire::{ChatRpcMethod, RpcOutcome};
 
@@ -166,6 +166,44 @@ pub fn handle(state: &mut ChatState, action: &UserAction, context: &ChatContext)
                 durable: false,
             }]
         }
+        // CDXC:SessionChat 2026-10-29 DECISION:
+        // User (Settings cleanup Q11): Simple and Verbose left Settings; a chat has one detail level,
+        // Simple, Detailed or Verbose, picked in More actions > View as a single choice instead of
+        // three independent switches. New chats start Simple (the `sessionChatSimpleMode` default).
+        // Picking a level pins both per-session records (`simple`, `verbose`) the way SetVerbose
+        // pins one, and while Summary mode is on it also turns Summary off: Summary shows the
+        // Simple look on its own and gives the chat its picked level back when it is turned off.
+        ActionKind::SetDetailLevel => {
+            let (simple, verbose) = match text(action, "level").as_str() {
+                "verbose" => (false, true),
+                "detailed" => (false, false),
+                _ => (true, false),
+            };
+            let session_key = state.identity.session_key.clone();
+            state.transcript_view.pending_simple_override = Some(Some(simple));
+            state.transcript_view.pending_verbose_override = Some(Some(verbose));
+            let mut effects = vec![
+                Effect::WriteStorage {
+                    key: crate::composer::storage::simple_key(&session_key),
+                    value: Some(crate::composer::storage::encode_verbose(simple).to_string()),
+                    durable: false,
+                },
+                Effect::WriteStorage {
+                    key: crate::composer::storage::verbose_key(&session_key),
+                    value: Some(crate::composer::storage::encode_verbose(verbose).to_string()),
+                    durable: false,
+                },
+            ];
+            if state.transcript_view.summary_mode {
+                state.transcript_view.pending_summary_mode = Some(false);
+                effects.push(Effect::WriteStorage {
+                    key: crate::composer::storage::summary_key(&session_key),
+                    value: Some(crate::composer::storage::encode_summary(false).to_string()),
+                    durable: false,
+                });
+            }
+            effects
+        }
         ActionKind::LoadWork => load_work(state, action),
         ActionKind::RewindOpen => {
             state.transcript_view.rewind = Some(RewindRequest {
@@ -239,9 +277,16 @@ pub fn handle(state: &mut ChatState, action: &UserAction, context: &ChatContext)
             if let Some(tag) = crate::questions::open_questions::link_tag(&href) {
                 return crate::questions::open_questions::jump_to_tag(state, context, tag);
             }
+            if let Some(target) = ghostex_gx_protocol::parse_global_session_ref(href.trim()) {
+                return open_mentioned_session(state, target);
+            }
             match classify_link_href(&href) {
                 LinkTarget::File(path) => vec![position_effect(&href, path)],
-                LinkTarget::Url(url) => vec![Effect::Open(OpenTarget::Url { url })],
+                // CDXC:SessionChat 2026-10-26 WHY: Shift+click on a chat link opens it in the system browser (the 2026-08-03 SessionChat comment in the desktop's session_chat/host_actions.rs). The TypeScript brain passed the click's `external` on to the host; the Rust port dropped it, so Shift+click opened the app's Browser like a plain click.
+                LinkTarget::Url(url) => vec![Effect::Open(OpenTarget::Url {
+                    url,
+                    external: param(action, "external").and_then(Value::as_bool) == Some(true),
+                })],
                 LinkTarget::Inert => Vec::new(),
             }
         }
@@ -456,4 +501,28 @@ fn restore_prompt(prompt: String) -> Effect {
         caret: Some(caret),
         from_history: false,
     }
+}
+
+/// A click on an agent pill (`session_mentions.rs`): the session it names, switched to as its
+/// sidebar row would be. A session the host's loaded list no longer has does nothing; before the
+/// list has loaded the click is passed on with the ref's own ids.
+fn open_mentioned_session(
+    state: &ChatState,
+    target: ghostex_gx_protocol::GlobalSessionRef<'_>,
+) -> Vec<Effect> {
+    let sessions = &state.transcript_view.session_directory;
+    let found = sessions.iter().find(|session| {
+        session.project_id == target.project_id && session.session_id == target.session_id
+    });
+    let (project_id, session_id) = match found {
+        Some(session) => (session.project_id.clone(), session.session_id.clone()),
+        None if sessions.is_empty() => {
+            (target.project_id.to_string(), target.session_id.to_string())
+        }
+        None => return Vec::new(),
+    };
+    vec![Effect::HostAction {
+        action: "openAgentSession".to_string(),
+        params: Box::new(json!({ "projectId": project_id, "sessionId": session_id })),
+    }]
 }

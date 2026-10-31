@@ -14,8 +14,7 @@ use crate::menus::option_catalog::{
     session_option_catalog, OptionDescriptor, OptionDispatch, SessionOptionCatalog,
 };
 use crate::menus::option_menu::{
-    is_shift_tab_mode_cycler, option_menu_sections, options_may_resolve, visible_options,
-    OptionCaps,
+    is_mode_button, option_menu_sections, options_may_resolve, visible_options, OptionCaps,
 };
 use crate::menus::option_menus::{
     native_option_menus, DraftAgent, NativeOptionMenus, OptionMenuParams,
@@ -224,7 +223,7 @@ pub fn compute_native_chat_options(state: &ChatState, _context: &ChatContext) ->
             },
         )
         .into_iter()
-        .filter(|descriptor| !is_shift_tab_mode_cycler(descriptor))
+        .filter(|descriptor| !is_mode_button(descriptor))
         .collect::<Vec<_>>(),
     );
     let draft_agent = draft_agents.as_ref().and_then(|agents| {

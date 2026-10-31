@@ -206,12 +206,27 @@
     .arrow svg { width: 22px; height: 22px; }
   `;
 
-  const button = (className, label, svg) => {
+  // A button's name: the page kit's tooltip (`data-gx-tip`, theme.rs and kit.rs in
+  // server/src/visual_pages), the app's bubble with its key as a cap, or the browser's own `title`
+  // on a page the kit is not in.
+  const label = (element, text, keys) => {
+    element.setAttribute('aria-label', keys ? `${text} (${keys})` : text);
+    if (window.__ghostexTips) {
+      element.removeAttribute('title');
+      element.setAttribute('data-gx-tip', text);
+      if (keys) element.setAttribute('data-gx-tip-keys', keys);
+      else element.removeAttribute('data-gx-tip-keys');
+      window.__ghostexTips.refresh(element);
+    } else {
+      element.title = keys ? `${text} (${keys})` : text;
+    }
+  };
+
+  const button = (className, text, svg, keys) => {
     const element = document.createElement('button');
     element.type = 'button';
     if (className) element.className = className;
-    element.title = label;
-    element.setAttribute('aria-label', label);
+    label(element, text, keys);
     element.innerHTML = svg;
     return element;
   };
@@ -252,11 +267,11 @@
     img.draggable = false;
     const group = document.createElement('div');
     group.className = 'group';
-    const close = button('close', 'Close (Esc)', ICONS.close);
+    const close = button('close', 'Close', ICONS.close, 'Esc');
     const arrows = [-1, 1].map((delta) => {
       const side = document.createElement('div');
       side.className = 'arrow ' + (delta < 0 ? 'previous' : 'next');
-      const step = button('', delta < 0 ? 'Previous image (←)' : 'Next image (→)', delta < 0 ? ICONS.previous : ICONS.next);
+      const step = button('', delta < 0 ? 'Previous image' : 'Next image', delta < 0 ? ICONS.previous : ICONS.next, delta < 0 ? '←' : '→');
       step.addEventListener('click', () => show(index + delta));
       side.append(step);
       return side;
@@ -292,8 +307,7 @@
       if (zoomButton) {
         const out = level >= ZOOM_STEPS;
         zoomButton.innerHTML = out ? ICONS.zoomOut : ICONS.zoomIn;
-        zoomButton.title = out ? 'Zoom out' : 'Zoom in';
-        zoomButton.setAttribute('aria-label', zoomButton.title);
+        label(zoomButton, out ? 'Zoom out' : 'Zoom in');
       }
     };
 
@@ -350,9 +364,9 @@
           const outcome = (ok) => {
             if (picture() !== shown) return;
             copy.innerHTML = ok ? ICONS.done : ICONS.failed;
-            copy.title = ok ? 'Image copied' : "This image can't be copied from the page";
+            label(copy, ok ? 'Image copied' : "This image can't be copied from the page");
             clearTimeout(reset);
-            reset = setTimeout(() => { copy.innerHTML = ICONS.copy; copy.title = 'Copy image'; }, 1600);
+            reset = setTimeout(() => { copy.innerHTML = ICONS.copy; label(copy, 'Copy image'); }, 1600);
           };
           // The bytes are passed as a promise so the click still counts as the reader's gesture.
           navigator.clipboard.write([new ClipboardItem({ 'image/png': pngOf(shown) })])

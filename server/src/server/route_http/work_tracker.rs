@@ -7,10 +7,10 @@ use serde_json::{json, Map, Value};
 
 use crate::domain::DomainStateError;
 use crate::work_mode::{
-    create_github_issue, dismiss_work_notice, github_projects_status_json,
-    refresh_github_projects_access, remember_team_work_tracker, resolve_work_mode_project,
-    stored_workspace_work_tracker, work_notice_dismissed, workspace_work_tracker, NewGithubIssue,
-    WorkTracker,
+    dismiss_work_notice, github_projects_status_json, refresh_github_projects_access,
+    remember_team_work_tracker, resolve_work_mode_project, stored_workspace_work_tracker,
+    work_notice_dismissed, work_source, workspace_work_tracker, TicketDraft, TicketScope,
+    WorkSourceId,
 };
 use crate::workspaces::{
     find_workspace_id, project_workspace_id, read_sidebar_workspaces, update_workspace_in,
@@ -137,7 +137,7 @@ fn read_work_tracker(
             Ok(flow) => {
                 remember_team_work_tracker(
                     &workspace_id,
-                    WorkTracker::from_wire(flow.get("tracker")),
+                    WorkSourceId::from_wire(flow.get("tracker")),
                 );
                 can_edit = flow.get("canEdit").and_then(Value::as_bool) != Some(false);
             }
@@ -147,7 +147,7 @@ fn read_work_tracker(
     }
     let (tracker, source) = workspace_work_tracker(&state.paths, &workspaces, &workspace_id);
     let mut github_projects = github_projects_status_json();
-    if tracker == WorkTracker::Github && crate::session_git_status::gh_cli_is_available() {
+    if tracker == WorkSourceId::Github && crate::session_git_status::gh_cli_is_available() {
         refresh_github_projects_access(force);
         github_projects = github_projects_status_json();
     }
@@ -178,7 +178,7 @@ fn set_work_tracker(
     let workspace_id = find_workspace_id(&current, &reference).ok_or_else(|| {
         DomainStateError::bad_request(format!("No workspace matched \"{reference}\"."))
     })?;
-    let tracker = WorkTracker::from_wire(params.get("tracker")).ok_or_else(|| {
+    let tracker = WorkSourceId::from_wire(params.get("tracker")).ok_or_else(|| {
         DomainStateError::bad_request("tracker must be \"linear\" or \"github\".")
     })?;
     if crate::team_sync::workspace_has_team(&state.paths, &workspace_id) {
@@ -213,18 +213,27 @@ fn create_issue(
     let title = text(params, "title")
         .ok_or_else(|| DomainStateError::bad_request("An issue needs a title."))?;
     let body = text(params, "description");
-    let created = create_github_issue(
-        cwd,
-        &NewGithubIssue {
-            title: &title,
-            body: body.as_deref(),
-            assign_to_me: params.get("assignToMe").and_then(Value::as_bool) != Some(false),
-            repo: None,
-        },
-    )
-    .map_err(DomainStateError::bad_request)?;
+    let created = work_source(WorkSourceId::Github)
+        .create(
+            &TicketScope {
+                project_id: project
+                    .get("projectId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+                workspace_id: None,
+                cwd: Some(cwd),
+                credentials: None,
+            },
+            &TicketDraft {
+                title: &title,
+                description: body.as_deref(),
+                assign_to_me: params.get("assignToMe").and_then(Value::as_bool) != Some(false),
+                extra: &Map::new(),
+            },
+        )
+        .map_err(DomainStateError::bad_request)?;
     Ok(json!({
-        "number": created.number,
+        "number": created.ticket.id.parse::<u64>().ok(),
         "url": created.url,
         "repo": created.repo,
     }))

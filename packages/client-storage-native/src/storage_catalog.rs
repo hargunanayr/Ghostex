@@ -119,6 +119,12 @@ pub const CATALOG: &[CatalogStore] = &[
         false,
         Local,
     ),
+    store(
+        "launcherChoices",
+        "ghostex.sidebar.agentLauncherChoices.v1",
+        false,
+        Local,
+    ),
     store("accountOwner", "ghostex.accountSetupOwner", false, Local),
     store(
         "machineTab",

@@ -13,6 +13,7 @@ mod hook_store;
 pub mod install;
 pub(crate) mod nested_agent;
 pub mod notify_runtime;
+pub(crate) mod on_demand;
 pub mod plugin_sources;
 mod probe_cache;
 pub mod probing;

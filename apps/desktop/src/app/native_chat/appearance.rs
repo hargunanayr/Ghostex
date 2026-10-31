@@ -52,6 +52,8 @@ pub(crate) struct ChatAppearance {
     /// Handover heading color strength, 0 to 1, from the document's `markedHeadingStrength`
     /// (absent: 60%, the default).
     pub(crate) marked_heading_strength: f32,
+    /// Whether this chat is drawn on window glass (`on_window_glass`).
+    pub(crate) window_glass: bool,
 }
 
 impl ChatAppearance {
@@ -61,6 +63,7 @@ impl ChatAppearance {
         if !glass {
             return self;
         }
+        self.window_glass = true;
         let wash = |white: bool, alpha: f32| -> Hsla {
             gpui::Hsla::from(rgb(if white { 0xffffff } else { 0x000000 })).opacity(alpha)
         };
@@ -162,14 +165,23 @@ impl ChatAppearance {
         let settings = snapshot.object();
         let color = |dark, light_color| rgb(if light { light_color } else { dark }).into();
         let enabled = |name| settings.get(name).and_then(serde_json::Value::as_bool) == Some(true);
-        let verbose = state["verboseOverride"]
-            .as_bool()
-            .unwrap_or_else(|| enabled("sessionChatVerboseMode"));
+        // CDXC:SessionChat 2026-10-29 DECISION (Settings cleanup Q11, gx-chat-core transcript/actions.rs):
+        // the detail level is per chat (`simpleOverride` and `verboseOverride`; a new chat follows
+        // the Simple mode by default and Verbose mode by default keys, Simple on by default), and
+        // Summary mode shows the Simple look until it is turned off again.
+        let summary = state["summaryMode"].as_bool() == Some(true);
+        let verbose = !summary
+            && state["verboseOverride"]
+                .as_bool()
+                .unwrap_or_else(|| enabled("sessionChatVerboseMode"));
         // A missing key means the shared default, which is on (defaults.ts, CDXC:SessionChat 2026-09-27).
-        let simple = settings
-            .get("sessionChatSimpleMode")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(true);
+        let simple = summary
+            || state["simpleOverride"].as_bool().unwrap_or_else(|| {
+                settings
+                    .get("sessionChatSimpleMode")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(true)
+            });
         // The transcript and its cards share one backing tone derived from the chat's own theme
         // variant (the chat may be dark while the app is light), see session_chat_background_for_chrome.
         let background_rgb = work_area_background_for_variant(settings, light);
@@ -274,6 +286,7 @@ impl ChatAppearance {
             marked_heading_strength: state["markedHeadingStrength"]
                 .as_f64()
                 .map_or(0.6, |percent| (percent / 100.0).clamp(0.0, 1.0) as f32),
+            window_glass: false,
             transcript_width: enabled("sessionChatCustomTranscriptWidthEnabled").then(|| {
                 settings
                     .get("sessionChatTranscriptWidthPercent")

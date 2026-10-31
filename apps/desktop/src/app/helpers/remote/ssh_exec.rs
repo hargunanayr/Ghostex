@@ -62,6 +62,7 @@ pub(crate) fn gpui_run_remote_ssh_script_in_execution_target(
         Err(message) => return gpui_remote_ssh_refused_process_result(message),
     };
     let mut arguments = gpui_remote_ssh_client_options(config.has_saved_password);
+    arguments.extend(gpui_remote_ssh_shared_connection_arguments(config));
     arguments.extend(target_arguments);
     arguments.push(gpui_remote_command_for_execution_target(
         execution_target,
@@ -108,6 +109,7 @@ pub(crate) fn gpui_run_remote_ssh_raw(
         }
     };
     let mut arguments = gpui_remote_ssh_client_options(config.has_saved_password);
+    arguments.extend(gpui_remote_ssh_shared_connection_arguments(config));
     arguments.extend(target_arguments);
     arguments.push(remote_command.to_string());
     gpui_run_remote_process(
@@ -141,6 +143,7 @@ pub(crate) fn gpui_run_remote_ssh_with_stdin_file_in_execution_target(
         }
     };
     let mut arguments = gpui_remote_ssh_client_options(config.has_saved_password);
+    arguments.extend(gpui_remote_ssh_shared_connection_arguments(config));
     arguments.extend(target_arguments);
     arguments.push(gpui_remote_command_for_execution_target(
         execution_target,

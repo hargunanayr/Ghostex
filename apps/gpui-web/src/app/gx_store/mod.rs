@@ -48,6 +48,7 @@ mod menu_host_lifted {
         commands_by_project(value)
     }
 }
+mod session_links;
 mod sidebar_accounts;
 mod sidebar_actions;
 mod sidebar_bulk;
@@ -66,7 +67,8 @@ mod sidebar_snooze;
 mod sidebar_state_actions;
 mod sidebar_ui_storage;
 pub(crate) mod terminal_lifecycle;
-mod session_links;
+pub(crate) mod unified_new_session;
+pub(crate) mod unified_sidebar;
 mod web_commands;
 pub(crate) mod web_transport;
 mod work_links;
@@ -76,7 +78,9 @@ mod workspaces;
 
 pub(crate) use host::GxStoreHost;
 #[allow(unused_imports)]
-pub(crate) use primary_launcher::read_primary_agent_launcher_id;
+pub(crate) use primary_launcher::{
+    read_agent_choices, read_primary_agent_launcher_id, write_agent_choices,
+};
 #[allow(unused_imports)]
 pub(crate) use rpc::{gx_rpc, gx_rpc_with_timeout};
 #[allow(unused_imports)]

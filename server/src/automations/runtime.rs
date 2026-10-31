@@ -204,7 +204,14 @@ impl AutomationRuntime {
                 run_created_at.as_deref(),
             )? {
                 complete_run(&db, &project_id, &run_id, &status, summary.as_deref())?;
-                report_ghost_habit_run(&db, &repository, &project_id, &run_id, &session_id, &status);
+                report_ghost_habit_run(
+                    &db,
+                    &repository,
+                    &project_id,
+                    &run_id,
+                    &session_id,
+                    &status,
+                );
                 return Ok(());
             }
         }
@@ -281,7 +288,14 @@ pub(super) fn report_ghost_habit_run(
         )
         .ok();
     if let Some(habit_name) = habit_name {
-        crate::ghosts::report_habit_run(db, repository, project_id, &habit_name, session_id, status);
+        crate::ghosts::report_habit_run(
+            db,
+            repository,
+            project_id,
+            &habit_name,
+            session_id,
+            status,
+        );
     }
 }
 

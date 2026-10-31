@@ -198,10 +198,14 @@ fn start_work(ticket: &str, flags: &super::args::Flags) -> CliResult<Value> {
         params.insert("pullRequest".to_string(), json!(number));
     } else if ticket.contains("/pull/") {
         params.insert("pullRequest".to_string(), json!(ticket));
-    } else if let Ok(number) = ticket.trim_start_matches('#').parse::<u64>() {
-        params.insert("githubIssue".to_string(), json!(number));
     } else {
-        params.insert("linearIssue".to_string(), json!(ticket));
+        let source = if ticket.trim_start_matches('#').parse::<u64>().is_ok() {
+            "github"
+        } else {
+            "linear"
+        };
+        params.insert("source".to_string(), json!(source));
+        params.insert("ticketId".to_string(), json!(ticket));
     }
     if flags.truthy("cloud") {
         params.insert(

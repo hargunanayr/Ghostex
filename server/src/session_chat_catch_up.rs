@@ -62,10 +62,7 @@ pub(crate) fn chat_setting_number(paths: &GxserverPaths, key: &str) -> Option<f6
 }
 
 fn read_settings(paths: &GxserverPaths) -> Value {
-    std::fs::read_to_string(paths.app_config_dir.join("native-sidebar-settings.json"))
-        .ok()
-        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-        .unwrap_or(Value::Null)
+    crate::shared_settings_file::read_shared_settings(paths).unwrap_or(Value::Null)
 }
 
 fn failure(code: &'static str, message: impl Into<String>) -> DomainStateError {

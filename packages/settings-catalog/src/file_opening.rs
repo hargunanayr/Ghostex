@@ -11,7 +11,7 @@ use crate::data::BUILT_IN_WORKSPACE_OPEN_TARGETS;
 use crate::json::J;
 use crate::rows::{option, SettingOption};
 
-/// Files, Code, VS Code, then every other built-in Open In editor in its catalog order (Finder is
+/// Files, the VS Code view, the VS Code app, then every other built-in Open In editor in its catalog order (Finder is
 /// not an editor).
 pub fn file_open_target_options() -> Vec<SettingOption> {
     let editors: Vec<(&str, &str)> = BUILT_IN_WORKSPACE_OPEN_TARGETS
@@ -25,13 +25,20 @@ pub fn file_open_target_options() -> Vec<SettingOption> {
         })
         .filter(|(id, _)| *id != "finder")
         .collect();
-    let mut options = vec![option("Files", "files"), option("Code", "code")];
+    // The built-in view is called VS Code, so the VS Code app is told apart as "VS Code app".
+    let mut options = vec![option("Files", "files"), option("VS Code", "code")];
     options.extend(
         editors
             .iter()
             .filter(|(id, _)| *id == "vscode")
             .chain(editors.iter().filter(|(id, _)| *id != "vscode"))
-            .map(|(id, label)| option(*label, *id)),
+            .map(|(id, label)| {
+                if *id == "vscode" {
+                    option("VS Code app", *id)
+                } else {
+                    option(*label, *id)
+                }
+            }),
     );
     options
 }

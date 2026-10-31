@@ -151,4 +151,5 @@ pub const GXSERVER_MIGRATION_IDS: &[&str] = &[
     "0047_session_presentation_kept_index",
     "0048_session_completed_at",
     "0049_ghosts",
+    "0048_session_chat_resources",
 ];

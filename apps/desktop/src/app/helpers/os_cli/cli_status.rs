@@ -121,6 +121,64 @@ pub(crate) fn gpui_ghostex_cli_probe() -> Result<GpuiGhostexCliProbe, String> {
     })
 }
 
+/// What the Settings "Command line tool" row says when `ghostex` is not usable: the problem in
+/// plain words and, when it is a PATH problem, the line that fixes it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct GpuiCliProblem {
+    pub(crate) summary: String,
+    pub(crate) fix: Option<GpuiCliPathFix>,
+}
+
+/// CDXC:Cli 2026-10-28 WHY:
+/// The Command line tool row only turned amber with a fixed description, so a launcher sitting in
+/// ~/.local/bin off PATH (common on Linux) looked broken with no reason and no way out. The status
+/// now carries the reason and, for the PATH case, the shell line and the file it goes in.
+pub(crate) fn gpui_cli_problem(
+    installed: bool,
+    probe_error: Option<&str>,
+    foreign_path: Option<&str>,
+    local_bin_off_path: bool,
+    windows: bool,
+    shell: Option<&str>,
+) -> Option<GpuiCliProblem> {
+    if installed {
+        return None;
+    }
+    let summary = |text: String| {
+        Some(GpuiCliProblem {
+            summary: text,
+            fix: None,
+        })
+    };
+    if let Some(error) = probe_error {
+        return summary(format!(
+            "Ghostex could not check the ghostex command: {error}"
+        ));
+    }
+    if let Some(path) = foreign_path {
+        return summary(format!(
+            "Another ghostex command comes first on your PATH ({path}), so terminals run it instead of Ghostex's. Rename or remove it, then press Repair."
+        ));
+    }
+    if windows {
+        return summary(
+            "The ghostex command is not set up for your terminals yet. Press Repair to link it."
+                .to_string(),
+        );
+    }
+    if local_bin_off_path {
+        let fix = gpui_cli_path_fix(shell);
+        return Some(GpuiCliProblem {
+            summary: format!(
+                "ghostex and gx are in ~/.local/bin, but that folder is not on your PATH, so terminals cannot find them. {}, then open a new terminal.",
+                fix.place
+            ),
+            fix: Some(fix),
+        });
+    }
+    summary("The ghostex command is not on your PATH. Press Repair to link it.".to_string())
+}
+
 pub(crate) fn gpui_ghostex_cli_status_message(detail_override: Option<&str>) -> serde_json::Value {
     gpui_ghostex_cli_status_message_with_cua_update_check(detail_override, false)
 }
@@ -140,6 +198,21 @@ pub(crate) fn gpui_ghostex_cli_status_message_with_cua_update_check(
         Err(message) => (GpuiGhostexCliProbe::default(), Some(message)),
     };
     let ghostex_usable = probe.ghostex_usable;
+    let local_bin_off_path = !cfg!(target_os = "windows")
+        && gpui_cli_user_bin_path_hint(
+            &gpui_home_dir().join(".local/bin"),
+            &gpui_cli_path_entries(),
+            &gpui_home_dir(),
+        )
+        .is_some();
+    let cli_problem = gpui_cli_problem(
+        ghostex_usable,
+        probe_error.as_deref(),
+        probe.ghostex_path.as_deref(),
+        local_bin_off_path,
+        cfg!(target_os = "windows"),
+        std::env::var("SHELL").ok().as_deref(),
+    );
     let gx_usable = probe.gx_usable;
     let gx_blocked = probe.gx_blocked_by_existing_command;
     let browser_skill_installed = probe.browser_skill_path.is_some();
@@ -200,7 +273,16 @@ pub(crate) fn gpui_ghostex_cli_status_message_with_cua_update_check(
                     "Ghostex CLI was not found in the selected WSL2 distribution.".to_string()
                 });
                 #[cfg(not(target_os = "windows"))]
-                parts.push("Ghostex CLI was not found on PATH.".to_string());
+                parts.push(
+                    match gpui_cli_user_bin_path_hint(
+                        &gpui_home_dir().join(".local/bin"),
+                        &gpui_cli_path_entries(),
+                        &gpui_home_dir(),
+                    ) {
+                        Some(hint) => format!("Ghostex CLI was not found on PATH. {hint}"),
+                        None => "Ghostex CLI was not found on PATH.".to_string(),
+                    },
+                );
             }
             if gx_usable {
                 parts.push("The gx alias appears to be Ghostex-owned.".to_string());
@@ -313,6 +395,11 @@ pub(crate) fn gpui_ghostex_cli_status_message_with_cua_update_check(
         "gxPath": probe.gx_path,
         "gxUsable": gx_usable,
         "installed": ghostex_usable,
+        "cliProblem": cli_problem.as_ref().map(|problem| problem.summary.clone()),
+        "cliFixCommand": cli_problem
+            .as_ref()
+            .and_then(|problem| problem.fix.as_ref())
+            .map(|fix| fix.command.clone()),
         "moveCodexSessionSkillInstalled": move_codex_session_skill_installed,
         "moveCodexSessionSkillPath": probe.move_codex_session_skill_path,
         "helpSkillInstalled": help_skill_installed,
@@ -330,6 +417,64 @@ pub(crate) fn gpui_ghostex_cli_status_message_with_cua_update_check(
     ) {
         payload.extend(spaceo);
     }
+    gpui_cua_driver_add_permission_fields(&mut payload, &cua_permission_status);
     gpui_decorate_ghostex_cli_status(&mut payload);
     payload
+}
+
+#[cfg(test)]
+mod cli_problem_tests {
+    use super::*;
+
+    #[test]
+    fn installed_has_no_problem() {
+        assert_eq!(gpui_cli_problem(true, None, None, true, false, None), None);
+    }
+
+    #[test]
+    fn off_path_local_bin_says_why_and_gives_the_shell_line() {
+        let problem =
+            gpui_cli_problem(false, None, None, true, false, Some("/usr/bin/zsh")).unwrap();
+        assert!(
+            problem.summary.contains("not on your PATH"),
+            "{}",
+            problem.summary
+        );
+        assert!(problem.summary.contains("~/.zshrc"), "{}", problem.summary);
+        assert_eq!(
+            problem.fix.unwrap().command,
+            "export PATH=\"$HOME/.local/bin:$PATH\""
+        );
+    }
+
+    #[test]
+    fn other_failures_say_what_to_do_without_a_shell_line() {
+        let missing = gpui_cli_problem(false, None, None, false, false, Some("/bin/bash")).unwrap();
+        assert!(
+            missing.summary.contains("Press Repair"),
+            "{}",
+            missing.summary
+        );
+        assert_eq!(missing.fix, None);
+        let foreign = gpui_cli_problem(
+            false,
+            None,
+            Some("/usr/local/bin/ghostex"),
+            true,
+            false,
+            None,
+        )
+        .unwrap();
+        assert!(
+            foreign.summary.contains("/usr/local/bin/ghostex"),
+            "{}",
+            foreign.summary
+        );
+        assert_eq!(foreign.fix, None);
+        let windows = gpui_cli_problem(false, None, None, false, true, None).unwrap();
+        assert!(windows.summary.contains("Press Repair"));
+        assert_eq!(windows.fix, None);
+        let error = gpui_cli_problem(false, Some("no bundle"), None, true, false, None).unwrap();
+        assert!(error.summary.ends_with("no bundle"));
+    }
 }

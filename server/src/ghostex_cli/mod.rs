@@ -4,7 +4,6 @@ pub mod actions;
 mod agent_cli;
 pub mod agent_sync;
 mod agentbox_cli;
-mod claude_cloud_cli;
 mod agents;
 pub mod app_update;
 pub mod args;
@@ -13,6 +12,7 @@ pub mod automations;
 pub mod board;
 pub mod browser_mcp;
 mod built_in_extensions;
+mod claude_cloud_cli;
 mod connectors;
 mod connectors_executor;
 mod connectors_mcp;
@@ -24,6 +24,7 @@ mod feedback;
 mod ghost;
 pub mod guide;
 pub mod launchers;
+mod mcp_stdio;
 pub mod notify;
 pub mod output;
 pub mod paired_device;
@@ -39,6 +40,7 @@ pub mod selector;
 mod session_chat_model;
 mod session_chat_rpc;
 pub(crate) mod session_chat_transcript;
+mod session_groups;
 mod session_links;
 mod session_parking;
 pub mod sessions;
@@ -53,6 +55,7 @@ mod team;
 mod team_slack;
 pub mod usage;
 mod visual;
+mod visual_page_check;
 mod voice;
 pub mod wait;
 pub mod web;
@@ -101,9 +104,9 @@ const HELP_GATE_EXCLUDED: &[&str] = &[
     "agents",
     "app-update",
     "claude-cloud",
-    "orchestrator",
     "coordinator",
     "ghost",
+    "orchestrator",
     "automations",
     "bd",
     "beads",
@@ -208,9 +211,9 @@ fn is_known_command(name: &str) -> bool {
         "agentbox",
         "agents",
         "claude-cloud",
-        "orchestrator",
         "coordinator",
         "ghost",
+        "orchestrator",
         "sessions",
         "s",
         "list-sessions",
@@ -285,6 +288,12 @@ fn is_known_command(name: &str) -> bool {
         "request-session-rename",
         "sleep-session",
         "tag-session",
+        "session-groups",
+        "create-session-group",
+        "rename-session-group",
+        "delete-session-group",
+        "move-session-to-group",
+        "remove-session-from-group",
         "session-note",
         "saved-prompts",
         "previous-sessions",
@@ -423,8 +432,8 @@ fn run_command(name: &str, args: &[String]) -> CliResult<()> {
         }
         "agents" => agents::run(args),
         "claude-cloud" => claude_cloud_cli::run(args),
-        // CDXC:Coordinators 2026-10-10 DECISION: user renamed Coordinator to Orchestrator; `coordinator` stays a hidden alias (see ghostex_cli/coordinator/command.rs).
-        "orchestrator" | "coordinator" => coordinator::run(args),
+        // CDXC:Coordinators 2026-10-28 DECISION: user renamed Orchestrator back to Coordinator and made `coordinator` the real command group; `orchestrator` stays as an alias (see ghostex_cli/coordinator/command.rs).
+        "coordinator" | "orchestrator" => coordinator::run(args),
         "ghost" => ghost::run(args),
         "sessions" | "s" | "list-sessions" | "ls" => sessions::sessions_command(args),
         "find" | "f" => launchers::zehn_search_command(args),
@@ -631,6 +640,8 @@ fn run_command(name: &str, args: &[String]) -> CliResult<()> {
         recognise.
         */
         "client-hello" => run_bridge_action("recordClientEvent", Parser::ClientHello, plain, args),
+        // CDXC:Telemetry 2026-10-27: the phone's screen-opened ping, the hello's sibling.
+        "client-view" => run_bridge_action("recordClientEvent", Parser::ClientView, plain, args),
         "sleep-session" => run_bridge_action(
             "sleepSession",
             Parser::SessionBoolean("sleeping"),
@@ -638,6 +649,12 @@ fn run_command(name: &str, args: &[String]) -> CliResult<()> {
             args,
         ),
         "tag-session" => run_bridge_action("tagSession", Parser::SessionTag, plain, args),
+        "session-groups"
+        | "create-session-group"
+        | "rename-session-group"
+        | "delete-session-group"
+        | "move-session-to-group"
+        | "remove-session-from-group" => session_groups::session_groups_command(name, args),
         /*
         CDXC:SessionNotes 2026-08-24:
         Clients that reach gxserver only through this CLI (Ghostex mobile over
@@ -646,6 +663,7 @@ fn run_command(name: &str, args: &[String]) -> CliResult<()> {
         session selector; with neither, the presence of `--note` decides.
         */
         "session-note" => {
+            require_built_in(ghostex_settings_catalog::built_in_extensions::SESSION_NOTES)?;
             let (action, parser, rest): (&str, Parser, &[String]) =
                 match args.first().map(String::as_str) {
                     Some("read") => ("readSessionAgentNote", Parser::SessionSelector, &args[1..]),
@@ -802,12 +820,9 @@ fn run_command(name: &str, args: &[String]) -> CliResult<()> {
             plain,
             args,
         ),
-        "read-session-details" => run_bridge_action(
-            "readSessionDetails",
-            Parser::SessionSelector,
-            plain,
-            args,
-        ),
+        "read-session-details" => {
+            run_bridge_action("readSessionDetails", Parser::SessionSelector, plain, args)
+        }
         "send-session-chat-message" => run_message_bridge_action(
             "sendSessionChatMessage",
             Parser::SendText,
@@ -1025,5 +1040,17 @@ mod tests {
         assert!(is_known_command("sessions"));
         assert!(!is_known_command("tui"));
         assert!(!is_known_command("2"));
+    }
+
+    /// CDXC:Coordinators 2026-10-28 DECISION: `coordinator` is the real command group and
+    /// `orchestrator` an alias that runs the same code; the help names `coordinator`.
+    #[test]
+    fn coordinator_is_the_command_and_orchestrator_its_alias() {
+        assert!(is_known_command("coordinator"));
+        assert!(is_known_command("orchestrator"));
+        let help = include_str!("coordinator/help.txt");
+        assert!(help.contains("ghostex coordinator start-thread"));
+        assert!(!help.contains("ghostex orchestrator start-thread"));
+        assert!(help.contains("`ghostex orchestrator …` is an alias"));
     }
 }

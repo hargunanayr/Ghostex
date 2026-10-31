@@ -1,6 +1,12 @@
 <h1 align="center">
   <a href="https://ghostex.dev"><img src="media/ghostex-marketplace-icon.png" alt="Ghostex" width="72" valign="middle" /></a> Ghostex
+  <br>
+  The best native all-in-one agents workspace
 </h1>
+
+<p align="center">
+<a href="https://discord.gg/df7b3G92CS"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/Discord-Join%20the%20community.svg?variant=branded&logo=discord&mode=dark" /><img src="https://shieldcn.dev/badge/Discord-Join%20the%20community.svg?variant=branded&logo=discord&mode=light" alt="Join the Discord" /></picture></a>
+</p>
 
 <p align="center">
   <a href="https://github.com/maddada/Ghostex/stargazers"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/stars/maddada/Ghostex.svg?variant=secondary&mode=dark" /><img src="https://shieldcn.dev/github/stars/maddada/Ghostex.svg?variant=secondary&mode=light" alt="GitHub stars" /></picture></a>
@@ -10,19 +16,8 @@
   <a href="#install"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/platforms-macOS%20%C2%B7%20Windows%20%C2%B7%20Linux%20%C2%B7%20Android%20%C2%B7%20iOS.svg?variant=secondary&mode=dark" /><img src="https://shieldcn.dev/badge/platforms-macOS%20%C2%B7%20Windows%20%C2%B7%20Linux%20%C2%B7%20Android%20%C2%B7%20iOS.svg?variant=secondary&mode=light" alt="Supported platforms: macOS, Windows, Linux, Android, iOS" /></picture></a>
 </p>
 
-<p align="center">
-<a href="https://discord.gg/df7b3G92CS"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/Discord-Join%20the%20community.svg?variant=branded&logo=discord&mode=dark" /><img src="https://shieldcn.dev/badge/Discord-Join%20the%20community.svg?variant=branded&logo=discord&mode=light" alt="Join the Discord" /></picture></a>
-</p>
+<h3 align="center"><a href="#install"><ins>Download Ghostex</ins></a> &nbsp;·&nbsp; <a href="https://ghostex.dev">Website</a> &nbsp;·&nbsp; <a href="https://youtu.be/QzjFB4J6-8E">Watch the 3-minute tour</a>  &nbsp;·&nbsp; <a href="https://www.youtube.com/watch?v=cJgogrS4mao">Watch the Demo</a></h3>
 
-<h3 align="center"><a href="#install"><ins>Download Ghostex</ins></a> &nbsp;·&nbsp; <a href="https://ghostex.dev">Website</a> &nbsp;·&nbsp; <a href="https://youtu.be/QzjFB4J6-8E">Watch the 3-minute tour</a></h3>
-
-<p align="center">
-  <a href="https://github.com/user-attachments/assets/1013fbfc-a556-4624-8794-1508af8a5653">
-    <picture>
-      <img width="960" alt="image" src="https://github.com/user-attachments/assets/1013fbfc-a556-4624-8794-1508af8a5653" />
-    </picture>
-  </a>
-</p>
 <p align="center">
   <a href="https://github.com/user-attachments/assets/74906504-c9b1-42e8-aa06-04f2f0439045">
     <picture>
@@ -34,7 +29,7 @@
 <p align="center">
   <a href="https://github.com/user-attachments/assets/d4914393-4e5c-4fbf-b5b3-9d3ab4dbcc9d">
     <picture>
-      <img width="960" src="https://github.com/user-attachments/assets/d4914393-4e5c-4fbf-b5b3-9d3ab4dbcc9d" />
+          <img width="960" src="https://github.com/user-attachments/assets/d4914393-4e5c-4fbf-b5b3-9d3ab4dbcc9d" />
     </picture>
   </a>
 </p>
@@ -83,19 +78,11 @@ Ghostex is built for developers who keep many agents alive at once. A chat view 
 
 <br/>
 
-<h3 align="center">🔎 Find any&nbsp;past&nbsp;session</h3>
-
-<p align="center">Fuzzy search every prompt you ever sent, across all your agents, and press <kbd>Enter</kbd> to resume the conversation. Star favourites and filter by agent or project. Also available as <code>gx f</code> for&nbsp;command‑line&nbsp;fans.</p>
-
-<p align="center"><img src="media/readme/gx-search.png" alt="Searching every past prompt" width="70%" /></p>
-
-<br/>
-
 <h3 align="center">🤖 Agents that&nbsp;run&nbsp;agents</h3>
 
-<p align="center">Agents can open sessions, send prompts, and read replies from other agents through the <code>ghostex</code> command. Ask Claude Code to spin up Codex sub-agents and steer them, or hand the work to an orchestrator that keeps track of them&nbsp;for&nbsp;you.</p>
+<p align="center">Agents can open sessions, send prompts, and read replies from other agents through the <code>ghostex</code> command. Ask Claude Code to spin up Codex sub-agents and steer them, or hand the work to a coordinator that keeps track of them&nbsp;for&nbsp;you.</p>
 
-<p align="center"><img src="media/readme/gx-threads.png" alt="An orchestrator with its threads in the sidebar and the Threads panel" width="70%" /></p>
+<p align="center"><img src="media/readme/gx-threads.png" alt="A coordinator with its threads in the sidebar and the Workers panel" width="70%" /></p>
 
 <br/>
 
@@ -115,16 +102,15 @@ Ghostex is built for developers who keep many agents alive at once. A chat view 
 
 <br/>
 
-<h3 align="center">✅ Answer your agents in&nbsp;one&nbsp;click</h3>
+<h3 align="center">🔎 Find any&nbsp;past&nbsp;session</h3>
 
-<p align="center">When an agent needs your decisions, it asks them as a form right in the chat: every question at once, choices you click, a note box for each, and one Send. It works the same on desktop, web, and&nbsp;your&nbsp;phone.</p>
+<p align="center">Fuzzy search every prompt you ever sent, across all your agents, and press <kbd>Enter</kbd> to resume the conversation. Star favourites and filter by agent or project. Also available as <code>gx f</code> for&nbsp;command‑line&nbsp;fans.</p>
 
-<p align="center"><img src="media/readme/gx-questions.png" alt="A question form in the chat with clickable choices, Recommended badges and a Send answers button" width="70%" /></p>
+<p align="center"><img src="media/readme/gx-search.png" alt="Searching every past prompt" width="70%" /></p>
 
 ### Also in the box
 
-- **Rich prompt editor**: press Ctrl+G to edit any prompt in a full editor.
-- **Built-in IDE**: a VS Code editor that loads on demand and sleeps when you are not using it.
+- **Built-in IDE**: an optional VS Code editor that loads on demand and sleeps when you are not using it.
 - **Remote machines**: connect another computer with an Easy Connect code or SSH and it shows up in the sidebar.
 - **Usage and accounts**: Claude and Codex limits at a glance, with automatic account switching.
 - **Worktrees, splits, and spaces**: a worktree per task, split panes, Arc-style spaces.
@@ -182,6 +168,7 @@ Agents run in native PowerShell by default. Prefer Linux? Switch to WSL in Setti
   <a href="https://maddada.com/download/linux-rpm-x64"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/Linux-.rpm.svg?variant=secondary&logo=redhat&mode=dark" /><img src="https://shieldcn.dev/badge/Linux-.rpm.svg?variant=secondary&logo=redhat&mode=light" alt="Linux RPM package" /></picture></a>
   <a href="https://aur.archlinux.org/packages/ghostex-bin"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/AUR-ghostex--bin.svg?variant=secondary&logo=archlinux&mode=dark" /><img src="https://shieldcn.dev/badge/AUR-ghostex--bin.svg?variant=secondary&logo=archlinux&mode=light" alt="Arch Linux AUR package" /></picture></a>
   <a href="https://maddada.com/download/linux-tar-x64"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/Linux-tar.zst.svg?variant=secondary&logo=linux&mode=dark" /><img src="https://shieldcn.dev/badge/Linux-tar.zst.svg?variant=secondary&logo=linux&mode=light" alt="Linux tarball" /></picture></a>
+  <a href="https://maddada.com/download/linux-appimage-x64"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/Linux-AppImage.svg?variant=secondary&logo=linux&mode=dark" /><img src="https://shieldcn.dev/badge/Linux-AppImage.svg?variant=secondary&logo=linux&mode=light" alt="Linux AppImage" /></picture></a>
 </p>
 
 ```bash
@@ -190,7 +177,12 @@ yay -S ghostex-bin
 
 # Any other x64 distribution: the tarball is a prefix-preserving /opt/ghostex tree
 sudo tar -xpf ghostex-*-linux-x64.tar.zst -C /
+
+# No package manager: the AppImage copies itself into ~/.local/share/ghostex/appimage on first start
+chmod +x ghostex-*-linux-x64.AppImage && ./ghostex-*-linux-x64.AppImage
 ```
+
+ARM64 packages and the ARM64 AppImage are on the [release page](https://github.com/maddada/Ghostex/releases/latest). To update an AppImage, download the new one and open it. Without FUSE the AppImage says "Cannot mount AppImage": install your distribution's `fuse3` package, or start it with `--appimage-extract-and-run`.
 
 Ghostex offers to install Chromium the first time you open the browser or code editor.
 

@@ -25,11 +25,19 @@ concurrency:
 
 jobs:
   build-and-upload:
-    runs-on: macos-26
+    # CDXC:Release 2026-10-29 DECISION:
+    # Asked "The Duo layout only works when the iPhone app is built with Xcode 27.1, which GitHub offers on a preview runner (may queue). Move the iPhone build to it?" (Q768), the user answered "Move it, with a test build first". The iPhone Duo code (ghostex-mobile#4) is behind `canImport(UIKit, _version: 9127.0.85)` and compiles out with an older SDK, so the build runs on GitHub's `xcode-27` preview image and refuses any Xcode older than 27.1.
+    runs-on: xcode-27
     timeout-minutes: 120
     steps:
-      - name: Select Expo 57 toolchain
-        run: sudo xcode-select --switch /Applications/Xcode_26.4.1.app
+      - name: Select Xcode 27.1 or newer (the iPhone Duo layout needs the iOS 27.1 SDK)
+        run: |
+          sudo xcode-select --switch /Applications/Xcode.app
+          version="$(xcodebuild -version | awk 'NR == 1 { print $2 }')"
+          echo "Xcode $version"
+          case "$version" in
+            27.0* | 2[0-6].* | 1[0-9].*) echo "::error::Xcode $version is older than 27.1, which the iPhone Duo layout needs"; exit 1 ;;
+          esac
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           fetch-depth: 1
@@ -49,7 +57,7 @@ jobs:
             git submodule update --init --depth 1 apps/mobile/app
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
-          bun-version: 1.4.0
+          bun-version: 1.4.4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24.22.1
@@ -67,17 +75,7 @@ jobs:
           apps/mobile/tailcat-bridge/build.sh --target ios
           test -s apps/mobile/app/modules/ghostex-native/ios/Vendor/Tailcatbridge.xcframework/ios-arm64/Tailcatbridge.framework/Tailcatbridge
           test -s apps/mobile/app/modules/ghostex-native/ios/Vendor/Tailcatbridge.xcframework/ios-arm64_x86_64-simulator/Tailcatbridge.framework/Tailcatbridge
-      - name: Build the Rust chat core for iOS
-        run: |
-          toolchain="$(sed -n 's/^channel = "\(.*\)"$/\1/p' packages/gx-chat-mobile/rust-toolchain.toml)"
-          test -n "$toolchain"
-          tooling/release-gpui/retry.sh 3 5 -- rustup toolchain install "$toolchain" --profile minimal
-          packages/gx-chat-mobile/build.sh --target ios
-          MODULE=apps/mobile/app/modules/gx-chat-core/ios
-          test -s "$MODULE/Generated/gx_chat_mobile.swift"
-          test -s "$MODULE/Vendor/GxChatMobile.xcframework/ios-arm64/libgx_chat_mobile.a"
-          test -s "$MODULE/Vendor/GxChatMobile.xcframework/ios-arm64-simulator/libgx_chat_mobile.a"
-      # The chat core as WebAssembly for the app's hidden WebView ("Browser view" chat brain), cached
+      # The chat core as WebAssembly for the app's hidden WebView (the phone's chat brain), cached
       # on exactly its inputs (tooling/release-mobile/chat-core-page.sh pins binaryen). Metro bundles
       # the page into the app and into the over-the-air update.
       - name: Restore the chat core page

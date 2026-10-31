@@ -256,6 +256,8 @@ pub struct SessionChatTerminalNotice {
     pub approval_command: Option<String>,
     /// What a Claude Code permission prompt asks (`permissionRequest`), which the chat core turns into the approval card's title, command and warning.
     pub permission_request: Option<crate::session_chat_claude_permission::ClaudePermissionRequest>,
+    /// The whole plan Claude's "Ready to code?" asks to approve, as Markdown from its plan file (`plan`); the screen shows only a scrolled window of it (session_chat_claude_plan.rs).
+    pub plan: Option<String>,
     pub source: SessionChatTerminalNoticeSource,
     /// RFC3339 millis; also the client's dismissal key.
     pub detected_at: String,
@@ -290,6 +292,7 @@ impl SessionChatTerminalNotice {
             error_lines: None,
             approval_command: None,
             permission_request: None,
+            plan: None,
             source,
             detected_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
             actions: Vec::new(),
@@ -381,6 +384,7 @@ impl SessionChatTerminalNotice {
                 && self.error_lines == other.error_lines
                 && self.approval_command == other.approval_command
                 && self.permission_request == other.permission_request
+                && self.plan == other.plan
                 && self.source == other.source
                 && self.blocks_input == other.blocks_input
                 && self.actions == other.actions
@@ -513,6 +517,9 @@ impl SessionChatTerminalNotice {
         }
         if let Some(request) = self.permission_request.as_ref() {
             map.insert("permissionRequest".to_string(), request.to_value());
+        }
+        if let Some(plan) = self.plan.as_deref() {
+            map.insert("plan".to_string(), json!(plan));
         }
         if self.passes_keys_through() {
             map.insert("passthrough".to_string(), json!(true));

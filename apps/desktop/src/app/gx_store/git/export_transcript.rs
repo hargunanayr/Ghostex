@@ -16,7 +16,7 @@
 //! launches on the model when the user keeps an agent of that family. Every open replaces the
 //! parked request, so a plain Handoff / Export never inherits an earlier target.
 //!
-//! SEE-ALSO: apps/desktop/src/app/window/export_transcript_modal.rs (`targetAgentId`),
+//! SEE-ALSO: apps/desktop/src/app/window/export_transcript_modal.rs (`targetProvider`, `handoff_target_agent`),
 //! server/src/agents/launch_plan.rs (`agentModel` / `agentEffort`, Claude, Codex and Antigravity CLI).
 
 use ghostex_gx_core::git_menu::GitToastLevel;
@@ -41,30 +41,47 @@ pub(crate) struct HandoffTarget {
 
 /// The session the open dialog is about.
 #[derive(Clone, Debug)]
-struct ExportRequest {
-    request_id: String,
-    session: SessionKey,
+pub(super) struct ExportRequest {
+    pub(super) request_id: String,
+    pub(super) session: SessionKey,
     agent_id: Option<String>,
     session_title: String,
     handoff_target: Option<HandoffTarget>,
+    /// The `open` message, sent again when the dialog reopens after Add Project.
+    pub(super) open_message: Value,
 }
 
 /// What the dialog's export returned.
 #[derive(Clone, Debug)]
-struct ExportedTranscript {
+pub(super) struct ExportedTranscript {
     request_id: String,
-    project: ProjectKey,
+    pub(super) project: ProjectKey,
     agent_id: Option<String>,
-    path: String,
-    session_title: String,
-    handoff_target: Option<HandoffTarget>,
+    pub(super) path: String,
+    pub(super) session_title: String,
+    pub(super) handoff_target: Option<HandoffTarget>,
+    /// The file's text, when the dialog asked for it (Advanced Handoff).
+    pub(super) markdown: Option<String>,
 }
 
 #[derive(Default)]
 pub(crate) struct ExportTranscriptHost {
-    request: Option<ExportRequest>,
+    pub(super) request: Option<ExportRequest>,
     exported: Option<ExportedTranscript>,
     sequence: u64,
+    /// The dialog's picks while it is closed for Add Project, given back when it reopens.
+    pub(super) restore: Option<crate::app::window::ExportTranscriptPicks>,
+    /// Add Project opened from Advanced Handoff (export_handoff_remote.rs).
+    pub(super) add_project: Option<super::export_handoff_remote::HandoffAddProject>,
+}
+
+impl GhostexGpuiApp {
+    /// The picks Handoff / Export reopens with after Add Project, once.
+    pub(crate) fn git_export_take_restore(
+        &mut self,
+    ) -> Option<crate::app::window::ExportTranscriptPicks> {
+        self.gx_store.git.export.restore.take()
+    }
 }
 
 /// `modelPickerProvider`: the model family an agent's logo belongs to.
@@ -77,50 +94,6 @@ fn model_picker_provider(icon: Option<&str>) -> Option<&'static str> {
         "antigravity-cli" | "antigravity" => Some("antigravity"),
         _ => None,
     }
-}
-
-/// `sessionChatFileReference` + `sessionChatHandoffDraft`.
-///
-/// CDXC:SessionChat 2026-09-06 DECISION:
-/// User: Ghostex-generated file references use descriptive Markdown links instead of @filepath,
-/// with a purpose and reference number or a session-title Handoff label.
-/// SEE-ALSO: packages/shared/session-chat-file-references.ts.
-fn handoff_draft(path: &str, session_title: &str) -> String {
-    let label = format!("{session_title} Handoff");
-    let label = label.split_whitespace().collect::<Vec<_>>().join(" ");
-    let mut escaped_label = String::new();
-    for ch in label.chars() {
-        if matches!(ch, '\\' | '[' | ']') {
-            escaped_label.push('\\');
-        }
-        escaped_label.push(ch);
-    }
-    let destination = if path
-        .chars()
-        .any(|ch| ch.is_whitespace() || ch == '<' || ch == '>')
-    {
-        let mut escaped = String::from("<");
-        for ch in path.chars() {
-            if matches!(ch, '\\' | '<' | '>') {
-                escaped.push('\\');
-            }
-            escaped.push(ch);
-        }
-        escaped.push('>');
-        escaped
-    } else {
-        let mut escaped = String::new();
-        for ch in path.chars() {
-            if matches!(ch, '\\' | '(' | ')') {
-                escaped.push('\\');
-            }
-            escaped.push(ch);
-        }
-        escaped
-    };
-    // The trailing space closes the link and separates it from the prompt the user writes next,
-    // so it must survive untrimmed all the way to the daemon.
-    format!("[{escaped_label}]({destination}) ")
 }
 
 impl GhostexGpuiApp {
@@ -167,37 +140,35 @@ impl GhostexGpuiApp {
                 .unwrap_or_default(),
             host.sequence
         );
-        let target_agent_id = handoff_target.as_ref().and_then(|target| {
-            self.git_hud_agents()
-                .into_iter()
-                .find(|agent| {
-                    agent.has_command()
-                        && model_picker_provider(agent.icon.as_deref())
-                            == Some(target.provider.as_str())
-                })
-                .map(|agent| agent.agent_id)
-        });
-        let host = &mut self.gx_store.git.export;
-        host.exported = None;
-        host.request = Some(ExportRequest {
-            request_id: request_id.clone(),
-            session,
-            agent_id: agent_id.clone(),
-            session_title,
-            handoff_target,
-        });
+        // The dialog resolves the target's agent from its own list (`handoff_target_agent`).
+        let target = handoff_target
+            .as_ref()
+            .map(|target| (target.provider.clone(), target.model.clone()));
         let mut message = json!({
             "canReveal": !remote,
             "modal": "exportTranscriptResult",
             "requestId": request_id,
             "type": "open",
         });
-        if let Some(agent_id) = agent_id {
+        if let Some(agent_id) = &agent_id {
             message["agentId"] = json!(agent_id);
         }
-        if let Some(target) = target_agent_id {
-            message["targetAgentId"] = json!(target);
+        if let Some((provider, model)) = target {
+            message["targetProvider"] = json!(provider);
+            message["targetModel"] = json!(model);
         }
+        let host = &mut self.gx_store.git.export;
+        host.exported = None;
+        host.restore = None;
+        host.add_project = None;
+        host.request = Some(ExportRequest {
+            request_id: request_id.clone(),
+            session,
+            agent_id,
+            session_title,
+            handoff_target,
+            open_message: message.clone(),
+        });
         self.open_app_modal_from_bridge(message, cx);
     }
 
@@ -237,6 +208,7 @@ impl GhostexGpuiApp {
                         toggle("includeCommands") != Some(false),
                         toggle("includePatches") != Some(false),
                         toggle("includeReasoning") == Some(true),
+                        toggle("includeMarkdown") == Some(true),
                         cx,
                     );
                 }
@@ -248,8 +220,26 @@ impl GhostexGpuiApp {
                     .map(str::trim)
                     .filter(|id| !id.is_empty())
                     .map(str::to_string);
+                let text = |key: &str| {
+                    command
+                        .get(key)
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_string)
+                };
+                let target = text("targetMachineId").zip(text("targetProjectId"));
                 if let Some(request_id) = request_id {
-                    self.git_start_exported_conversation(&request_id, agent_id, cx);
+                    match target {
+                        Some((machine_id, project_id)) => self.git_start_remote_handoff(
+                            &request_id,
+                            agent_id,
+                            &machine_id,
+                            &project_id,
+                            cx,
+                        ),
+                        None => self.git_start_exported_conversation(&request_id, agent_id, cx),
+                    }
                 }
             }
             _ => {}
@@ -264,6 +254,7 @@ impl GhostexGpuiApp {
         include_commands: bool,
         include_patches: bool,
         include_reasoning: bool,
+        include_markdown: bool,
         cx: &mut gpui::Context<Self>,
     ) {
         let Some(request) = self
@@ -292,6 +283,7 @@ impl GhostexGpuiApp {
         };
         let params = json!({
             "includeCommands": include_commands,
+            "includeMarkdown": include_markdown,
             "includePatches": include_patches,
             "includeReasoning": include_reasoning,
             "projectId": request.session.project_id,
@@ -323,16 +315,28 @@ impl GhostexGpuiApp {
                         .filter(|path| !path.trim().is_empty())
                         .map(str::to_string)
                         .ok_or_else(|| "gxserver did not return the exported file.".to_string())?;
+                    let markdown = answer
+                        .get("markdown")
+                        .and_then(Value::as_str)
+                        .map(str::to_string);
+                    if include_markdown && markdown.is_none() {
+                        // A gxserver from before this carrying ignores `includeMarkdown`.
+                        return Err(
+                            "That computer's Ghostex is too old to hand off to another computer. Update it and try again."
+                                .to_string(),
+                        );
+                    }
                     Ok((
                         path,
                         answer
                             .get("agent")
                             .and_then(Value::as_str)
                             .map(str::to_string),
+                        markdown,
                     ))
                 });
                 match answer {
-                    Ok((path, agent)) => {
+                    Ok((path, agent, markdown)) => {
                         let agent_id = request
                             .agent_id
                             .clone()
@@ -347,6 +351,7 @@ impl GhostexGpuiApp {
                             path: path.clone(),
                             session_title: request.session_title.clone(),
                             handoff_target: request.handoff_target.clone(),
+                            markdown,
                         });
                         this.git_post_export_result(
                             &request.request_id,
@@ -437,25 +442,11 @@ impl GhostexGpuiApp {
         agent_id: Option<String>,
         cx: &mut gpui::Context<Self>,
     ) {
-        let host = &mut self.gx_store.git.export;
-        let Some(exported) = host
-            .exported
-            .clone()
-            .filter(|exported| exported.request_id == request_id)
-        else {
+        let Some(exported) = self.git_take_exported(request_id) else {
             return;
         };
-        host.exported = None;
-        host.request = None;
-        let agent_id = agent_id.or_else(|| exported.agent_id.clone());
-        let agent = agent_id.as_deref().and_then(|id| self.git_hud_agent(id));
-        let Some(agent) = agent else {
-            return self.git_toast(
-                GitToastLevel::Warning,
-                "Could not start the conversation",
-                ToastOptions::described("Choose a configured agent for the new session."),
-                cx,
-            );
+        let Some(agent) = self.git_handoff_agent(agent_id, &exported, cx) else {
+            return;
         };
         let scope = match self.git_scope_for_key(exported.project.clone()) {
             Ok(scope) => scope,
@@ -474,37 +465,63 @@ impl GhostexGpuiApp {
                 projectless: false,
             },
         };
-        let settings = crate::shared_settings::shared_sidebar_settings_snapshot();
-        let object = settings.object();
-        let open_in_chat =
-            crate::app::helpers::gpui_preferred_agent_interface_override_from_settings(
-                object,
-                &agent.agent_id,
-            )
-            .unwrap_or_else(|| {
-                crate::app::helpers::gpui_preferred_agent_interface_from_settings(object)
-            }) == crate::app::model::GpuiPreferredAgentInterface::Chat;
-        // The user may pick another agent in the dialog; the model only means something to the
-        // family that offers it.
-        let launch_model = exported.handoff_target.as_ref().filter(|target| {
-            matches!(target.provider.as_str(), "claude" | "codex" | "antigravity")
-                && model_picker_provider(agent.icon.as_deref()) == Some(target.provider.as_str())
-        });
+        let path = exported.path.clone();
+        self.git_launch_handoff(&scope, agent, &exported, &path, cx);
+    }
+
+    /// The parked export the dialog's Start is about, taken with its request.
+    pub(super) fn git_take_exported(&mut self, request_id: &str) -> Option<ExportedTranscript> {
+        let host = &mut self.gx_store.git.export;
+        let exported = host
+            .exported
+            .clone()
+            .filter(|exported| exported.request_id == request_id)?;
+        host.exported = None;
+        host.request = None;
+        Some(exported)
+    }
+
+    /// The agent the follow-up session runs, or a toast saying none was chosen.
+    pub(super) fn git_handoff_agent(
+        &mut self,
+        agent_id: Option<String>,
+        exported: &ExportedTranscript,
+        cx: &mut gpui::Context<Self>,
+    ) -> Option<super::prompt_agent::HudAgent> {
+        let agent_id = agent_id.or_else(|| exported.agent_id.clone());
+        let agent = agent_id.as_deref().and_then(|id| self.git_hud_agent(id));
+        if agent.is_none() {
+            self.git_toast(
+                GitToastLevel::Warning,
+                "Could not start the conversation",
+                ToastOptions::described("Choose a configured agent for the new session."),
+                cx,
+            );
+        }
+        agent
+    }
+
+    /// Starts the follow-up session in `scope` with a link to `transcript_path` (a path on the
+    /// machine `scope` is on) typed into its composer.
+    pub(super) fn git_launch_handoff(
+        &mut self,
+        scope: &GitScope,
+        agent: super::prompt_agent::HudAgent,
+        exported: &ExportedTranscript,
+        transcript_path: &str,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let source_title = self.git_export_project_title(&exported.project);
         let remote = scope.is_remote();
-        let started = self.git_start_prompt_agent(
-            &scope,
+        let started = self.git_start_handoff_session(
+            scope,
             agent,
-            PromptAgentLaunch {
-                first_user_input_draft: Some(handoff_draft(
-                    &exported.path,
-                    &exported.session_title,
-                )),
-                agent_model: launch_model.map(|target| target.model.clone()),
-                agent_effort: launch_model.and_then(|target| target.effort.clone()),
-                open_in_chat,
-                missing_session_message: Some("Could not create the new agent session."),
-                ..PromptAgentLaunch::default()
-            },
+            ghostex_gx_core::session_handoff::handoff_draft(
+                transcript_path,
+                &exported.session_title,
+                &source_title,
+            ),
+            exported.handoff_target.as_ref(),
             cx,
         );
         cx.spawn(async move |this, cx| {
@@ -524,5 +541,56 @@ impl GhostexGpuiApp {
             }
         })
         .detach();
+    }
+
+    /// The name of the project a handoff's lead-in says it came from.
+    pub(super) fn git_export_project_title(&self, project: &ProjectKey) -> String {
+        self.gx_store
+            .core
+            .presentation()
+            .loaded(&project.machine)
+            .and_then(|loaded| loaded.project(&project.project_id))
+            .map(|project| project.title.clone())
+            .unwrap_or_default()
+    }
+
+    /// Creates a handoff's follow-up session with its message box staged.
+    pub(super) fn git_start_handoff_session(
+        &mut self,
+        scope: &GitScope,
+        agent: super::prompt_agent::HudAgent,
+        draft: String,
+        handoff_target: Option<&HandoffTarget>,
+        cx: &mut gpui::Context<Self>,
+    ) -> gpui::Task<Result<SessionKey, String>> {
+        let settings = crate::shared_settings::shared_sidebar_settings_snapshot();
+        let object = settings.object();
+        let open_in_chat =
+            crate::app::helpers::gpui_preferred_agent_interface_override_from_settings(
+                object,
+                &agent.agent_id,
+            )
+            .unwrap_or_else(|| {
+                crate::app::helpers::gpui_preferred_agent_interface_from_settings(object)
+            }) == crate::app::model::GpuiPreferredAgentInterface::Chat;
+        // The user may pick another agent in the dialog; the model only means something to the
+        // family that offers it.
+        let launch_model = handoff_target.filter(|target| {
+            matches!(target.provider.as_str(), "claude" | "codex" | "antigravity")
+                && model_picker_provider(agent.icon.as_deref()) == Some(target.provider.as_str())
+        });
+        self.git_start_prompt_agent(
+            scope,
+            agent,
+            PromptAgentLaunch {
+                first_user_input_draft: Some(draft),
+                agent_model: launch_model.map(|target| target.model.clone()),
+                agent_effort: launch_model.and_then(|target| target.effort.clone()),
+                open_in_chat,
+                missing_session_message: Some("Could not create the new agent session."),
+                ..PromptAgentLaunch::default()
+            },
+            cx,
+        )
     }
 }

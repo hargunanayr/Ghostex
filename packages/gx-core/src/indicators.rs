@@ -66,6 +66,7 @@ pub fn neutral_indicator_inputs(list_inputs: &SidebarInputs, machine: &MachineId
             .remote_id()
             .unwrap_or(crate::sidebar_view::LOCAL_MACHINE_ID)
             .to_string(),
+        show_all_projects: true,
         ..Default::default()
     };
     inputs.spaces_lifted = true;
@@ -197,7 +198,9 @@ pub fn indicator_candidates(
                     project_id,
                     project_title,
                     session_id: row.sidebar_session_id.clone(),
+                    // An approval waits on the user even under a title that settled to idle.
                     status: match row.activity.as_str() {
+                        _ if row.awaiting_approval => "attention",
                         "attention" => "attention",
                         "working" => "working",
                         _ => "available",

@@ -15,7 +15,6 @@ use ghostex_gx_core::indicators::{
     indicator_candidates, neutral_indicator_inputs, status_indicators_payload,
 };
 use ghostex_gx_core::{ChangeSummary, MachineId, SidebarInputs, SidebarViewModel};
-use serde_json::Value;
 
 use crate::GhostexGpuiApp;
 use crate::app::gx_store::host::now_ms;
@@ -35,8 +34,9 @@ impl GhostexGpuiApp {
         cx: &mut gpui::Context<Self>,
     ) {
         let settings = self.gx_store_hud_settings_value();
-        let hide_menu_bar =
-            settings.get("hideMenuBarSessionStatusIndicators") == Some(&Value::Bool(true));
+        // CDXC:Settings 2026-10-29 DECISION (cleanup Q18): the Show Menu Bar Session Indicators
+        // setting is gone; the macOS menu bar item is always on (remove it from the menu bar itself).
+        let hide_menu_bar = false;
         // This computer, then every saved remote machine the store holds rows for, live or last
         // seen, in the order Settings keeps them.
         let mut machines = vec![MachineId::Local];

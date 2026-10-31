@@ -64,7 +64,7 @@ impl GeneralTab {
             g,
             section,
             STRENGTH_KEY,
-            "Handover heading color strength",
+            "Heading colour strength",
             "How strongly the coloured section headings in agents' handovers (Done, Needs you, Untested and the rest) stand out. 100% is full colour; 0% leaves them in plain bold text.",
             (
                 g.number("MIN_MARKED_HANDOVERS_HEADING_STRENGTH_PERCENT"),

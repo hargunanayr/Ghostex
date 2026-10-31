@@ -131,7 +131,7 @@ if ($BuildApp) {
     }
 
     # 2) Rust binaries (bootstrap, main app, CEF helper, and installer launcher). Requires MSVC toolchain, cmake,
-    # and ninja (cef-dll-sys builds libcef_dll_wrapper), plus Zig 0.16.x for
+    # and ninja (cef-dll-sys builds libcef_dll_wrapper), plus Zig 0.17.x for
     # libghostty-vt (GHOSTEX_ZIG override honored by apps/desktop/build.rs).
     Push-Location $GpuiDir
     try {

@@ -234,12 +234,6 @@ the top and the bottom. (The same decision's shared 29px width was replaced on
 */
 pub(crate) const TITLEBAR_LEADING_TALL_BUTTON_HEIGHT: f32 = TITLEBAR_CONTROL_HEIGHT + 2.0;
 
-pub(crate) const TITLEBAR_TOOLTIP_HEIGHT: f32 = 20.0;
-
-pub(crate) const TITLEBAR_TOOLTIP_TEXT_SIZE: f32 = 12.0;
-
-pub(crate) const TITLEBAR_TOOLTIP_LINE_HEIGHT: f32 = 18.0;
-
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 pub(crate) const TITLEBAR_WINDOW_BUTTON_WIDTH: f32 = 46.0;
 

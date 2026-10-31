@@ -142,7 +142,7 @@ pub fn strip_agent_message_header(text: &str) -> &str {
 pub fn thread_brief(coordinator: &BriefContext<'_>, task: &str) -> String {
     let mut brief = task.trim().to_string();
     brief.push_str("\n\n---\n");
-    brief.push_str("You are a thread started by a Ghostex orchestrator.");
+    brief.push_str("You are a thread started by a Ghostex coordinator.");
     if !coordinator.goal.trim().is_empty() {
         brief.push_str(&format!("\nThe overall goal: {}", coordinator.goal.trim()));
     }
@@ -162,14 +162,14 @@ pub fn thread_brief(coordinator: &BriefContext<'_>, task: &str) -> String {
         );
     }
     brief.push_str(
-        "\n\nYour session title names your latest task in 3 to 6 words (`ghostex agents whoami` shows it). Whenever a message from your orchestrator starts a task your title does not describe, rename yourself before you start: `ghostex orchestrator rename-self \"<3 to 6 words>\"` (each of its messages ends with a reminder naming your current title). If it answers that the user renamed you, keep that name.",
+        "\n\nYour session title names your latest task in 3 to 6 words (`ghostex agents whoami` shows it). Whenever a message from your coordinator starts a task your title does not describe, rename yourself before you start: `ghostex coordinator rename-self \"<3 to 6 words>\"` (each of its messages ends with a reminder naming your current title). If it answers that the user renamed you, keep that name.",
     );
     brief.push_str(
         "\n\nWhen you are done:\n\
-- End your turn with a final report: what you did, where (files, branch, pull request), how you verified it, and anything left or blocked. Ghostex forwards your final message to the orchestrator automatically. Your final message is the only way to report: never message or type into the orchestrator's session yourself (`ghostex agents send`, `send-session-chat-message`, `send-text` and the like), not even for a progress update or a patch that is ready; Ghostex refuses it.\n\
-- When a message gives you several tasks, finish them all and then end your turn with one report on all of them, unless it asks you to report after each one; then end your turn after the first with its report, and wait for the orchestrator to tell you to go on.\n\
-- If you need a decision you cannot make, ask it plainly in your final message and stop. The orchestrator answers in this chat.\n\
-- The user talks only to the orchestrator. Never ask the user directly or publish a page for them (`ghostex show`): put questions, mockups and the path of any page file in your final report, and the orchestrator shows them to the user and sends you the answers.\n\
+- End your turn with a final report: what you did, where (files, branch, pull request), how you verified it, and anything left or blocked. Ghostex forwards your final message to the coordinator automatically. Your final message is the only way to report: never message or type into the coordinator's session yourself (`ghostex agents send`, `send-session-chat-message`, `send-text` and the like), not even for a progress update or a patch that is ready; Ghostex refuses it.\n\
+- When a message gives you several tasks, finish them all and then end your turn with one report on all of them, unless it asks you to report after each one; then end your turn after the first with its report, and wait for the coordinator to tell you to go on.\n\
+- If you need a decision you cannot make, ask it plainly in your final message and stop. The coordinator answers in this chat.\n\
+- The user talks only to the coordinator. Never ask the user directly or publish a page for them (`ghostex show`): put questions, mockups and the path of any page file in your final report, and the coordinator shows them to the user and sends you the answers.\n\
 - Do not merge, push, or delete anything unless this brief asks for it.",
     );
     brief.push_str(
@@ -218,7 +218,7 @@ pub fn report_body(report: &ThreadReport<'_>, thread_ref: &str) -> String {
             prompt.trim()
         ),
         ThreadReport::Closed => format!(
-            "Ghostex thread report: its session was closed, so it is marked done. `ghostex orchestrator reopen {thread_ref}` or a message to it resumes the same conversation."
+            "Ghostex thread report: its session was closed, so it is marked done. `ghostex coordinator reopen {thread_ref}` or a message to it resumes the same conversation."
         ),
         ThreadReport::Undelivered { excerpt, evidence } => {
             let mut body = format!(

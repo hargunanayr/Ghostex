@@ -160,7 +160,10 @@ pub(crate) fn refresh_gpui_visual_settings(
     let (gradient_left, gradient_right) = if sidebar_uses_light_theme(object) {
         (titlebar_background, titlebar_background)
     } else {
-        sidebar_titlebar_gradient_stops(titlebar_background)
+        sidebar_titlebar_gradient_stops_toward_full(
+            titlebar_background,
+            theme_full_colour_fade(object, "themeSidebarContrast"),
+        )
     };
     GPUI_TITLEBAR_GRADIENT_LEFT_RGB.store(u64::from(gradient_left), Ordering::Relaxed);
     GPUI_TITLEBAR_GRADIENT_RIGHT_RGB.store(u64::from(gradient_right), Ordering::Relaxed);

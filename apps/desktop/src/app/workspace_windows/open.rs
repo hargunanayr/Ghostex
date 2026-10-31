@@ -385,6 +385,24 @@ pub(crate) fn open_workspace_window(
                 }
             })
             .detach();
+            // A click in a page of this window closes the popups drawn in it, as a click anywhere
+            // else in the window does (popup_dismissal::PagePointerPress). The sidebar's menu
+            // closes without handing focus back, so the page keeps the keyboard it was clicked for.
+            cx.observe_global_in::<crate::app::window::popup_dismissal::PagePointerPress>(
+                window,
+                |app, window, cx| {
+                    let press =
+                        *cx.global::<crate::app::window::popup_dismissal::PagePointerPress>();
+                    let own_window = gpui::Window::window_handle(window).window_id();
+                    if crate::app::window::popup_dismissal::page_press_closes_popups_in(
+                        own_window, press,
+                    ) {
+                        app.dispatch_gpui_sidebar_dismiss_context_menus(cx);
+                        app.close_gpui_titlebar_popup(None, window, cx);
+                    }
+                },
+            )
+            .detach();
         });
         cx.new(|cx| {
             // Transparent rather than unset, which would paint the theme's opaque

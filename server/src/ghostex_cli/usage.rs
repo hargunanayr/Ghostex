@@ -171,6 +171,10 @@ pub fn usage() -> String {
             "Report a mobile client attach (OS and app version only) to the machine's usage analytics",
         ),
         format_help_command(
+            "client-view --client mobile --view <mobile_*> [--json]",
+            "Report which phone screen was opened (the screen's fixed name only) to the machine's usage analytics",
+        ),
+        format_help_command(
             "saved-prompts <action> --payload-json json --json",
             "Read and update the daemon-owned Saved Prompts library",
         ),
@@ -213,12 +217,12 @@ pub fn usage() -> String {
             "Update this or a connected computer's Ghostex app",
         ),
         format_help_command(
-            "create-session [title] [--input text] [--start] [--project-id id] [--group-id id]",
-            "Create a terminal session; --start materializes the live terminal immediately",
+            "create-session [title] [--input text] [--start] [--project-id id] [--group-id id] [--cwd path]",
+            "Create a terminal session; --start materializes the live terminal immediately; --group-id (with --start) puts it in one of the project's session groups (ghostex session-groups lists them); --cwd starts it in another folder while it stays in the project",
         ),
         format_help_command(
             "create-agent <agentId> --project-id id [--group-id id] [--model m] [--effort e] [--first-input-draft text] [--task text] [--run-on location] [--defer-start] [--replace-empty-sessions] [--allow-hidden]",
-            "Create and start a configured agent session; an agent turned off in Settings > Agents is refused unless --allow-hidden is passed (ghostex agents types lists the visible ones); --model/--effort (Claude, Codex, Antigravity CLI; Pi takes provider/model and a thinking level) apply to this session only; Empryo takes provider/model and starts on it without changing Empryo's default; --first-input-draft stages text in its input without sending; --task makes a Board task that waits in Pending with that prompt and does not start the agent (start it with start-task); --run-on local|docker|hetzner|vercel|daytona|e2b|digitalocean|docker:<host> runs Claude, Codex, OpenCode or Pi in an agentbox box",
+            "Create and start a configured agent session; --group-id puts it in one of the project's session groups; an agent turned off in Settings > Agents is refused unless --allow-hidden is passed (ghostex agents types lists the visible ones); --model/--effort (Claude, Codex, Antigravity CLI; Pi takes provider/model and a thinking level) apply to this session only; Empryo takes provider/model and starts on it without changing Empryo's default; --first-input-draft stages text in its input without sending; --task makes a Board task that waits in Pending with that prompt and does not start the agent (start it with start-task); --run-on local|docker|hetzner|vercel|daytona|e2b|digitalocean|docker:<host> runs Claude, Codex, OpenCode or Pi in an agentbox box",
         ),
         format_help_command(
             "board start-work <bead-id> [--agent id [--allow-hidden]] [--model m] [--effort e] [--project-path path|--project-id id] [--json]",
@@ -237,12 +241,12 @@ pub fn usage() -> String {
             "File a Ghostex bug or feedback issue on GitHub through the Ghostex feedback relay; --dry-run prints the request instead",
         ),
         format_help_command(
-            "show <file.html> [--title text] [--browser] [--json]",
-            "Publish a self-contained HTML page and print the ```visual block that shows it as a card in the chat; the card opens it in a floating window over the chat (--browser: in the browser). Questions written as <gx-questions> (or the page's own ghostex.submit(answers)) send the reader's answers back to you as a message; the block then lists the questions' tags, so the chat counts the page as unanswered until they arrive",
+            "show <file.html> [--title text] [--json] [--no-check]",
+            "Publish a self-contained HTML page and print the ```visual block that shows it as a card in the chat; the card opens it where the reader's Open chat pages in setting says (a floating window over the chat by default). Questions written as <gx-questions> (or the page's own ghostex.submit(answers)) send the reader's answers back to you as a message; the block then lists the questions' tags, so the chat counts the page as unanswered until they arrive. When Chrome is installed it then opens the page at a phone's width and says what did not fit (--no-check skips that)",
         ),
         format_help_command(
-            "visual check <file.json|-> [--width N] [--light] [--out file.png]",
-            "Draw a ```visual block's JSON to a PNG and print its path, or read a ```questions block and list its questions, so an agent can check it before replying",
+            "visual check <file.json|-|page.html> [--width N] [--light] [--out file.png]",
+            "Draw a ```visual block's JSON to a PNG and print its path, or read a ```questions block and list its questions, so an agent can check it before replying. Given a page (.html), opens it in headless Chrome at a phone's width (390px) and a computer's (1280px), saves a screenshot of each and lists what does not fit",
         ),
         format_help_command(
             "run-agent <agentId> [--allow-hidden]",
@@ -416,7 +420,7 @@ pub fn usage() -> String {
         format_help_command("read-session-chat <selector> --all|--grep <text> [--role user,assistant] [--context n] [--before n] [--after n] [--since date] [--until date] [--last n] [--history-mode detail] [--format text|json]", "Read a whole thread in one call: --all walks it to the first turn, --grep searches it (a|b for either word), --context keeps rows around each match, --since/--until/--last trim it, --format text prints a readable conversation; read-session-chat --help has examples. <selector> can be a title, session id, global ref, zmx name, agent session id, or Copy Details' Session ID or Routing ID"),
         format_help_command("switch-draft-agent <selector> --agent-id <id> --json", "Switch an unprompted draft session to another project agent"),
         format_help_command("send-session-chat-key <selector> --key <key> --json", "Queue Enter or a shifted option key behind this session's pending chat writes"),
-        format_help_command("select-session-chat-model <selector> [--model <model> --effort <effort>] [--scope session|default] [--mode <mode>] [--fast-mode on|off] [--defer] --json", "Change chat model, effort or mode; --scope session applies it to this session without changing the agent's default (Claude, Codex 0.157 or newer, OpenCode); --defer queues the choice until the agent is ready"),
+        format_help_command("select-session-chat-model <selector> [--model <model> --effort <effort>] [--scope session|default] [--mode <mode>] [--fast-mode on|off] [--permissions ask-for-approval|approve-for-me|full-access|read-only] [--defer] --json", "Change chat model, effort or mode; --permissions changes a Codex session's permission mode; --scope session applies it to this session without changing the agent's default (Claude, Codex 0.157 or newer, OpenCode); --defer queues the choice until the agent is ready"),
         format_help_command("read-session-chat-skills <selector> --json", "List skills available to the session's agent"),
         format_help_command("read-session-chat-files <selector> --json", "List the session project's files for @ mentions"),
         format_help_command("read-session-files-links <selector> --json", "List every attachment, file and link the session mentioned, and for a coordinator its threads too, grouped by session"),
@@ -439,7 +443,7 @@ pub fn usage() -> String {
         format_help_command("rename-session <sessionId> <title> [--json]", "Rename a session"),
         format_help_command("rename-session --session-id <id> --title <title> [--json]", "Flag form used by Android SSH actions"),
         format_help_command("rename-command <selector> <title>", "Rename a session through its agent's own rename command, waking a sleeping session to deliver it"),
-        format_help_command("session-note read --session-id <id> [--project-id id] [--json]", "Read the note attached to the session's agent conversation"),
+        format_help_command("session-note read --session-id <id> [--project-id id] [--json]", "Read the note attached to the session's agent conversation (needs Session notes on in Settings > Extensions)"),
         format_help_command("session-note save --session-id <id> [--project-id id] --note '<text>' [--json]", "Attach a note to the session's agent conversation; an empty note clears it"),
     ]
     .join("\n");
@@ -543,6 +547,30 @@ pub fn usage() -> String {
             "Set or clear a session tag (built-in tag, or a custom tag by name or id)",
         ),
         format_help_command(
+            "session-groups [--project-id id] [--json]",
+            "List the session groups of every project, or of one: group id, title and member session ids. The group verbs below edit them through the running Ghostex app",
+        ),
+        format_help_command(
+            "create-session-group --project-id id [--title title] [--json]",
+            "Make a session group in a project (named Group <n> without --title) and print its group id",
+        ),
+        format_help_command(
+            "rename-session-group --project-id id --group-id id --title title [--json]",
+            "Rename a session group",
+        ),
+        format_help_command(
+            "delete-session-group --project-id id --group-id id [--json]",
+            "Close a session group and its sessions, as the sidebar's Close Group does; the closed sessions head the History list, where they can be restored",
+        ),
+        format_help_command(
+            "move-session-to-group <selector> --group-id id [--json]",
+            "Put a session in one of its own project's session groups",
+        ),
+        format_help_command(
+            "remove-session-from-group <selector> [--json]",
+            "Take a session out of its session group, back to the project's own list",
+        ),
+        format_help_command(
             "delayed-send <id> (--delay-ms <n> | --when-agent-finishes | --when-all-agents-finish) | --cancel",
             "Arm or cancel a Session Automations Enter trigger",
         ),
@@ -583,8 +611,8 @@ pub fn usage() -> String {
             "Stop a stuck session's agent and start it again on the same conversation (its current turn is lost)",
         ),
         format_help_command(
-            "orchestrator --help",
-            "Run an orchestrator: one agent you talk to that starts, supervises, and reports on thread sessions",
+            "coordinator --help",
+            "Run a coordinator: one agent you talk to that starts, supervises, and reports on thread sessions",
         ),
         format_help_command(
             "ghost --help",
@@ -1262,11 +1290,11 @@ Usage:
   gx settings set <key> <value> [--json]
   gx settings reset <key> [--json]
   gx settings open [<key>] [--tab <id>] [--json]
-  gx settings hotkeys [list] [<search>] [--changed] [--json]
-  gx settings hotkeys get <id> [--json]
-  gx settings hotkeys set <id> <keys> [--replace] [--json]
-  gx settings hotkeys reset <id> [--json]
-  gx settings hotkeys reset --all [--json]
+  gx settings hotkeys [list] [<search>] [--changed] [--terminal] [--json]
+  gx settings hotkeys get <id> [--terminal] [--json]
+  gx settings hotkeys set <id> <keys> [--replace] [--terminal] [--json]
+  gx settings hotkeys reset <id> [--terminal] [--json]
+  gx settings hotkeys reset --all [--terminal] [--json]
   gx settings --help
 
 Keys:
@@ -1278,6 +1306,15 @@ Values:
   number    a number; some keys accept only listed values or a min/max/step range
   enum      exactly one of the listed option values (case-sensitive)
   text      any text, passed verbatim
+
+Hotkeys:
+  Every hotkey that can act from a terminal has two bindings: the normal one,
+  which applies outside a terminal, and the Terminal focused one, which applies
+  while a terminal has the keyboard (Settings > Hotkeys > Terminal focused).
+  --terminal reads or changes the Terminal focused one. Until it is set, it
+  follows the normal key when you changed that, else its own default. reset
+  --terminal makes it follow again. Copy, Select All and Unfocus Terminal have
+  only a Terminal focused binding.
 
 Writing:
   set and reset send the change to the running Ghostex desktop app, which saves
@@ -1332,6 +1369,7 @@ pub fn visuals_usage() -> String {
 Usage:
   gx visual --help
   gx visual check <file.json|-> [--width N] [--light] [--out file.png]
+  gx visual check <page.html> [--width N] [--light] [--out file.png]
   gx visual install-skill [--json]
 
 Agent skill:
@@ -1350,6 +1388,13 @@ check:
   user already answered one another way (in the chat, in another form, or by
   doing what it asked). A question the reader leaves blank arrives as
   \"skipped\", so move on and don't ask it again unless it blocks the work.
+
+  Given a page (.html), check prepares it as `ghostex show` would and opens it
+  in headless Chrome (or Chromium, Edge, Brave; GHOSTEX_CHROME picks one) at a
+  phone's width, 390px, and a computer's, 1280px (--width N for one width).
+  It saves a full-page screenshot of each and lists what reaches past the
+  screen and what Ghostex had to fit for the phone (columns stacked, pills
+  kept on one line, blocks scrolling sideways), with how to fix the page.
 "
     .to_string()
 }
