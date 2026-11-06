@@ -1,8 +1,11 @@
-//! The Project sidebar as one list for every machine: a project that is on several machines (or
-//! cloned twice on one) is one entry, with the sessions of every copy in it.
+//! The Project sidebar as one list for every machine: a project that is on several machines is
+//! one entry, with the sessions of every copy in it. Two clones on one machine stay two entries.
 //!
 //! CDXC:RemoteMachines 2026-11-05 DECISION:
-//! User: "i wanna switch to showing the projects from all my machines without a machine picker basically as much as possible ... if same project is on both machines then should just have 1 entry in my sidebar for that project". Unless Settings › Sidebar's Separate by machine is on, this computer's list takes every connected machine's projects: a project matches another by git remote, then by folder name, with the Unified sidebar's rule (`unified_sidebar::repo`, Q1351); two clones of one repository on the same machine are one entry too (Q1352); the sessions of every copy are mixed in one list, each one from another machine carrying that machine's name (Q1350); and the header's creating actions (New Terminal, Create Agent, the ⋯ menu's Add Worktree, History and the rest) go to the copy a session of the project last started in (Q1353). A worktree project and a bot are never merged: a worktree is its own entry under its parent, and bots stay in Bots.
+//! User: "i wanna switch to showing the projects from all my machines without a machine picker basically as much as possible ... if same project is on both machines then should just have 1 entry in my sidebar for that project". Unless Settings › Sidebar's Separate by machine is on, this computer's list takes every connected machine's projects: a project matches another by git remote, then by folder name, with the Unified sidebar's rule (`unified_sidebar::repo`, Q1351); the sessions of every copy are mixed in one list, each one from another machine carrying that machine's name (Q1350); and the header's creating actions (New Terminal, Create Agent, the ⋯ menu's Add Worktree, History and the rest) go to the copy a session of the project last started in (Q1353). A worktree project and a bot are never merged: a worktree is its own entry under its parent, and bots stay in Bots.
+//!
+//! CDXC:RemoteMachines 2026-11-06 DECISION:
+//! Ryan (this fork) chose that two clones of one repository on the same computer stay separate projects: standard, forever and tripple are clones of one repository filed as separate projects in their own project groups (tripple in another group than the other two), and each keeps its own entry, its own sessions and its group. Only copies on different computers merge, and another computer's copy joins the first clone in this computer's order. Supersedes upstream's rule that clones on one machine are one entry (Q1352).
 //!
 //! CDXC:RemoteMachines 2026-11-05 WHY:
 //! A copy merged into another entry gives it its sessions only: its user-made session groups are listed with the entry's own sessions rather than as groups, because a session group is drawn inside the project that owns its id (`owner_project_group_id`), and that project is not drawn. A project only another machine has keeps its session groups, exactly as that machine's tab drew them.
@@ -52,8 +55,8 @@ pub(super) struct MergeInput<'a> {
 /// What the list needs from the merge besides the plans it rewrote.
 #[derive(Default)]
 pub(super) struct MergeOutcome {
-    /// The group ids no longer drawn (another machine's copy, a second clone, and their session
-    /// groups), each with the entry that now lists its sessions: the focus follows them there.
+    /// The group ids no longer drawn (another machine's copy and its session groups), each with
+    /// the entry that now lists its sessions: the focus follows them there.
     pub(super) merged_into: BTreeMap<String, String>,
 }
 
@@ -164,10 +167,10 @@ pub(super) fn merge_machines(
     let mut entry_of_key: HashMap<String, usize> = HashMap::new();
     let mut copies: BTreeMap<usize, Vec<Copy>> = BTreeMap::new();
     let mut names: BTreeMap<usize, Vec<MachineChip>> = BTreeMap::new();
-    let mut dropped: BTreeSet<usize> = BTreeSet::new();
     let local_chip = machine_chip(input.inputs, LOCAL_MACHINE_ID);
 
-    // This computer's projects first, in its own order: a second clone joins the first.
+    // This computer's projects first, in its own order. Every clone keeps its own entry (the
+    // 2026-11-06 decision above); another computer's copy joins the first clone.
     let mut index = 0;
     while index < plans.len() {
         let Some(project) = mergeable(plans[index].kind, plans[index].project.as_deref()) else {
@@ -184,25 +187,9 @@ pub(super) fn merge_machines(
             project,
             remote_machine: None,
         };
-        match entry_of_key.get(&key).copied() {
-            None => {
-                entry_of_key.insert(key, index);
-                copies.insert(index, vec![copy]);
-                names.insert(index, vec![local_chip.clone()]);
-            }
-            Some(entry) => {
-                let entry_id = plans[entry].group_id.clone();
-                for merged in std::iter::once(index).chain(subgroups.clone()) {
-                    let rows = std::mem::take(&mut plans[merged].rows);
-                    plans[entry].rows.extend(rows);
-                    outcome
-                        .merged_into
-                        .insert(plans[merged].group_id.clone(), entry_id.clone());
-                    dropped.insert(merged);
-                }
-                copies.entry(entry).or_default().push(copy);
-            }
-        }
+        entry_of_key.entry(key).or_insert(index);
+        copies.insert(index, vec![copy]);
+        names.insert(index, vec![local_chip.clone()]);
         index = subgroups.end;
     }
 
@@ -356,14 +343,6 @@ pub(super) fn merge_machines(
         if entry_copies.len() > 1 {
             plans[*entry].action_target = last_used_copy(&plans[*entry], entry_copies);
         }
-    }
-    if !dropped.is_empty() {
-        let mut index = 0;
-        plans.retain(|_| {
-            let keep = !dropped.contains(&index);
-            index += 1;
-            keep
-        });
     }
     (cache, outcome)
 }

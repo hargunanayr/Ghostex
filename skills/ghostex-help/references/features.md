@@ -749,8 +749,9 @@ every Space again.
 Sidebar & Sessions > Separate by machine, `sidebarSeparateByMachine`, off by
 default), the Project sidebar has no machine tabs: every connected computer's
 projects are in one list. A project on several computers (the same git remote,
-else the same folder name), or cloned twice on one computer, is one entry with
-the sessions of every copy mixed under it; a session on another computer shows
+else the same folder name) is one entry with the sessions of every copy mixed
+under it, while two clones of one repository on the same computer stay separate
+projects; a session on another computer shows
 that computer's name, and the project's header names the computers it is on.
 New Terminal, Create Agent and the project's ⋯ actions run on the computer a
 session of that project last started on. Spaces and project groups are shared
