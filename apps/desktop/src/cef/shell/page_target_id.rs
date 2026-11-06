@@ -26,7 +26,7 @@ wrap_dev_tools_message_observer! {
     impl DevToolsMessageObserver {
         fn on_dev_tools_method_result(
             &self,
-            _browser: Option<&mut cef::Browser>,
+            browser: Option<&mut cef::Browser>,
             message_id: c_int,
             success: c_int,
             result: Option<&[u8]>,
@@ -49,6 +49,10 @@ wrap_dev_tools_message_observer! {
                         .as_str()
                         .map(str::to_string)
                 });
+            // The DevTools relay lists the page under the same id (devtools_relay.rs).
+            if let (Some(browser), Some(target_id)) = (browser, target_id.as_deref()) {
+                cef_devtools_relay_note_target_id(browser.identifier(), target_id);
+            }
             let _ = sender.send(target_id);
         }
     }

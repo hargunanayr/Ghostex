@@ -39,6 +39,12 @@ const ROWS: &[RowAvailability] = &[
         only_on: &[Platform::MacOs],
         hidden_while: None,
     },
+    // CDXC:Workarea 2026-11-05 WHY: Frame the work area clips the work area's web pages to the card's rounded corners with a native layer mask, which exists on macOS only; on Windows and Linux the pages would keep square corners over the card, so the row is macOS-only until they can be clipped there too.
+    RowAvailability {
+        key: "workAreaFrame",
+        only_on: &[Platform::MacOs],
+        hidden_while: None,
+    },
     // CDXC:ManagedTools 2026-10-14 DECISION: User: "SpaceO is macOS-only for now"; its Integrations rows leave Settings, its search and the Help files on Windows and Linux.
     RowAvailability {
         key: "spaceo",
@@ -62,7 +68,65 @@ const ROWS: &[RowAvailability] = &[
         only_on: &[Platform::Windows, Platform::Linux],
         hidden_while: None,
     },
+    // CDXC:CloudBoxes 2026-11-02 WHY: Cloud Boxes is on everywhere now (D11), but agentbox, its Advanced "More providers" part, runs on macOS and Linux only; on Windows only the agentbox row stays, saying to use Ghostex inside WSL.
+    RowAvailability {
+        key: "agentboxSetUpForMe",
+        only_on: AGENTBOX_PLATFORMS,
+        hidden_while: None,
+    },
+    RowAvailability {
+        key: "agentboxWhatIsABox",
+        only_on: AGENTBOX_PLATFORMS,
+        hidden_while: None,
+    },
+    RowAvailability {
+        key: "agentboxProviders",
+        only_on: AGENTBOX_PLATFORMS,
+        hidden_while: None,
+    },
+    RowAvailability {
+        key: "agentboxRemoteDocker",
+        only_on: AGENTBOX_PLATFORMS,
+        hidden_while: None,
+    },
+    RowAvailability {
+        key: "agentboxClaudeSignIn",
+        only_on: AGENTBOX_PLATFORMS,
+        hidden_while: None,
+    },
+    RowAvailability {
+        key: "agentboxCodexSignIn",
+        only_on: AGENTBOX_PLATFORMS,
+        hidden_while: None,
+    },
+    RowAvailability {
+        key: "agentboxDefaultLocation",
+        only_on: AGENTBOX_PLATFORMS,
+        hidden_while: None,
+    },
+    RowAvailability {
+        key: "agentboxBoxes",
+        only_on: AGENTBOX_PLATFORMS,
+        hidden_while: None,
+    },
+    RowAvailability {
+        key: "agentboxStartThread",
+        only_on: AGENTBOX_PLATFORMS,
+        hidden_while: None,
+    },
+    RowAvailability {
+        key: "agentboxWebApp",
+        only_on: AGENTBOX_PLATFORMS,
+        hidden_while: None,
+    },
+    RowAvailability {
+        key: "agentboxBilling",
+        only_on: AGENTBOX_PLATFORMS,
+        hidden_while: None,
+    },
 ];
+
+const AGENTBOX_PLATFORMS: &[Platform] = &[Platform::MacOs, Platform::Linux];
 
 /// A default that differs from `DEFAULT_GHOSTEX_SETTINGS` on one platform.
 const PLATFORM_DEFAULTS: &[(Platform, &str, J)] =

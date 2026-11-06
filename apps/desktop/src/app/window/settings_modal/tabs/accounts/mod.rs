@@ -19,10 +19,12 @@ mod guide;
 mod helper_tools;
 mod list;
 mod manager;
+mod menus;
 mod preview;
 mod remembered_form;
 mod rules;
 mod sign_in_watch;
+mod usage_flow;
 pub(crate) mod widgets;
 
 use super::super::fields::{
@@ -94,6 +96,12 @@ pub(crate) struct AccountsTab {
     pub(crate) commit_inputs: HashSet<SharedString>,
     /// A Sign in to claude.ai is under way and the page re-reads it (`claude_ai_wait`).
     claude_ai_polling: bool,
+    /// The account a Reconnect outside the page asked to sign in, until the accounts are read.
+    pending_reconnect: Option<String>,
+    /// The ⋯ menu that is open (`menus.rs`), by its key.
+    pub(crate) open_menu: Option<String>,
+    /// The Cursor, Gemini or Copilot sign-in under way (`usage_flow.rs`).
+    pub(crate) usage_sign_in: Option<usage_flow::UsageSignIn>,
 }
 
 /// What the account manager's right-hand pane shows.
@@ -103,17 +111,19 @@ pub(crate) enum Pane {
     Account(String),
     /// A provider's rules for new sessions and limits.
     Rules(&'static str),
-    /// A provider's Add account setup.
+    /// A Claude or Codex Add account sign-in.
     Add(&'static str),
+    /// Add account's provider picker.
+    AddPick,
+    /// A Cursor, Gemini or Copilot sign-in.
+    AddUsage(&'static str),
 }
 
 impl super::HoldsUnsavedInput for AccountsTab {
-    /// An Add account setup, a Remove confirmation or an Uninstall confirmation is open (account
-    /// edits save as they are made).
+    /// A Remove confirmation or an Uninstall confirmation is open (account edits save as they are
+    /// made, and adding an account asks nothing to type).
     fn holds_unsaved_input(&self, _cx: &gpui::App) -> bool {
-        matches!(self.pane, Some(Pane::Add(_)))
-            || self.editors.values().any(|draft| draft.remove)
-            || self.helpers.confirm_uninstall.is_some()
+        self.editors.values().any(|draft| draft.remove) || self.helpers.confirm_uninstall.is_some()
     }
 }
 
@@ -173,6 +183,9 @@ impl AccountsTab {
             masked_inputs: HashMap::new(),
             commit_inputs: HashSet::new(),
             claude_ai_polling: false,
+            pending_reconnect: None,
+            open_menu: None,
+            usage_sign_in: None,
         };
         page.restore_open_form(cx);
         // An account toast's Open Accounts opens on that agent's accounts and rules.
@@ -186,11 +199,42 @@ impl AccountsTab {
         {
             page.pane = Some(Pane::Rules(provider));
         }
+        // A Reconnect in the usage panel or the chat's Accounts & limits panel opens here on that
+        // account with its sign-in started.
+        if let Some(account_id) = page
+            .store
+            .read(cx)
+            .request()
+            .initial_accounts_reconnect
+            .clone()
+        {
+            page.pane = Some(Pane::Account(account_id.clone()));
+            page.pending_reconnect = Some(account_id);
+        }
         // Back to Settings after a claude.ai sign-in returns to that account.
         if let Some(account_id) = claude_ai_wait::take_reopen_account() {
             page.pane = Some(Pane::Account(account_id));
         }
         page
+    }
+
+    /// Once the accounts are read, starts the sign-in a Reconnect outside the page asked for. An
+    /// account that needs none (signed in again meanwhile) or is gone just shows.
+    fn start_pending_reconnect(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.pending_reconnect.as_ref() else {
+            return;
+        };
+        let Some(data) = self.client.read(cx).data.as_ref() else {
+            return;
+        };
+        let account = data
+            .accounts()
+            .into_iter()
+            .find(|account| account.id() == *id && account.needs_sign_in());
+        self.pending_reconnect = None;
+        if let Some(account) = account {
+            self.start_reconnect(&account, cx);
+        }
     }
 
     pub(crate) fn hide_emails(&self, cx: &App) -> bool {
@@ -381,9 +425,19 @@ impl AccountsTab {
                 }
             });
         });
+        let (client, store) = (self.client.clone(), self.store.clone());
+        let added = account_id.clone();
         self.connected = Some((account_id, clear));
-        self.client.update(cx, |client, cx| {
-            client.request(json!({ "operation": "list", "refresh": true }), None, cx)
+        self.client.update(cx, |client_state, cx| {
+            client_state.request(
+                json!({ "operation": "list", "refresh": true }),
+                Some(Box::new(move |ok, cx| {
+                    if ok {
+                        show_added_account_in_sidebar(&client, &store, |a| a.id() == added, cx);
+                    }
+                })),
+                cx,
+            )
         });
         cx.notify();
     }
@@ -396,7 +450,7 @@ impl AccountsTab {
                 .accounts()
                 .iter()
                 .any(|account| account.id() == *id && account.registered()),
-            Pane::Rules(_) | Pane::Add(_) => true,
+            Pane::Rules(_) | Pane::Add(_) | Pane::AddPick | Pane::AddUsage(_) => true,
         };
         if let Some(pane) = self.pane.clone().filter(exists) {
             return pane;
@@ -409,7 +463,7 @@ impl AccountsTab {
                     .map(|account| account.id())
             })
             .map(Pane::Account)
-            .unwrap_or(Pane::Add("claude"))
+            .unwrap_or(Pane::AddPick)
     }
 
     /// The Accounts section.
@@ -419,52 +473,16 @@ impl AccountsTab {
     fn render_accounts_section(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let p = self.store.read(cx).palette();
         let hide = self.hide_emails(cx);
-        let (connected, data, error, busy, refreshing) = {
+        let (connected, data, error, busy) = {
             let client = self.client.read(cx);
             (
                 client.connected(cx),
                 client.data.is_some(),
                 client.error.clone(),
                 client.busy,
-                client.refreshing,
             )
         };
-        let refresh = connected.then(|| {
-            settings_sized_button(
-                &p,
-                "accounts-refresh",
-                if refreshing {
-                    "Refreshing…"
-                } else {
-                    "Refresh accounts"
-                },
-                Some("modals/settings/refresh.svg"),
-                None,
-                SizedButtonVariant::Outline,
-                SizedButtonSize::Default,
-                busy || refreshing,
-                Some("Accounts are being read.".into()),
-                |page: &mut Self, _window, cx| {
-                    let this = cx.weak_entity();
-                    page.account_request(
-                        json!({ "operation": "list", "refresh": true }),
-                        Some(Box::new(move |ok, cx| {
-                            if ok {
-                                let _ = this.update(cx, |page, cx| {
-                                    page.flow_toast(
-                                        "Accounts refreshed",
-                                        "Saved accounts and usage are up to date.",
-                                        cx,
-                                    )
-                                });
-                            }
-                        })),
-                        cx,
-                    );
-                },
-                cx,
-            )
-        });
+        let refresh = connected.then(|| self.render_page_menu(&p, cx));
         let mut rows: Vec<AnyElement> = vec![toggle_field_with(
             &p,
             "hide-account-emails",
@@ -554,6 +572,7 @@ impl Render for AccountsTab {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_active(cx);
         self.apply_preview_state(window, cx);
+        self.start_pending_reconnect(cx);
         let (p, search, searching) = {
             let store = self.store.read(cx);
             (
@@ -592,4 +611,33 @@ impl Render for AccountsTab {
         }
         settings_page(&self.store, SettingsTabId::Accounts, &p, blocks, cx)
     }
+}
+
+/// Hands an account just added to the sidebar's usage strip, which otherwise picks it up on its
+/// next 30-second read, and pins the strip (`added`, CDXC:Sidebar 2026-11-05 on
+/// `update_titlebar_account_from_ui`). gxserver saves a new account as shown there
+/// (CDXC:AgentProviders 2026-11-03 on `new_saved_account` in server/src/accounts/endpoint.rs); one
+/// the list reports as hidden is left alone.
+pub(crate) fn show_added_account_in_sidebar(
+    client: &Entity<AccountsClient>,
+    store: &Entity<SettingsStore>,
+    is_added: impl Fn(&data::Account) -> bool,
+    cx: &mut App,
+) {
+    let Some(account) = client
+        .read(cx)
+        .data
+        .as_ref()
+        .and_then(|data| data.accounts().into_iter().find(|a| is_added(a)))
+    else {
+        return;
+    };
+    if !account.show_in_titlebar() {
+        return;
+    }
+    super::super::store::store_host_message(
+        store,
+        json!({ "type": "accountTitlebarChanged", "machineId": "local", "account": account.raw, "added": true }),
+        cx,
+    );
 }

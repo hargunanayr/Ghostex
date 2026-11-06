@@ -426,6 +426,7 @@ pub(crate) fn sync_workspace_window_title(window: &Window, project_name: &str, c
 /// another stays open loses its saved slot, the last one keeps it for the next launch, and when
 /// the closed window led, the oldest remaining one takes the app-wide work over.
 pub(crate) fn workspace_window_closed(window_id: WindowId, cx: &mut App) -> WorkspaceWindowClosed {
+    crate::app::element::forget_work_area_frame_window(window_id);
     let (closed, remaining) = WORKSPACE_WINDOWS.with(|windows| {
         let mut windows = windows.borrow_mut();
         let closed = windows
@@ -556,6 +557,9 @@ impl GhostexGpuiApp {
             register_gpui_sparkle_updater_callback_target(cx.weak_entity(), cx.to_async());
             register_gpui_os_integration_callback_target(cx.weak_entity(), cx.to_async());
         }
+        crate::app::gx_store::note_app_started_for_session_links();
+        #[cfg(not(target_os = "macos"))]
+        register_gpui_os_integration_callback_target(cx.weak_entity(), cx.to_async());
         #[cfg(target_os = "windows")]
         register_gpui_windows_notification_click_target(cx);
         #[cfg(target_os = "linux")]

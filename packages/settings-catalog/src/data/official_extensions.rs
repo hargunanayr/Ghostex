@@ -263,17 +263,17 @@ pub const GHOSTEX_OFFICIAL_EXTENSIONS: J = J::Arr(&[
         ("settingKeys", J::Arr(&[J::Str("sidebarSpaceSwitchBehavior"), J::Str("sidebarSpaceFollowActiveSession")])),
         ("hotkeys", J::Arr(&[J::Str("goToSpace1"), J::Str("goToSpace2"), J::Str("goToSpace3"), J::Str("goToSpace4"), J::Str("goToSpace5"), J::Str("goToSpace6"), J::Str("goToSpace7"), J::Str("goToSpace8"), J::Str("goToSpace9")])),
     ]),
-    // CDXC:AgentBox 2026-10-06 DECISION:
-    // User: "Add this feature to extensions page and keep it off by default and only show it on linux/macos. Hide the page from the sidebar in settings if not enabled." Cloud Boxes is a whole-feature entry like Actions, with a new key (`cloudBoxesHidden`, default on = hidden) because the settings file stores every default; `platforms` leaves it out on Windows, where it is always off. Saved boxes (agentbox's own state) and `agentboxDefaultLocation` are kept while it is off.
+    // CDXC:CloudBoxes 2026-11-02 DECISION:
+    // User (D11 "on everywhere"): Cloud Boxes is on by default on every desktop platform, Windows included, because boxes run Linux. This supersedes the 2026-10-06 AgentBox decision ("keep it off by default and only show it on linux/macos"); the switch stays, so it can still be turned off. The settings file stores every default, so the saved `cloudBoxesHidden: true` would have kept it off: the switch moved to a new key, `cloudBoxesEnabled` (default on, `settingsKeyEnables`), and the old key is no longer read. The agentbox part (Settings > Cloud Boxes > Advanced) still needs macOS or Linux and says so on Windows. Saved boxes, provider logins and `agentboxDefaultLocation` are kept while it is off.
     J::Obj(&[
-        ("description", J::Str("Run agent sessions in isolated boxes, in Docker on this computer or in the cloud, from New Thread's Run on choice or Run in a Box in the Select Agent menu.")),
+        ("description", J::Str("Run agent sessions on a Cloud Box: a Linux machine on your Instabox or Boat account, started from a new chat, with more providers through agentbox.")),
         ("category", J::Str("features")),
         ("id", J::Str("cloudBoxes")),
         ("placement", J::Str("feature")),
-        ("settingsKey", J::Str("cloudBoxesHidden")),
+        ("settingsKey", J::Str("cloudBoxesEnabled")),
+        ("settingsKeyEnables", J::Bool(true)),
         ("title", J::Str("Cloud Boxes")),
         ("settingsPages", J::Arr(&[J::Str("cloudBoxes")])),
-        ("platforms", J::Arr(&[J::Str("macos"), J::Str("linux")])),
     ]),
     // CDXC:Workspaces 2026-10-09 DECISION:
     // User: "Please make the workspaces feature as a built in extension in the app: when enabled we show the workspaces page in settings and we show the switcher and we allow enabling work mode etc." A whole-feature entry like Cloud Boxes, off by default, with a new key (`workspacesHidden`, default on = hidden) because the settings file stores every default. Off hides the workspace tile, Move to workspace and the Workspaces page; gxserver publishes no workspaces, runs no team sync and applies no workspace Claude account, so every window shows every project as before workspaces. Saved workspaces, Linear keys and team connections are kept, so turning it on restores everything. Its "we allow enabling work mode" part is superseded by the user's "Yes, no Workspaces needed" (CDXC:WorkMode 2026-10-24 below).
@@ -350,7 +350,7 @@ pub const GHOSTEX_OFFICIAL_EXTENSIONS: J = J::Arr(&[
     // User: claude.ai inside Ghostex "has to be built in extension", not an external Ghostex extension from the Store. Enabled, it adds a sidebar button that opens a global page, with "different claude profiles for each account" to switch between. The 2026-10-28 decision in apps/desktop/src/app/claude_web/takeover.rs supersedes "switches to a global page that just keeps just my sidebar shown": turning Claude on now hides the sidebar too. A whole-feature entry with a new key (`claudeWebHidden`, default on = hidden, so it starts off like Actions) because the settings file stores every default. Off removes the sidebar button and the Claude view; each account's claude.ai sign-in is kept.
     // SEE-ALSO: apps/desktop/src/app/claude_web/ (the view, the button and the account bar).
     J::Obj(&[
-        ("description", J::Str("Use claude.ai inside Ghostex from a button in the sidebar's bottom bar, with one sign-in per saved Claude account and a bar above the page to switch between them.")),
+        ("description", J::Str("Use claude.ai inside Ghostex from a button in the sidebar's top bar, with one sign-in per saved Claude account and a bar above the page to switch between them.")),
         ("category", J::Str("features")),
         ("id", J::Str("claudeWeb")),
         ("placement", J::Str("feature")),

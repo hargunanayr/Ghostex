@@ -5,7 +5,7 @@ use super::super::super::catalog::settings_catalog;
 use super::super::super::fields::{
     RowSpec, SELECT_WIDTH, SliderBinding, SliderSaver, ignored_ports_field, reset_key,
     segmented_field, setting_row, settings_section, settings_select_with_unavailable,
-    slider_number_field_with, text_field,
+    slider_number_field_with,
 };
 use super::super::super::page::PageBlock;
 use super::super::super::store::SettingsStore;
@@ -50,42 +50,6 @@ fn chat_section(
         "Auto close empty sessions",
         "Close a session you started but never sent anything to once it has gone unopened for this long. Sessions with anything typed, drafted or queued stay open. Only applies when Chat is the default view for that agent; with Terminal it never runs.",
         g.options("AUTO_SLEEP_IDLE_MINUTE_OPTIONS"),
-        false,
-        window,
-        cx,
-    ));
-    if g.visible(s, "sessionChatFontFamily") {
-        let spec = g.spec(
-            "sessionChatFontFamily",
-            "Chat font family",
-            "Type an installed font family name. Leave blank to use the app font.",
-        );
-        let value = g.values.string("sessionChatFontFamily");
-        rows.push(text_field(
-            page,
-            &g.p,
-            "sessionChatFontFamily",
-            spec,
-            Some(reset_key::<GeneralTab>("sessionChatFontFamily")),
-            &value,
-            Some("App default"),
-            None,
-            None,
-            window,
-            cx,
-        ));
-    }
-    rows.extend(page.slider(
-        g,
-        s,
-        "sessionChatZoomPercent",
-        "Default chat zoom (%)",
-        "Scale the desktop chat interface, including messages and the prompt composer, from 70% to 200% in 5% steps. Default: 100%.",
-        (
-            g.number("MIN_SESSION_CHAT_ZOOM_PERCENT"),
-            g.number("MAX_SESSION_CHAT_ZOOM_PERCENT"),
-            g.number("SESSION_CHAT_ZOOM_PERCENT_STEP"),
-        ),
         false,
         window,
         cx,
@@ -180,14 +144,14 @@ fn chat_section(
         ));
     }
     rows.extend(page.toggle(g, s, "sessionChatFileEditPreviews", "Show file edit previews", "Show the first seven code lines in each file edit. Turn off to show only the path and change counts.", false, cx));
-    rows.extend(page.toggle(g, s, "sessionChatMutedThinking", "Show thinking in grey", "Show the agent's thinking in grey and its replies in the full text colour, so the two are easy to tell apart.", false, cx));
     rows.extend(page.toggle(g, s, "chatToolCallCards", "Tool call cards (preview)", "Show each run of tool calls as one card: it counts the calls, says what each one is doing and then did, with its result and time, explains a failure, and folds to one line once the agent writes again. Off keeps the current look.", false, cx));
     rows.extend(page.toggle(g, s, "sessionChatKeepComposerExpanded", "Keep chat box expanded while scrolling", "Keep the desktop chat box at full size while you scroll the transcript instead of shrinking it as you scroll up and growing it back at the end.", false, cx));
     rows.extend(page.toggle(g, s, "sessionChatConfirmEscapeInterrupt", "Press Escape twice to interrupt", "While the agent is working, the first Escape asks you to press Escape again within 2 seconds before it interrupts. Turn off to interrupt on the first Escape.", false, cx));
-    // CDXC:Settings 2026-10-29 DECISION (cleanup Q11): Simple mode and Verbose mode left Settings; a
-    // chat's More actions > View menu picks Simple, Detailed or Verbose for that chat.
+    // CDXC:Settings 2026-11-02 SEE-ALSO: the user's words on Default to Detailed view (an Advanced row) are in packages/settings-catalog/src/general/chat.rs.
+    rows.extend(page.toggle(g, s, "sessionChatDetailedView", "Default to Detailed view", "New chats open in Detailed view, with the work under each agent reply shown. Off, they open in Normal view. More actions > View in a chat picks Summary, Normal or Detailed for that chat.", false, cx));
     rows.extend(page.toggle(g, s, "chatCatchMeUp", "Catch me up button", "Show a Catch me up button at the top right of the chat box while it is empty. It has your Title Generation Agent (a small, cheap model) read the session's last 30 agent messages and shows where the session stands: what needs you, what is done, in progress or untested.", false, cx));
     rows.extend(page.toggle(g, s, "chatSendOnPick", "Send when you pick an answer", "When a question card asks one question, picking an answer sends it right away, without Send answers. Cards with several questions, multiple-choice questions, Other and text answers still wait for Send.", false, cx));
+    rows.extend(page.toggle(g, s, "chatAnswersWaitForIdle", "Wait for turn end before sending form answers", "Send answers from question forms and chat pages only after the agent finishes its turn. Off sends them like a normal chat message, which the agent can read after its current tool call finishes.", false, cx));
     if g.visible(s, "chatPageOpenTarget") {
         let spec = g.spec(
             "chatPageOpenTarget",
@@ -204,7 +168,24 @@ fn chat_section(
             cx,
         ));
     }
-    rows.extend(page.toggle(g, s, "orchestratorAllEfforts", "Every effort level in coordinator pickers", "Lists every effort level in the coordinator effort pickers. Anything below Medium isn't recommended for coordinators.", false, cx));
+    if g.visible(s, "coordinatorBoardView") {
+        let spec = g.spec(
+            "coordinatorBoardView",
+            "Coordinator board opens as",
+            "What the Board pill above a coordinator's chat box opens: its lines of work as a list beside the chat, or as columns over the chat, one per group. The switch at the top of either view changes this too.",
+        );
+        rows.extend(page.segmented(
+            g,
+            s,
+            "coordinatorBoardView",
+            spec,
+            Some(reset_key::<GeneralTab>("coordinatorBoardView")),
+            g.options("COORDINATOR_BOARD_VIEW_OPTIONS"),
+            cx,
+        ));
+    }
+    rows.extend(page.toggle(g, s, "agentGhostexNote", "Tell agents about Ghostex", "Agent sessions Ghostex starts get a short note that they run in Ghostex: it can show pages, questions and charts in the chat, install Ghostex skills, and `ghostex agent-guide` explains the rest. Agents use it only when you ask for one of those things. Applies to sessions started or resumed after you change it.", false, cx));
+    rows.extend(page.toggle(g, s, "orchestratorAllEfforts", "Every effort level in coordinator pickers", "Also lists the levels above XHigh (Max, Ultra and the like) in the coordinator effort pickers, where the agent has them. Coordinators work best on High or XHigh.", false, cx));
     rows.extend(orchestrator_playbook_row(page, g, s, cx));
     rows.extend(read_aloud_rows(page, g, s, window, cx));
     rows.extend(page.toggle(g, s, "sessionDetailsClaudeTaskTools", "Claude task list", "Turn on Claude's task list tools, so Claude can keep a checklist that the Session details panel shows. Recent Claude models only get them when Ghostex asks. Applies to Claude sessions started or woken after you change it.", false, cx));
@@ -333,6 +314,18 @@ fn browser_section(
         "Open links in",
         "Open web links from terminal output (Command-click), session chat, and detected dev servers in the project Browser view or the system default browser.",
         g.options("WEB_LINK_OPEN_TARGET_OPTIONS"),
+        None,
+        false,
+        window,
+        cx,
+    ));
+    rows.extend(page.select(
+        g,
+        "browser",
+        "agentPreviewBrowser",
+        "Agents open pages in",
+        "Where an agent opens a page it built for you, such as a website preview: the project Browser view or your default browser. Ask has the agent ask you the first time and save your answer here.",
+        g.options("AGENT_PREVIEW_BROWSER_OPTIONS"),
         None,
         false,
         window,
@@ -546,7 +539,9 @@ fn file_opening_section(
     let unavailable: Vec<String> = targets
         .iter()
         .map(|option| option.value.clone())
-        .filter(|value| value != "files" && value != "code" && !installed.contains(value))
+        .filter(|value| {
+            !matches!(value.as_str(), "files" | "code" | "system-app") && !installed.contains(value)
+        })
         .collect();
     for option in &mut targets {
         if unavailable.contains(&option.value) {
@@ -558,12 +553,12 @@ fn file_opening_section(
         (
             "documentFileOpenTarget",
             "HTML, Markdown and images",
-            ".html, .md and pictures such as .png, .jpg and .svg, opened from Quick Access, agent chat, the terminal or `ghostex open`.",
+            ".html, .md and pictures such as .png, .jpg and .svg, opened from Quick Access, agent chat, the terminal or `ghostex open`. System App opens each in your computer's default app for its type.",
         ),
         (
             "otherFileOpenTarget",
             "Other files",
-            "Code and text files, opened from Quick Access, agent chat, the terminal or `ghostex open`.",
+            "Code and text files, opened from Quick Access, agent chat, the terminal or `ghostex open`. System App opens each in your computer's default app for its type.",
         ),
     ] {
         if !g.visible(s, key) {
@@ -673,7 +668,7 @@ fn file_opening_section(
         "docsOpenFilesAsTabs",
         "Show open files as tabs",
         "Show the files open in Files as a row of tabs above the document instead of the Open Files list in the files sidebar.",
-        false,
+        true,
         cx,
     ));
     settings_section(
@@ -721,7 +716,7 @@ fn marked_handovers_section(
     }
     let s = "markedHandovers";
     let mut rows: Vec<AnyElement> = Vec::new();
-    rows.extend(page.toggle(g, s, "markedHandovers", "Marked handovers in every session", "Coordinators and their threads start each part of the message they hand back with a marker such as ❓ Needs you, ✅ Done, ⚠️ Read this, 🧪 Untested or 🛑 Blocked, so a quick skim shows what needs you. Turn this on to have every other agent session do the same. Applies to sessions started or resumed after you change it.", false, cx));
+    rows.extend(page.toggle(g, s, "markedHandovers", "Marked handovers in every session", "Coordinators and their threads start each part of the message they hand back with a marker such as ✅ Done or 🧪 Untested, and end it with what needs you (⚠️ Read this, 🛑 Blocked, 💡 Suggestions, ❓ Needs you), so you never miss it. Turn this on to have every other agent session do the same. Applies to sessions started or resumed after you change it.", false, cx));
     rows.extend(page.marked_sections_style_row(g, s, window, cx));
     rows.extend(page.toggle(g, s, "orchestratorPlainReplies", "Coordinators answer without markers", "Coordinators answer normally, without marking the sections of their handovers. Their threads still mark the reports they send to the coordinator. Applies to coordinators started or resumed after you change it.", false, cx));
     settings_section(&g.p, "Marked handovers", None, None, rows)

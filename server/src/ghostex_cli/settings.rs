@@ -38,8 +38,10 @@ const SETTINGS_MODAL_TABS: &[&str] = &[
     "tools",
     "system",
     "theme",
+    "interface",
     "integrations",
     "voiceAgent",
+    "voice",
     "connectors",
     "workspaces",
     "cloudBoxes",
@@ -49,6 +51,7 @@ const SETTINGS_MODAL_TABS: &[&str] = &[
     "projects",
     "agents",
     "accounts",
+    "secrets",
     "actions",
     "openTargets",
     "hotkeys",
@@ -355,7 +358,12 @@ fn list_command(args: &[String]) -> CliResult<()> {
         .iter()
         .filter(|entry| !hidden_here(entry, &file))
         .filter(|entry| !writable_only || entry.agent_writable)
-        .filter(|entry| tab_filter.as_deref().is_none_or(|tab| entry.tab == tab))
+        // The Interface page's id is still `theme`.
+        .filter(|entry| {
+            tab_filter
+                .as_deref()
+                .is_none_or(|tab| entry.tab == if tab == "interface" { "theme" } else { tab })
+        })
         .collect();
     if parsed.flags.truthy("json") {
         print_json(&json!({

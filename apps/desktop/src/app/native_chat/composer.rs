@@ -107,6 +107,7 @@ impl NativeChatView {
             input.update(cx, |input, cx| input.set_value("", window, cx));
         }
         cx.emit(super::state::NativeChatEvent::DraftState(true));
+        self.end_answer_hold_for_send();
         self.invoke(submission, cx);
     }
 
@@ -133,6 +134,34 @@ impl NativeChatView {
             .text_color(p.primary)
             .child(label)
             .on_click(cx.listener(move |this, _, _, cx| this.invoke(command.clone(), cx)))
+            .into_any_element()
+    }
+
+    /// Retry on the "Couldn't reach Ghostex" line: a send or queue that failed goes again from the
+    /// chat box it went back to, under its first `sendRequestId` (`operationErrorResend` in the
+    /// core's document), and anything else rebuilds the chat's connection.
+    fn unreachable_retry(&self, p: &ChatAppearance, cx: &Context<Self>) -> AnyElement {
+        let resend = self.snapshot["operationErrorResend"]
+            .as_str()
+            .map(str::to_string);
+        div()
+            .id("unreachable-retry")
+            .role(gpui::Role::Button)
+            .aria_label("Retry")
+            .chat_cursor_pointer()
+            .px(px(8.0 * p.scale))
+            .py(px(4.0 * p.scale))
+            .rounded(px(6.0 * p.scale))
+            .border_1()
+            .chat_filled(p.neutral_button_fills(), true)
+            .text_color(p.primary)
+            .child("Retry")
+            .on_click(
+                cx.listener(move |this, _, window, cx| match resend.as_deref() {
+                    Some(mode) if !this.draft.trim().is_empty() => this.submit(mode, window, cx),
+                    _ => this.invoke(json!({"type":"retry"}), cx),
+                }),
+            )
             .into_any_element()
     }
 
@@ -212,6 +241,18 @@ impl NativeChatView {
                 )
             })
             .tooltip(move |window, cx| {
+                // The microphone says what will transcribe (dictation.rs).
+                if action == "dictate" {
+                    let text = super::dictation::dictation_tooltip_text(
+                        crate::app::voice_agent::dictate_engine().as_ref(),
+                        label == "Stop dictating",
+                        &hotkey_chord(Some("toggleDictation")),
+                        &super::dictation::dictate_hotkey_mode(),
+                    );
+                    return crate::app::native_sidebar::tooltips::compact_card_tooltip(
+                        text, 240.0, window, cx,
+                    );
+                }
                 let hotkey_id = match action {
                     "sessionNote" => Some("sessionNote"),
                     "attachPath" => Some("attachFileOrFolder"),
@@ -310,64 +351,8 @@ impl NativeChatView {
             .children(working_card);
         // What stacks between the card and the box.
         let mut waiting: Vec<AnyElement> = Vec::new();
-        if self.snapshot["incomingDraft"].is_object() {
-            /*
-            CDXC:Drafts 2026-09-18 DECISION:
-            User (2026-09-10, React): the saved-draft notice previews the message it would restore.
-            React hung a popover off a document icon; the GPUI row puts the same preview in the
-            icon's tooltip so the notice stays one line high.
-            */
-            let preview: String = self.snapshot["incomingDraft"]["content"]
-                .as_str()
-                .unwrap_or_default()
-                .chars()
-                .take(600)
-                .collect();
-            waiting.push(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(8.0 * s))
-                    .child(
-                        div()
-                            .id("incoming-draft-preview")
-                            .flex_shrink_0()
-                            .size(px(20.0 * s))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded_full()
-                            .hover(|style| style.bg(p.border))
-                            .child(
-                                gpui::svg()
-                                    .path("titlebar/file-text.svg")
-                                    .size(px(14.0 * s))
-                                    .text_color(p.muted),
-                            )
-                            .tooltip(move |window, cx| {
-                                gpui_component::tooltip::Tooltip::new(preview.clone())
-                                    .build(window, cx)
-                            }),
-                    )
-                    .child(div().flex_1().child("Another saved draft is available"))
-                    .child(self.chat_button(
-                        "use-incoming".into(),
-                        "Use".into(),
-                        json!({"type":"useIncomingDraft"}),
-                        p,
-                        cx,
-                    ))
-                    .child(self.chat_button(
-                        "dismiss-incoming".into(),
-                        "Dismiss".into(),
-                        json!({"type":"dismissIncomingDraft"}),
-                        p,
-                        cx,
-                    ))
-                    .child(super::suggestions::stack_marker(&stack_top))
-                    .into_any_element(),
-            );
-        }
+        // A draft saved elsewhere is offered by the Saved draft pill in the box's pill strip
+        // (saved_draft_pill.rs), which replaced the notice row here (CDXC:Drafts 2026-11-04).
         // A `composerNotReady` refusal gets its own card instead of the plain error line.
         if let Some(card) = self.render_composer_not_ready(p, cx) {
             waiting.push(super::suggestions::stack_member(card, &stack_top).into_any_element());
@@ -383,11 +368,18 @@ impl NativeChatView {
                         cx,
                     ))
                 });
+            let retry = (self.snapshot["operationErrorCode"] == "unreachable").then(|| {
+                div()
+                    .flex()
+                    .mt(px(6.0 * p.scale))
+                    .child(self.unreachable_retry(p, cx))
+            });
             waiting.push(
                 div()
                     .text_color(gpui::rgb(0xef9999))
                     .child(error.to_string())
                     .children(open_terminal)
+                    .children(retry)
                     .child(super::suggestions::stack_marker(&stack_top))
                     .into_any_element(),
             );
@@ -395,8 +387,17 @@ impl NativeChatView {
         if let Some(notice) = self.render_notice(p, window, cx) {
             waiting.push(notice.into_any_element());
         }
+        if let Some(requests) = self.render_secret_requests(p, window, cx) {
+            waiting.push(requests);
+        }
+        if let Some(line) = self.render_relayed_answer_lines(p) {
+            waiting.push(line);
+        }
         if let Some(card) = self.render_unrecorded_api_error(p, cx) {
             waiting.push(card.into_any_element());
+        }
+        if let Some(card) = self.render_model_hold_card(p, cx) {
+            waiting.push(card);
         }
         if let Some(questions) = self.render_async_questions(p, window, cx) {
             waiting.push(questions.into_any_element());
@@ -615,7 +616,7 @@ impl NativeChatView {
             waiting.push(run_location.into_any_element());
         }
         // The worktree tray sits last, right on top of the box it is attached to.
-        if !maximized && let Some(tray) = self.render_worktree_tray(p, cx) {
+        if !maximized && let Some(tray) = self.render_worktree_tray(p, window, cx) {
             waiting.push(tray);
         }
         // The box's own lead-in on top of the stack's 8px gap.

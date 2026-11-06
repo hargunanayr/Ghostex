@@ -14,6 +14,37 @@ pub(crate) struct ProcessRow {
     terminal_name: Option<String>,
 }
 
+impl ProcessRow {
+    /// A row read from the kernel rather than parsed from `ps` (process_table_macos.rs); the
+    /// terminal name goes through the same normalization a `ps` tty column does.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn new(pid: i64, ppid: i64, terminal_name: Option<String>, command: String) -> Self {
+        Self {
+            command,
+            pid,
+            ppid,
+            terminal_name: terminal_name
+                .as_deref()
+                .and_then(normalize_process_terminal_name),
+        }
+    }
+
+    #[cfg(all(test, target_os = "macos"))]
+    pub(crate) fn pid_for_test(&self) -> i64 {
+        self.pid
+    }
+
+    #[cfg(all(test, target_os = "macos"))]
+    pub(crate) fn ppid_for_test(&self) -> i64 {
+        self.ppid
+    }
+
+    #[cfg(all(test, target_os = "macos"))]
+    pub(crate) fn command_for_test(&self) -> &str {
+        &self.command
+    }
+}
+
 #[derive(Clone, Debug)]
 struct ProcessIdentityCandidate {
     confidence: i64,
@@ -82,21 +113,32 @@ pub(crate) fn parse_process_rows(ps_output: &str) -> Vec<ProcessRow> {
 /// for.
 #[cfg(not(windows))]
 pub(crate) fn find_zmx_daemon_process_id(ps_output: &str, session_name: &str) -> Option<i64> {
-    parse_process_rows(ps_output).into_iter().find_map(|row| {
-        let mut arguments = row.command.split_whitespace();
-        let executable = arguments.next()?;
-        if Path::new(executable).file_stem()?.to_str()? != "zmx" {
-            return None;
-        }
-        if arguments.next()? != "run" || arguments.next()? != session_name {
-            return None;
-        }
-        (row.pid > 0).then_some(row.pid)
-    })
+    zmx_daemon_processes(ps_output)
+        .into_iter()
+        .find_map(|(pid, name)| (name == session_name).then_some(pid))
 }
 
+/// Every `zmx run <name>` daemon in the process table as (pid, session name), whichever zmx binary started it.
+#[cfg(not(windows))]
+pub(crate) fn zmx_daemon_processes(ps_output: &str) -> Vec<(i64, String)> {
+    parse_process_rows(ps_output)
+        .into_iter()
+        .filter_map(|row| {
+            let mut arguments = row.command.split_whitespace();
+            let executable = arguments.next()?;
+            if Path::new(executable).file_stem()?.to_str()? != "zmx" || arguments.next()? != "run" {
+                return None;
+            }
+            let name = arguments.next()?.to_string();
+            (row.pid > 0).then_some((row.pid, name))
+        })
+        .collect()
+}
+
+/// CDXC:Zmx 2026-11-03 WHY: macOS `ps` writes `??` for a process without a terminal and Linux procps writes `?`. Only `??` was known, so on Linux every daemon row kept its `?` as the first word of its command, no `zmx run <name>` daemon was ever found, and the chat's repaint step reported "the session's zmx daemon is not running" for live sessions (GitHub #400).
 fn looks_like_process_terminal_name(value: &str) -> bool {
     value == "??"
+        || value == "?"
         || value == "-"
         || value.starts_with("tty")
         || value.starts_with("pts/")
@@ -105,7 +147,7 @@ fn looks_like_process_terminal_name(value: &str) -> bool {
 
 fn normalize_process_terminal_name(value: &str) -> Option<String> {
     let trimmed = value.trim();
-    if trimmed.is_empty() || matches!(trimmed, "??" | "-") {
+    if trimmed.is_empty() || matches!(trimmed, "??" | "?" | "-") {
         return None;
     }
     let name = Path::new(trimmed).file_name()?.to_str()?;

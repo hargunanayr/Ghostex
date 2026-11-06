@@ -78,6 +78,8 @@ pub(crate) struct GhostexGpuiApp {
     pub(crate) native_changes: Option<Entity<crate::app::native_changes::ChangesView>>,
     pub(crate) native_changes_preset: Option<crate::app::native_changes::ChangesPreset>,
     pub(crate) changes_open: bool,
+    /// The side chat drawn beside the chat (`web_host/side_chat.rs`), opened by `openSideChat`.
+    pub(crate) side_chat_open: Option<ghostex_gx_core::SessionKey>,
     pub(crate) changes_width: f32,
     /// Handoff / Export's Reveal path; an export never lands on a page's disk, so it stays empty.
     pub(crate) pending_export_transcript_reveal_path: Option<String>,
@@ -113,7 +115,8 @@ impl GhostexGpuiApp {
             session_details_choices: Default::default(),
             session_details_button_bounds: Rc::default(),
             session_details_dismissed_at: None,
-            sidebar_usage_visible: false,
+            // Pinned by default, as on the desktop (CDXC:Sidebar 2026-11-03 in shell_layout.rs).
+            sidebar_usage_visible: true,
             gpui_reduce_motion_enabled: false,
             app_modal_window: None,
             snapshot_browser_focus: false,
@@ -124,6 +127,7 @@ impl GhostexGpuiApp {
             native_changes: None,
             native_changes_preset: None,
             changes_open: false,
+            side_chat_open: None,
             changes_width: 620.0,
             chat_presentations: HashMap::new(),
             terminals: HashMap::new(),
@@ -138,14 +142,13 @@ impl GhostexGpuiApp {
             new_thread_picker_agents: None,
             agents_terminal_action_bar_account_page: None,
             remote_gxserver_connections: HashMap::new(),
-            // The page's `?settings=` object (README), so a setting-driven sidebar look can be tested too.
+            // `?settings=` (lib.rs) stands in for the saved settings, so the HUD composes from it too;
+            // without this a setting the sidebar reads off the HUD (its zoom) never reached the page.
             sidebar_runtime_settings_snapshot: crate::cef::SidebarRuntimeSettingsSnapshot {
-                saved_settings_json: serde_json::Value::Object(
-                    crate::shared_settings::shared_sidebar_settings_snapshot()
-                        .object()
-                        .clone(),
+                saved_settings_json: serde_json::to_string(
+                    crate::shared_settings::shared_sidebar_settings_snapshot().object(),
                 )
-                .to_string(),
+                .unwrap_or_default(),
                 ..Default::default()
             },
             latest_sidebar_project_snapshot: None,
@@ -184,7 +187,7 @@ impl GhostexGpuiApp {
 
     pub(crate) fn render_sidebar_collapse_button(
         &self,
-        _icon_color: Option<Hsla>,
+        _in_sidebar: Option<&SidebarAppearance>,
         _cx: &mut Context<Self>,
     ) -> impl IntoElement {
         div()
@@ -193,7 +196,7 @@ impl GhostexGpuiApp {
     /// The Agents Panel toggle folds the panel behind an open view; the browser build opens no views.
     pub(crate) fn render_workarea_header_agents_toggle(
         &self,
-        _icon_color: Option<Hsla>,
+        _in_sidebar: Option<&SidebarAppearance>,
         _cx: &mut Context<Self>,
     ) -> impl IntoElement {
         div()
@@ -206,7 +209,7 @@ impl GhostexGpuiApp {
 
     pub(crate) fn render_workarea_header_board_toggle(
         &self,
-        _icon_color: Option<Hsla>,
+        _in_sidebar: Option<&SidebarAppearance>,
         _cx: &mut Context<Self>,
     ) -> AnyElement {
         div().into_any_element()
@@ -289,6 +292,16 @@ impl GhostexGpuiApp {
 
     // Native focus and window plumbing the browser has no counterpart for.
     pub(crate) fn reveal_floating_sessions(&mut self, _cx: &mut Context<Self>) {}
+
+    /// The desktop connects to a computer a coordinator's nested thread runs on before opening it
+    /// (session_chat_fork_branches.rs); this build streams no other computer, so it never nests one.
+    pub(crate) fn open_borrowed_thread_row_when_connected(
+        &mut self,
+        _sidebar_session_id: &str,
+        _cx: &mut Context<Self>,
+    ) -> bool {
+        false
+    }
     pub(crate) fn reclaim_gpui_root_for_chrome_input_focus(&mut self) {}
     pub(crate) fn drop_pending_browser_keyboard_handoff(&mut self) {}
     pub(crate) fn persist_shell_layout_state(&self) {}

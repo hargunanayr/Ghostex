@@ -72,6 +72,34 @@ fn is_antigravity_mode_hint(text: &str, body: &[&(char, Style)]) -> bool {
             .all(|(_, style)| style.foreground_index.is_some() || style.foreground_rgb.is_some())
 }
 
+/// CDXC:AgentScreenDetection 2026-11-04 WHY:
+/// While `/ide` is connected, Claude Code (2.1.312, read from the shipped binary's `leadingPill`) draws the editor's context at the start of its input row, before any typed text: `❯ [⧉ In main.rs] ` for the open file, `❯ [⧉ 3 lines selected] ` or `[⧉ 3 lines from main.rs] ` for a selection, the label cut in the middle with `…` past 32 columns. Kill-line keys cannot remove it (only Backspace on an empty box dismisses it), so read as a draft it made every chat send fail with composerNotCleared and restart the agent for nothing (issue #406). It is not typed text: both Claude readers skip it, and the styled reader also requires its explicit `ide` colour, since typed text keeps the terminal's default colour.
+/// Returns the pill's length in chars when `text` (the row after the `❯`, leading spaces removed) starts with one.
+fn claude_ide_pill_len(text: &str) -> Option<usize> {
+    let label = text.strip_prefix("[⧉ ")?;
+    let close = label.find(']')?;
+    let after = &label[close + 1..];
+    let inner = &label[..close];
+    let is_file = inner.starts_with("In ");
+    let is_selection = inner
+        .split_once(' ')
+        .is_some_and(|(count, _)| !count.is_empty() && count.chars().all(|c| c.is_ascii_digit()));
+    ((is_file || is_selection) && (after.is_empty() || after.starts_with(' ')))
+        .then(|| "[⧉ ".chars().count() + inner.chars().count() + 1)
+}
+
+/// The char range of Claude's IDE pill in `chars` (a row after its marker), when it is drawn in a
+/// colour of its own.
+fn claude_ide_pill(chars: &[(char, Style)]) -> Option<Range<usize>> {
+    let start = chars.iter().position(|(ch, _)| !ch.is_whitespace())?;
+    let text: String = chars[start..].iter().map(|(ch, _)| *ch).collect();
+    let end = start + claude_ide_pill_len(&text)?;
+    chars[start..end]
+        .iter()
+        .all(|(_, style)| style.foreground_index.is_some() || style.foreground_rgb.is_some())
+        .then_some(start..end)
+}
+
 /// One row of Antigravity's active-items list: a status glyph, the task's start time in brackets,
 /// then its command and state.
 fn is_antigravity_active_item(line: &str) -> bool {
@@ -454,6 +482,9 @@ pub(super) fn omp_input_region(lines: &[String]) -> Option<Range<usize>> {
 /// OMP's `chip.paste` symbol in its Unicode, Nerd Font and ASCII symbol presets.
 const OMP_PASTE_CHIP_GLYPHS: &[&str] = &["\u{1f4c4}", "\u{f15c}", "txt"];
 
+/// OMP's `nav.cursor` symbol, the selection marker of its lists, in its Unicode, Nerd Font and ASCII symbol presets.
+pub(crate) const OMP_NAV_CURSOR_GLYPHS: &[char] = &['❯', '\u{f054}', '>'];
+
 /// CDXC:Clipboard 2026-10-18 WHY:
 /// OMP 18.11 keeps a long paste in its editor as `[Paste #N, +M lines]` but draws it in the input box as a `<chip.paste> #N` chip (`📄 #1`), with the paste's first lines in a separate box above the input. The input box showed neither the pasted text nor the `[Paste` spelling paste verification looked for, so every OMP message over ten lines failed as "The terminal did not accept the pasted message", was cleared with Ctrl+C and retried until the row failed: Send Bug / Feedback's brief (GitHub #254) and an orchestrator's first brief to an OMP thread. A chip in the input box is OMP's proof that the paste landed.
 pub(crate) fn omp_paste_chip_shown(input_text: &str) -> bool {
@@ -499,7 +530,7 @@ fn omp_input(lines: &[String]) -> Option<(Range<usize>, OmpShape)> {
         .or_else(|| omp_gutter_input(lines))
 }
 
-/// Rows OMP may draw under its input: the one-line status bar, or the slash-command list (two-space rows with one selected `❯ ` row), which hides the status bar.
+/// Rows OMP may draw under its input: the one-line status bar, or the slash-command list (two-space rows with one row selected by OMP's list cursor), which hides the status bar.
 fn omp_composer_tail(rows: &[String]) -> bool {
     let rows: Vec<_> = rows.iter().filter(|row| !row.trim().is_empty()).collect();
     let status_bar = rows.len() <= 1
@@ -509,13 +540,22 @@ fn omp_composer_tail(rows: &[String]) -> bool {
     status_bar || omp_slash_list(&rows)
 }
 
-/// OMP's slash-command list: two-space rows with one selected `❯ ` row, drawn under every shape's input.
+/// OMP's slash-command list: two-space rows with one row selected by OMP's list cursor, drawn under every shape's input.
+///
+/// CDXC:AgentScreenDetection 2026-10-28 WHY:
+/// OMP draws the list's selected row with its symbol preset's `nav.cursor` (`❯` with Unicode symbols, `\u{f054}` with Nerd Font, `>` with ASCII), while the composer's own gutter is a literal `❯` in every preset. Reading only `❯` here called a Nerd Font or ASCII OMP's input "not on screen" while `/switch …` showed its list, so a model change from chat typed the command and never pressed Enter.
 fn omp_slash_list(rows: &[&String]) -> bool {
     !rows.is_empty()
         && rows
             .iter()
-            .all(|row| row.starts_with("❯ ") || row.starts_with("  "))
-        && rows.iter().filter(|row| row.starts_with('❯')).count() == 1
+            .all(|row| omp_list_cursor_row(row) || row.starts_with("  "))
+        && rows.iter().filter(|row| omp_list_cursor_row(row)).count() == 1
+}
+
+/// A list row OMP's cursor selects: `nav.cursor`, then a space.
+fn omp_list_cursor_row(row: &str) -> bool {
+    row.strip_prefix(OMP_NAV_CURSOR_GLYPHS)
+        .is_some_and(|rest| rest.starts_with(' '))
 }
 
 /// The input's rows from `start`: following rows that `continues` accepts, blank rows included, ending at the last row with text.
@@ -582,9 +622,10 @@ fn omp_capped_input(
     omp_composer_tail(&lines[end + 1..]).then_some((start..end + 1, shape))
 }
 
-/// `rule` and `borderless` shapes: a `❯ ` row then two-space rows, above the status bar or the slash list. The slash list draws the same `❯ ` and two-space rows, so the input is the topmost `❯ ` row of the trailing gutter block whose rows are followed only by that tail.
+/// `rule` and `borderless` shapes: a `❯ ` row then two-space rows, above the status bar or the slash list. The slash list draws two-space rows and a cursor row (`❯ ` with Unicode symbols), so the input is the topmost `❯ ` row of the trailing gutter block whose rows are followed only by that tail.
 fn omp_gutter_input(lines: &[String]) -> Option<(Range<usize>, OmpShape)> {
-    let gutter = |line: &str| omp_marked_row(line) || line.starts_with("  ");
+    let gutter =
+        |line: &str| omp_marked_row(line) || omp_list_cursor_row(line) || line.starts_with("  ");
     let last = lines.iter().rposition(|line| !line.trim().is_empty())?;
     let bottom = if gutter(&lines[last]) { last + 1 } else { last };
     let top = lines[..bottom]
@@ -726,6 +767,8 @@ fn omp_hint_only(line: &StyledLine) -> bool {
 /// CDXC:AgentScreenDetection 2026-09-09 WHY:
 /// Cursor 2026.09.08 renders either half-block borders or a background-filled input with blank padding, depending on terminal capabilities.
 /// The borderless layout must have its model/usage footer and context footer below the input, with no open menu after them; an arrow alone also appears in pickers.
+/// CDXC:AgentScreenDetection 2026-11-05 WHY:
+/// GitHub #422: Cursor in zen display mode (`"display": {"mode": "zen"}` in `~/.cursor/cli-config.json`, which Cursor restores on every launch) drew the borderless input with nothing under its `New Agent · Auto Balance · 0 used` footer: no context row, and in the report no blank padding either. Every send then waited on "The cursor input box is not on screen yet" while the terminal took typed input. The footer may now be the screen's last row; an open picker hides that footer (its rows take the footer's place; measured on 2026.11.05 with `/model`), so a `→` row above a footer that ends the screen is the input. With the context row below the footer the 2026-09-09 shape, blank padding included, is still required.
 pub(super) fn cursor_input_region(lines: &[String]) -> Option<Range<usize>> {
     if let Some(foot) = lines
         .iter()
@@ -746,13 +789,19 @@ pub(super) fn cursor_input_region(lines: &[String]) -> Option<Range<usize>> {
         .iter()
         .filter(|line| !line.trim().is_empty())
         .collect();
-    if tail.len() != 1 || !tail[0].contains("Ctx ") || !tail[0].trim_end().ends_with("% used") {
-        return None;
-    }
+    let context_row = match tail.as_slice() {
+        [] => false,
+        [row] if row.contains("Ctx ") && row.trim_end().ends_with("% used") => true,
+        _ => return None,
+    };
     let start = lines[..footer]
         .iter()
         .rposition(|line| line.trim_start().starts_with('→'))?;
-    if start == 0 || !lines[start - 1].trim().is_empty() || !lines[footer - 1].trim().is_empty() {
+    if context_row
+        && (start == 0
+            || !lines[start - 1].trim().is_empty()
+            || !lines[footer - 1].trim().is_empty())
+    {
         return None;
     }
     let end = (start + 1..footer)
@@ -768,7 +817,21 @@ pub fn claude_composer_draft(screen: &str) -> Option<String> {
     let lines: Vec<_> = screen.lines().map(strip_ansi_sgr).collect();
     let region = rule_input_region(&lines, CLAUDE_COMPOSER_MARKERS)?;
     let first = lines[region.start].trim_start();
-    let text = first.strip_prefix('❯').unwrap_or(first);
+    let text = first.strip_prefix('❯').unwrap_or(first).trim_start();
+    // A plain capture has no colours, so the IDE pill is told by its shape alone here.
+    let (shell, rest) = match text.strip_prefix('!') {
+        Some(rest) => ("!", rest.trim_start()),
+        None => ("", text),
+    };
+    let text = match claude_ide_pill_len(rest) {
+        Some(len) => format!(
+            "{shell} {}",
+            rest.char_indices()
+                .nth(len)
+                .map_or("", |(at, _)| &rest[at..])
+        ),
+        None => text.to_string(),
+    };
     Some(
         std::iter::once(text.trim())
             .chain(
@@ -1201,8 +1264,14 @@ pub fn session_chat_composer_input(agent: &str, screen: &str) -> Option<SessionC
         }
     })?;
     let shell_mode = matches!(agent, "claude" | "openclaude") && first.chars[marker].0 == '!';
-    let body: Vec<_> = first.chars[marker + 1..]
-        .iter()
+    let ide_pill = matches!(agent, "claude" | "openclaude")
+        .then(|| claude_ide_pill(&first.chars[marker + 1..]))
+        .flatten()
+        .map(|pill| marker + 1 + pill.start..marker + 1 + pill.end);
+    let outside_pill = |index: &usize| !ide_pill.as_ref().is_some_and(|pill| pill.contains(index));
+    let body: Vec<_> = (marker + 1..first.chars.len())
+        .filter(outside_pill)
+        .map(|index| &first.chars[index])
         .chain(
             lines[region.start + 1..region.end]
                 .iter()
@@ -1213,9 +1282,9 @@ pub fn session_chat_composer_input(agent: &str, screen: &str) -> Option<SessionC
     // The shell marker is part of the logical draft, including for paste and returned-prompt comparisons.
     let text_start = if shell_mode { marker } else { marker + 1 };
     let text = std::iter::once(
-        first.chars[text_start..]
-            .iter()
-            .map(|(ch, _)| *ch)
+        (text_start..first.chars.len())
+            .filter(outside_pill)
+            .map(|index| first.chars[index].0)
             .collect::<String>(),
     )
     .chain(
@@ -1437,5 +1506,191 @@ mod antigravity_mode_hint_tests {
                 .text,
             typed
         );
+    }
+}
+
+#[cfg(test)]
+mod claude_ide_pill_tests {
+    use super::*;
+    use crate::session_chat_composer::{
+        claude_composer_input_text, detect_session_chat_composer_ready,
+    };
+
+    /// The bottom of a Claude Code 2.1.312 screen with `/ide` connected: the input row starts with
+    /// the IDE pill in the theme's `ide` colour (RGB 71,130,200 in the dark theme), typed text in
+    /// the default colour after it.
+    fn screen(input_row: &str) -> String {
+        let rule = "─".repeat(80);
+        [
+            "✻ Churned for 6s".to_string(),
+            rule.clone(),
+            format!("❯ {input_row}"),
+            rule,
+            "  ⏵⏵ bypass permissions on (shift+tab to cycle)".to_string(),
+        ]
+        .join("\n")
+    }
+
+    fn pill(label: &str) -> String {
+        format!("\u{1b}[38;2;71;130;200m[⧉ {label}]\u{1b}[39m ")
+    }
+
+    const LABELS: &[&str] = &[
+        "In main.rs",
+        "3 lines selected",
+        "1 line selected",
+        "12 lines from main.rs",
+        "In session_chat_co…poser_input.rs",
+    ];
+
+    #[test]
+    fn the_ide_pill_reads_as_an_empty_input() {
+        for label in LABELS {
+            let screen = screen(&pill(label));
+            let input = session_chat_composer_input("claude", &screen).unwrap();
+            assert!(input.is_empty(), "{label}: {:?}", input.text);
+            assert!(
+                !detect_session_chat_composer_ready(Some("claude"), &screen)
+                    .blocks_message_for(Some("claude")),
+                "{label}"
+            );
+            assert_eq!(
+                claude_composer_draft(&screen).as_deref(),
+                Some(""),
+                "{label}"
+            );
+            assert_eq!(claude_composer_input_text(&screen), None, "{label}");
+        }
+        // ANSI themes colour it by palette index.
+        let ansi = screen("\u{1b}[94m[⧉ In main.rs]\u{1b}[39m ");
+        assert!(session_chat_composer_input("claude", &ansi)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn text_typed_after_the_pill_reads_as_the_draft() {
+        for label in LABELS {
+            let screen = screen(&format!("{}fix the failing test", pill(label)));
+            let input = session_chat_composer_input("claude", &screen).unwrap();
+            assert!(!input.is_empty(), "{label}");
+            assert_eq!(input.text, "fix the failing test", "{label}");
+            assert_eq!(
+                claude_composer_draft(&screen).as_deref(),
+                Some("fix the failing test"),
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
+    fn typed_brackets_stay_a_draft() {
+        // The same characters typed by hand carry the default colour.
+        for typed in ["[⧉ In main.rs]", "[⧉ 3 lines selected] and more"] {
+            let input = session_chat_composer_input("claude", &screen(typed)).unwrap();
+            assert!(!input.is_empty(), "{typed}");
+            assert_eq!(input.text, typed);
+        }
+        // Coloured, but not a label Claude's pill spells.
+        let other = screen("\u{1b}[38;2;71;130;200m[⧉ Notes]\u{1b}[39m ");
+        assert!(!session_chat_composer_input("claude", &other)
+            .unwrap()
+            .is_empty());
+    }
+
+    /// The input rows as zmx's VT capture (`zmx history --vt --screen`) serializes them.
+    #[test]
+    fn zmx_captures_tell_the_pill_from_typed_text() {
+        let rule = "\u{1b}[0m\u{1b}[38;2;136;136;136m────────────────────────────────────────";
+        let capture = |row: &str| {
+            format!("{rule}\n\u{1b}[0m❯\u{1b}[1C{row}\n{rule}\n\u{1b}[0m  ? for shortcuts")
+        };
+        for label in ["In main.rs", "3 lines selected"] {
+            let screen = capture(&format!(
+                "\u{1b}[38;2;71;130;200m[⧉ {label}]\u{1b}[0m\u{1b}[7m \u{1b}[0m"
+            ));
+            assert!(
+                session_chat_composer_input("claude", &screen)
+                    .unwrap()
+                    .is_empty(),
+                "{label}"
+            );
+            assert!(
+                !detect_session_chat_composer_ready(Some("claude"), &screen)
+                    .blocks_message_for(Some("claude")),
+                "{label}"
+            );
+        }
+        let typed = session_chat_composer_input(
+            "claude",
+            &capture("\u{1b}[38;2;71;130;200m[⧉ In main.rs]\u{1b}[0m hello"),
+        )
+        .unwrap();
+        assert_eq!(typed.text, "hello");
+    }
+}
+
+#[cfg(test)]
+mod cursor_zen_tests {
+    use super::*;
+    use crate::session_chat_composer::{
+        detect_session_chat_composer_ready, SessionChatComposerState,
+    };
+
+    /// GitHub #422's screen, exactly as reported: zen mode, nothing under the footer.
+    const ISSUE_422_ZEN: &str = "  Cursor Agent\n  v2026.11.05-86047df\n  Tip: Use /plan to plan execution and reach the right outcome faster.\n  \u{2192} Plan, search, build anything\n  New Agent \u{b7} Auto Balance \u{b7} 0 used\n";
+
+    /// Cursor 2026.11.05 in zen mode without a truecolor terminal, captured 2026-11-05: the
+    /// borderless input with its padding and the Ghostex statusline row under the footer.
+    const BORDERLESS_WITH_CONTEXT: &str = "\n\n  Cursor Agent\n  v2026.11.05-86047df\n  Tip: Use /skills to give Cursor specialized knowledge for tasks.\n\n\n\n\n  \u{2192} Plan, search, build anything\n\n\n  New Agent \u{b7} Grok 4.7 256K Medium Fast \u{b7} 0 used\n  scratch \u{b7} \u{2014} \u{b7} Ctx 0% used\n";
+
+    fn ready(screen: &str) -> bool {
+        detect_session_chat_composer_ready(Some("cursor"), screen).state
+            == SessionChatComposerState::Ready
+    }
+
+    #[test]
+    fn zen_mode_input_with_nothing_under_its_footer_is_the_input_box() {
+        // The first send reads readiness, later sends read the input itself.
+        assert!(ready(ISSUE_422_ZEN));
+        let input = session_chat_composer_input("cursor", ISSUE_422_ZEN).expect("zen input");
+        assert_eq!(input.text, "Plan, search, build anything");
+        assert_eq!(input.rows, 1);
+        // The same screen with Cursor's blank padding rows.
+        let padded = ISSUE_422_ZEN
+            .replace("  \u{2192}", "\n\n  \u{2192}")
+            .replace("  New Agent", "\n\n  New Agent");
+        assert!(ready(&padded));
+        // A typed draft over two rows.
+        let draft = ISSUE_422_ZEN.replace(
+            "Plan, search, build anything\n",
+            "fix the login\n    check please\n",
+        );
+        let input = session_chat_composer_input("cursor", &draft).expect("two-row draft");
+        assert_eq!(input.text, "fix the login\n    check please");
+        assert_eq!(input.rows, 2);
+    }
+
+    #[test]
+    fn borderless_input_over_the_context_row_still_needs_its_padding() {
+        assert!(ready(BORDERLESS_WITH_CONTEXT));
+        let input = session_chat_composer_input("cursor", BORDERLESS_WITH_CONTEXT)
+            .expect("borderless input");
+        assert_eq!(input.text, "Plan, search, build anything");
+        let unpadded = BORDERLESS_WITH_CONTEXT.replace("\n\n\n  New Agent", "\n  New Agent");
+        assert!(!ready(&unpadded));
+    }
+
+    #[test]
+    fn a_picker_or_other_rows_under_the_footer_are_not_the_input_box() {
+        // Anything but the context row under the footer is a menu or transcript.
+        for screen in [
+            format!("{ISSUE_422_ZEN}   \u{2192} /model [filter]           Select model (Tab to edit)\n     /mcp-integration\n"),
+            format!("{ISSUE_422_ZEN}  scratch \u{b7} \u{2014} \u{b7} Ctx 0% used\n  \u{2193} more below\n"),
+            ISSUE_422_ZEN.replace("  New Agent \u{b7} Auto Balance \u{b7} 0 used\n", ""),
+        ] {
+            assert!(!ready(&screen), "{screen}");
+            assert!(session_chat_composer_input("cursor", &screen).is_none(), "{screen}");
+        }
     }
 }

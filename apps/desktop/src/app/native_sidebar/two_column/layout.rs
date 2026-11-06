@@ -214,6 +214,7 @@ impl GhostexGpuiApp {
         content: &NativeSidebarSnapshot,
         selectors: &NativeSidebarSnapshot,
         appearance: &SidebarAppearance,
+        window: &gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
         // The column follows the focus to another project, until the user picks one again.
@@ -255,7 +256,7 @@ impl GhostexGpuiApp {
             .w_full()
             .flex_1()
             .min_h_0()
-            .child(self.render_two_column_nav(content, selectors, &frame, appearance, cx))
+            .child(self.render_two_column_nav(content, selectors, &frame, appearance, window, cx))
             .when(!ghost_selected, |columns| {
                 columns.child(self.render_two_column_sessions(content, &frame, appearance, cx))
             })

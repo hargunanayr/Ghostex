@@ -18,6 +18,10 @@ use crate::GhostexGpuiApp;
 #[derive(Default)]
 pub(crate) struct GxStoreHost {
     pub(crate) core: Core,
+    /// The close a close confirmation holds while it is open (`sidebar_close_confirm.rs`).
+    pub(crate) pending_session_close: Option<super::sidebar_close_confirm::PendingSessionClose>,
+    /// Set while a confirmed close runs, so the same close does not ask again.
+    pub(crate) session_close_confirmed: bool,
     pub(crate) endpoint: Option<GxserverEndpoint>,
     /// What the page shows while there is no list: the connection's last failure.
     pub(crate) status: Option<String>,
@@ -27,6 +31,8 @@ pub(crate) struct GxStoreHost {
     pub(crate) sidebar_list: super::sidebar_list::SidebarList,
     /// The Unified sidebar's per-machine lists, as on the desktop (`unified_sidebar.rs`).
     pub(crate) unified_sidebar: super::unified_sidebar::UnifiedSidebarHost,
+    /// The drafts each sidebar last drew, as on the desktop (`draft_arrivals.rs`).
+    pub(crate) draft_arrivals: super::draft_arrivals::DraftArrivalsHost,
     pub(crate) menu_host: MenuHost,
     /// The desktop's record lines; the page writes none (`diagnostics.rs`).
     pub(crate) diagnostics: super::diagnostics::GxStoreDiagnostics,
@@ -334,11 +340,35 @@ impl GhostexGpuiApp {
         self.gx_store_prune_workspace_groups(cx);
     }
 
+    /// Applies a store output the way a frame's is applied (`cloud_boxes.rs` feeds its box machines
+    /// through it).
+    pub(crate) fn gx_store_apply_output(
+        &mut self,
+        output: ghostex_gx_core::Output,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.gx_store_after(output, cx);
+    }
+
     fn gx_store_after(&mut self, output: ghostex_gx_core::Output, cx: &mut gpui::Context<Self>) {
+        let cloud_boxes_changed = output.changes.cloud_boxes_changed;
         for effect in output.effects {
+            // Home gxserver's box registry is read when this computer's stream goes live and when
+            // a `cloudBoxesChanged` frame asks for it (`cloud_boxes.rs`).
+            if matches!(
+                &effect,
+                ghostex_gx_core::Effect::MachineLive { machine } if machine.is_local()
+            ) || matches!(effect, ghostex_gx_core::Effect::RefetchCloudBoxes)
+            {
+                self.gx_store_refresh_cloud_boxes(cx);
+            }
             match effect {
-                ghostex_gx_core::Effect::ResubscribePresentation { .. } => {
-                    self.gx_store_subscribe(true)
+                // A box machine's snapshot is asked of its own socket (`cloud_boxes.rs`).
+                ghostex_gx_core::Effect::ResubscribePresentation { machine, .. } => {
+                    match machine.remote_id() {
+                        Some(machine_id) => super::cloud_boxes::cloud_box_resubscribe(machine_id),
+                        None => self.gx_store_subscribe(true),
+                    }
                 }
                 effect @ (ghostex_gx_core::Effect::MachineLive { .. }
                 | ghostex_gx_core::Effect::RefetchSidebarHud { .. }
@@ -351,6 +381,9 @@ impl GhostexGpuiApp {
         self.gx_store_hud_store_changed(&output.changes, cx);
         self.gx_store.sidebar_list.note_changes(&output.changes);
         self.gx_store_update_sidebar_list(cx);
+        if cloud_boxes_changed {
+            self.gx_store_sync_cloud_boxes(cx);
+        }
         // A draft whose first message started its agentbox box leaves Chat View (gx-core's
         // `session_chat_view_unavailable`), so its terminal is attached as the rule flips.
         if let Some(session) = self.open_session.clone()
@@ -371,7 +404,8 @@ impl GhostexGpuiApp {
     /// Applies what changed since the last update and installs the list the shared renderer draws.
     pub(crate) fn gx_store_update_sidebar_list(&mut self, cx: &mut gpui::Context<Self>) {
         // The chats name the other session on a message between agents from this list.
-        crate::app::gx_chat::session_directory::publish(self.gx_store.core.presentation());
+        // The page has no machine tabs: it streams only its own computer.
+        crate::app::gx_chat::session_directory::publish(self.gx_store.core.presentation(), &[]);
         let now_ms = now_ms();
         let store = &mut self.gx_store;
         let ui = store.sidebar_ui.state().clone();
@@ -416,6 +450,7 @@ impl GhostexGpuiApp {
         self.install_native_sidebar_snapshot(Arc::new(snapshot), cx);
         let changes = std::mem::take(&mut self.gx_store.sidebar_list.last_changes);
         self.gx_store_unified_sidebar_changed(&changes, cx);
+        self.gx_store_open_arrived_drafts(cx);
         self.web_open_linked_session(cx);
         self.web_book_sidebar_deadline(cx);
         // A showing Quick Access republishes from the store it reads (`quick_access/host.rs`).

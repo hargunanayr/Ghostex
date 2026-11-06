@@ -17,6 +17,7 @@ use std::rc::Rc;
 /// SEE-ALSO: packages/settings-catalog/src/layout.rs (`GENERAL_GROUPS`), store.rs (`initial_tab`), rail.rs (`render_rail`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum SettingsTabId {
+    Updates,
     Chat,
     Sidebar,
     Terminal,
@@ -29,9 +30,11 @@ pub(crate) enum SettingsTabId {
     Extensions,
     OsIntegration,
     Remote,
+    Sync,
     Projects,
     Agents,
     Accounts,
+    Secrets,
     Actions,
     OpenTargets,
     Hotkeys,
@@ -45,6 +48,8 @@ pub(crate) enum SettingsTabId {
 /// The rail's tiers (CDXC:Settings 2026-10-29 above): a label above each run of pages.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum RailTier {
+    /// Updates, alone above the labelled tiers (CDXC:Updates 2026-11-05 in tabs/updates/mod.rs).
+    Top,
     /// The pages General split into, with Theme and Hotkeys: how the app looks and behaves.
     App,
     /// Agents, Accounts, Integrations, Remote, Projects and About.
@@ -56,6 +61,7 @@ pub(crate) enum RailTier {
 impl RailTier {
     pub(crate) fn title(self) -> &'static str {
         match self {
+            RailTier::Top => "",
             RailTier::App => "App",
             RailTier::Setup => "Setup",
             RailTier::More => "More",
@@ -68,7 +74,8 @@ impl SettingsTabId {
     /// (the catalog) at the rail's bottom with the pages that fold under it
     /// ([`Self::EXTENSIONS_GROUP`]). Pages the shell filters (OS Integration, Connectors, Debugging,
     /// the built-in extensions' pages) leave the rail while they are off.
-    pub(crate) const RAIL_ORDER: [SettingsTabId; 23] = [
+    pub(crate) const RAIL_ORDER: [SettingsTabId; 26] = [
+        SettingsTabId::Updates,
         SettingsTabId::Chat,
         SettingsTabId::Sidebar,
         SettingsTabId::Terminal,
@@ -76,15 +83,17 @@ impl SettingsTabId {
         SettingsTabId::Notifications,
         SettingsTabId::FilesLinks,
         SettingsTabId::PowerSleep,
+        SettingsTabId::VoiceAgent,
         SettingsTabId::Hotkeys,
         SettingsTabId::Agents,
         SettingsTabId::Accounts,
+        SettingsTabId::Secrets,
         SettingsTabId::Integrations,
         SettingsTabId::Remote,
+        SettingsTabId::Sync,
         SettingsTabId::Projects,
         SettingsTabId::About,
         SettingsTabId::Extensions,
-        SettingsTabId::VoiceAgent,
         SettingsTabId::Workspaces,
         SettingsTabId::CloudBoxes,
         SettingsTabId::Connectors,
@@ -99,8 +108,8 @@ impl SettingsTabId {
     /// CDXC:VoiceMode 2026-10-25 DECISION:
     /// User: "voice agent needs to be moved under extensions in the sidebar of the settings of the gpui app too". Voice agent is the group's first page now that the voice agent is a built-in extension (official_extensions.rs). Deep links (`initialTab: "voiceAgent"`, the voice panel's Open Settings, `ghostex settings open --tab voiceAgent`) open the group like any page in it.
     /// CDXC:VoiceMode 2026-10-25 WHY: unlike the group's other feature pages it stays in the rail while its extension is off, because the trimmed page still holds the xAI and OpenAI keys Dictate uses and the Dictation history (the voice agent entry has no `settingsPages`, so `built_in_extension_allows_page` keeps it).
-    pub(crate) const EXTENSIONS_GROUP: [SettingsTabId; 8] = [
-        SettingsTabId::VoiceAgent,
+    /// CDXC:VoiceMode 2026-11-05 DECISION: User (Q1269): "A new Voice page under APP. It holds Dictate, the Voice agent and the shared keys." The page left this group for the App tier, after Power & Sleep, and is titled Voice; its `voiceAgent` id is kept for deep links and `voice` opens it too. Supersedes the 2026-10-25 move under Extensions.
+    pub(crate) const EXTENSIONS_GROUP: [SettingsTabId; 7] = [
         SettingsTabId::Workspaces,
         SettingsTabId::CloudBoxes,
         SettingsTabId::Connectors,
@@ -118,6 +127,7 @@ impl SettingsTabId {
     /// The rail tier the page is listed under.
     pub(crate) fn tier(self) -> RailTier {
         match self {
+            SettingsTabId::Updates => RailTier::Top,
             SettingsTabId::Chat
             | SettingsTabId::Sidebar
             | SettingsTabId::Terminal
@@ -125,11 +135,14 @@ impl SettingsTabId {
             | SettingsTabId::Notifications
             | SettingsTabId::FilesLinks
             | SettingsTabId::PowerSleep
+            | SettingsTabId::VoiceAgent
             | SettingsTabId::Hotkeys => RailTier::App,
             SettingsTabId::Agents
             | SettingsTabId::Accounts
+            | SettingsTabId::Secrets
             | SettingsTabId::Integrations
             | SettingsTabId::Remote
+            | SettingsTabId::Sync
             | SettingsTabId::Projects
             | SettingsTabId::About => RailTier::Setup,
             _ => RailTier::More,
@@ -164,6 +177,7 @@ impl SettingsTabId {
     /// The id the settings file and the open message use (`SettingsModalTab`).
     pub(crate) fn id(self) -> &'static str {
         match self {
+            SettingsTabId::Updates => "updates",
             SettingsTabId::Chat => "chat",
             SettingsTabId::Sidebar => "sidebar",
             SettingsTabId::Terminal => "terminal",
@@ -176,9 +190,11 @@ impl SettingsTabId {
             SettingsTabId::Extensions => "extensions",
             SettingsTabId::OsIntegration => "osIntegration",
             SettingsTabId::Remote => "remote",
+            SettingsTabId::Sync => "sync",
             SettingsTabId::Projects => "projects",
             SettingsTabId::Agents => "agents",
             SettingsTabId::Accounts => "accounts",
+            SettingsTabId::Secrets => "secrets",
             SettingsTabId::Actions => "actions",
             SettingsTabId::OpenTargets => "openTargets",
             SettingsTabId::Hotkeys => "hotkeys",
@@ -195,27 +211,37 @@ impl SettingsTabId {
         if id == "settings" {
             return Some(SettingsTabId::Chat);
         }
+        if id == "interface" {
+            return Some(SettingsTabId::Theme);
+        }
+        if id == "voice" {
+            return Some(SettingsTabId::VoiceAgent);
+        }
         Self::RAIL_ORDER.into_iter().find(|tab| tab.id() == id)
     }
 
     /// The rail label.
     pub(crate) fn title(self) -> &'static str {
         match self {
+            SettingsTabId::Updates => "Updates",
             SettingsTabId::Chat => "Chat",
             SettingsTabId::Sidebar => "Sidebar & Sessions",
             SettingsTabId::Terminal => "Terminal",
             SettingsTabId::Notifications => "Notifications",
             SettingsTabId::FilesLinks => "Files & Links",
             SettingsTabId::PowerSleep => "Power & Sleep",
-            SettingsTabId::Theme => "Theme",
+            // CDXC:Settings 2026-10-31 DECISION: User: "let's also rename the theme page in settings to Interface". Only its name changed: its stored id stays `theme`, so saved navigation, `ghostex settings open --tab theme` and old deep links keep working, and `interface` opens it too.
+            SettingsTabId::Theme => "Interface",
             SettingsTabId::Integrations => "Integrations",
             SettingsTabId::CloudBoxes => "Cloud Boxes",
             SettingsTabId::Extensions => "Extensions",
             SettingsTabId::OsIntegration => "OS Integration",
             SettingsTabId::Remote => "Remote",
+            SettingsTabId::Sync => "Sync",
             SettingsTabId::Projects => "Projects",
             SettingsTabId::Agents => "Agents",
             SettingsTabId::Accounts => "Accounts",
+            SettingsTabId::Secrets => "Secrets",
             SettingsTabId::Actions => "Actions",
             SettingsTabId::OpenTargets => "Open In",
             SettingsTabId::Hotkeys => "Hotkeys",
@@ -223,13 +249,14 @@ impl SettingsTabId {
             SettingsTabId::About => "About",
             SettingsTabId::Workspaces => "Workspaces",
             SettingsTabId::Connectors => "Connectors",
-            SettingsTabId::VoiceAgent => "Voice agent",
+            SettingsTabId::VoiceAgent => "Voice",
         }
     }
 
     /// The rail icon (the Tabler icon `sidebar-pages.ts` (deleted 2026-10-01) draws).
     pub(crate) fn icon(self) -> &'static str {
         match self {
+            SettingsTabId::Updates => "modals/settings/circle-arrow-up.svg",
             SettingsTabId::Chat => "modals/settings/message-circle.svg",
             SettingsTabId::Sidebar => "modals/settings/layout-sidebar.svg",
             SettingsTabId::Terminal => "modals/settings/terminal-2.svg",
@@ -242,9 +269,11 @@ impl SettingsTabId {
             SettingsTabId::Extensions => "modals/settings/puzzle.svg",
             SettingsTabId::OsIntegration => "modals/settings/device-desktop.svg",
             SettingsTabId::Remote => "modals/settings/cloud.svg",
+            SettingsTabId::Sync => "modals/settings/refresh.svg",
             SettingsTabId::Projects => "modals/settings/folder-open.svg",
             SettingsTabId::Agents => "modals/settings/code-dots.svg",
             SettingsTabId::Accounts => "modals/settings/users.svg",
+            SettingsTabId::Secrets => "modals/settings/key.svg",
             SettingsTabId::Actions => "modals/settings/player-play.svg",
             SettingsTabId::OpenTargets => "modals/settings/external-link.svg",
             SettingsTabId::Hotkeys => "modals/settings/keyboard.svg",
@@ -281,6 +310,8 @@ pub(crate) struct SettingsOpenRequest {
     /// The agent (`claude`, `codex`) whose accounts the Accounts page opens on: an account
     /// toast's Open Accounts button (`GpuiAppToastAction::OpenAccounts`).
     pub(crate) initial_accounts_provider: Option<String>,
+    /// The saved account whose sign-in starts as the Accounts page opens.
+    pub(crate) initial_accounts_reconnect: Option<String>,
     /// The voice agent key field (`xai`, `openai`) Voice agent focuses on arrival: Dictate's Add
     /// key / Check key (`native_chat/dictation.rs` `open_voice_agent_key`).
     pub(crate) initial_voice_agent_key: Option<String>,
@@ -346,6 +377,8 @@ impl SettingsOpenRequest {
                 .filter(|id| !id.trim().is_empty()),
             initial_accounts_provider: optional_text(message, "initialAccountsProvider")
                 .filter(|provider| provider == "claude" || provider == "codex"),
+            initial_accounts_reconnect: optional_text(message, "initialAccountsReconnect")
+                .filter(|id| !id.trim().is_empty()),
             initial_voice_agent_key: optional_text(message, "initialVoiceAgentKey")
                 .filter(|provider| provider == "xai" || provider == "openai"),
             initial_custom_view_id: optional_text(message, "initialCustomViewId"),
@@ -474,6 +507,29 @@ mod tests {
         }
     }
 
+    /// CDXC:VoiceMode 2026-11-05: Voice sits in the App tier after Power & Sleep, and both its old
+    /// `voiceAgent` id and `voice` open it.
+    #[test]
+    fn voice_is_an_app_page_after_power_and_sleep() {
+        let order = SettingsTabId::RAIL_ORDER;
+        let position = |tab| order.iter().position(|t| *t == tab).unwrap();
+        assert_eq!(
+            position(SettingsTabId::VoiceAgent),
+            position(SettingsTabId::PowerSleep) + 1
+        );
+        assert_eq!(SettingsTabId::VoiceAgent.tier(), RailTier::App);
+        assert!(!SettingsTabId::VoiceAgent.in_extensions_group());
+        assert_eq!(SettingsTabId::VoiceAgent.title(), "Voice");
+        assert_eq!(
+            SettingsTabId::from_id("voiceAgent"),
+            Some(SettingsTabId::VoiceAgent)
+        );
+        assert_eq!(
+            SettingsTabId::from_id("voice"),
+            Some(SettingsTabId::VoiceAgent)
+        );
+    }
+
     /// CDXC:Settings 2026-10-27: About ends the everyday pages, then the Extensions page, then the
     /// pages that fold under it; the page keeps its `extensions` id for deep links.
     #[test]
@@ -494,7 +550,7 @@ mod tests {
         }
         assert_eq!(
             SettingsTabId::EXTENSIONS_GROUP[0],
-            SettingsTabId::VoiceAgent
+            SettingsTabId::Workspaces
         );
         assert_eq!(
             SettingsTabId::from_id("extensions"),

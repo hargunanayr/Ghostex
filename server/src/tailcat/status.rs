@@ -11,6 +11,7 @@ use super::supervisor::*;
 use super::types::*;
 
 pub fn read_tailcat_status_payload(
+    paths: &GxserverPaths,
     db: &Connection,
     runtime: &TailcatRuntime,
 ) -> TailcatStatusPayload {
@@ -20,7 +21,7 @@ pub fn read_tailcat_status_payload(
         .flatten()
         .map(|record| record.state)
         .unwrap_or_else(default_tailcat_state);
-    tailcat_status_payload_from_state(state, runtime)
+    tailcat_status_payload_from_state(paths, state, runtime)
 }
 
 pub fn read_tailcat_status_payload_for_paths(
@@ -28,16 +29,17 @@ pub fn read_tailcat_status_payload_for_paths(
     runtime: &TailcatRuntime,
 ) -> TailcatStatusPayload {
     match open_gxserver_database(paths) {
-        Ok(db) => read_tailcat_status_payload(&db, runtime),
-        Err(_) => tailcat_status_payload_from_state(default_tailcat_state(), runtime),
+        Ok(db) => read_tailcat_status_payload(paths, &db, runtime),
+        Err(_) => tailcat_status_payload_from_state(paths, default_tailcat_state(), runtime),
     }
 }
 
 fn tailcat_status_payload_from_state(
+    paths: &GxserverPaths,
     state: TailcatState,
     runtime: &TailcatRuntime,
 ) -> TailcatStatusPayload {
-    let binary_path = resolve_tailcat_binary();
+    let binary_path = resolve_host_tailcat_binary(paths);
     let binary_version = binary_path
         .as_ref()
         .and_then(|path| runtime.binary_version(path));
@@ -84,6 +86,21 @@ pub fn apply_tailcat_state_update(
     let record = repository.upsert_state(state)?;
     runtime.apply(paths, &record.state);
     Ok(record)
+}
+
+/// How long one `/api/remotePairingCode` ask keeps Easy Connect open to new phones.
+pub const TAILCAT_PAIRING_WINDOW_HOLD: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Lifts the allow-list while a pairing code is on screen (CDXC:RemotePairing 2026-10-25 in
+/// `supervisor.rs`); does nothing while the list is empty.
+pub fn hold_tailcat_pairing_window_open(paths: &GxserverPaths, runtime: &TailcatRuntime) {
+    let Ok(db) = open_gxserver_database(paths) else {
+        return;
+    };
+    let Ok(state) = read_tailcat_state_or_default(&TailcatRepository::new(&db)) else {
+        return;
+    };
+    runtime.hold_pairing_window_open(paths, &state, TAILCAT_PAIRING_WINDOW_HOLD);
 }
 
 /// Boot reconcile: restart the sidecar for a state that was left enabled.

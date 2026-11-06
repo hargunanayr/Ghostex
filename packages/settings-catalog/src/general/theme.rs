@@ -6,7 +6,7 @@ use crate::rows::{row, section, Section};
 pub(crate) fn theming() -> Section {
     section(
         "theming",
-        "Theme",
+        "Interface",
         vec![
             row("sidebarTheme", "Appearance", "Follow the system appearance by default, or choose Light or Dark.").options(SIDEBAR_THEME_SETTING_OPTIONS),
             row("darkThemePreset", "Dark mode colour", "The colour of the sidebar and window in dark mode: one of sixteen colour squares, or the + square for a custom colour.").options(DARK_THEME_PRESET_OPTIONS),
@@ -15,6 +15,17 @@ pub(crate) fn theming() -> Section {
             row("themeSidebarContrast", "Sidebar colourfulness", "How much of the theme colour shows in the sidebar, from Subtle (deeper, nearly neutral) through Vivid (lighter, more colourful) to Full, where dark mode shows the colour you picked itself. Colourfulness sets the sidebar and work area together, and how deep a custom colour is."),
             row("themeWorkAreaContrast", "Work area colourfulness", "How much of the theme colour shows in the work area (chat, terminals and views), from Subtle to Full. Colourfulness sets the sidebar and work area together."),
             row("customSidebarTitlebarLightBackgroundTintColor", "Custom light mode tint", "The custom light mode colour, chosen in the colour picker the + square opens."),
+            row("sessionChatFontFamily", "App font", "Pick one of the fonts installed on this computer for the whole app: sidebar, chat, menus, dialogs and Settings, then press Apply. App default keeps Ghostex's own fonts. Terminals and code use the Monospace font."),
+            row("terminalFontFamily", "Monospace font", "Font family for terminals, code in the Files view, diffs, code blocks and tool output in chat. Pick an installed monospace font, or type a Ghostty font-family name, then press Apply."),
+            // CDXC:Settings 2026-11-05 DECISION: User (issue #425): one Interface scale section with Scale and a Scale areas separately switch that reveals the Sidebar, Chat, Files and Terminal font size sliders (interface_scale.rs has the full decision).
+            row("interfaceScalePercent", "Scale (%)", "Scale the sidebar, every chat, files open in the Files view and the terminal text together, from 70% to 200%. The header, tabs, menus and dialogs keep their size. Cmd+= and Cmd+- (Ctrl on Windows and Linux) change it from anywhere, and Cmd+0 sets 100%. Default: 100%."),
+            row("interfaceScaleAreasSeparately", "Scale areas separately", "Give the sidebar, chat, Files and terminal text their own sizes instead of one Scale. Cmd+= and Cmd+- then change only the area you are in. Default: off, or on when you had already changed one of those sizes."),
+            row("agentManagerZoomPercent", "Sidebar zoom (%)", "Scale the sidebar, from 50% to 200%, when Scale areas separately is on."),
+            row("sessionChatZoomPercent", "Chat zoom (%)", "Scale every desktop chat, including messages and the prompt composer, from 70% to 200% in 5% steps, when Scale areas separately is on. Cmd+= and Cmd+- in a chat change it too, and Cmd+0 sets 100%. Default: 100%."),
+            row("filesZoomPercent", "Files zoom (%)", "Scale the text of a file open in the Files view (Markdown, text and code, with its line numbers) and the Changes diff, from 70% to 200% in 5% steps, when Scale areas separately is on. Cmd+= and Cmd+- (Ctrl on Windows and Linux) in an open file change it too, and Cmd+0 sets 100%. Default: 100%."),
+            row("terminalFontSize", "Terminal font size", "The terminal text size in points, when Scale areas separately is on. Cmd+= and Cmd+- in a terminal change it for that terminal only until it restarts. Default: 13."),
+            row("sessionChatTextStrengthPercent", "Text strength", "How strong agents' replies and your messages read in chat, on the computer and the phone. 0% is the standard colour; 100% is full white in dark mode and full black in light mode. Muted text, links, code blocks and status colours stay as they are."),
+            row("sessionChatMutedThinking", "Show thinking in grey", "Show the agent's thinking in grey and its replies in the full text colour, so the two are easy to tell apart."),
             row("sessionChatTheme", "Chat theme", "Follow the app theme by default, or override chat with Light, Dark, or System.").options(SESSION_CHAT_THEME_OPTIONS),
             row("terminalColorScheme", "Terminal theme", "Follow the app theme by default, or override terminals with Light, Dark, or System.").options(SESSION_CHAT_THEME_OPTIONS),
             row("terminalGhosttyLightTheme", "Terminal palette in light mode", "Uses the light theme set in Ghostex's terminal config, or GitHub Light when none is set.").options(&ghostty_themes_without_unmanaged()),
@@ -43,6 +54,7 @@ pub(crate) fn theming() -> Section {
             row("windowGlassWorkAreaTintLight", "Work area tint in light mode", "How much of the desktop the work area hides in light mode, set on its own so either area can be the darker one. Lower shows more of your desktop through it."),
             row("showActivePaneOutline", "Show active pane outline", "Show an outline around the currently focused pane."),
             row("workspaceActivePaneBorderColor", "Active pane outline colour", "Color of the outline around the currently focused pane."),
+            row("workAreaFrame", "Frame the work area", "Show the work area as a card inside the window, with a thin margin all around, a hairline border and a light shadow. Off keeps the work area edge to edge."),
         ],
     )
 }

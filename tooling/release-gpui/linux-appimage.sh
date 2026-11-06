@@ -15,6 +15,9 @@ release_gpui_require_command curl
 release_gpui_require_command node
 release_gpui_require_command zsyncmake
 release_gpui_require_command appstreamcli
+release_gpui_require_command patchelf
+release_gpui_require_command readelf
+release_gpui_require_command ldd
 release_gpui_prepare_output "$REPO_ROOT" "$OUTPUT"
 
 # CDXC:Release 2026-10-26 WHY:
@@ -76,6 +79,9 @@ APPDIR="$WORK/Ghostex.AppDir"
 mkdir -p "$APPDIR/opt" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/256x256/apps" \
 	"$APPDIR/usr/share/metainfo"
 cp -a "$PACKAGE_ROOT/opt/ghostex" "$APPDIR/opt/ghostex"
+# Libraries the app links that a clean host may lack (libxkbcommon-x11 on the
+# catalog's Ubuntu 22.04), beside the executables; see the script for the list.
+node "$SCRIPT_DIR/appimage-bundle-libraries.mjs" --payload "$APPDIR/opt/ghostex" --arch "$LINUX_ARCH"
 cp "$PACKAGE_ROOT/usr/share/icons/hicolor/256x256/apps/ghostex.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps/ghostex.png"
 cp "$PACKAGE_ROOT/usr/share/icons/hicolor/256x256/apps/ghostex.png" "$APPDIR/ghostex.png"
 ln -s ghostex.png "$APPDIR/.DirIcon"
@@ -88,7 +94,9 @@ sed -e 's|^Exec=.*|Exec=ghostex %U|' \
 printf 'X-AppImage-Version=%s\nX-AppImage-Homepage=%s\n' "$VERSION" "$APPIMAGE_HOMEPAGE" >>"$APPDIR/ghostex.desktop"
 cp "$APPDIR/ghostex.desktop" "$APPDIR/usr/share/applications/ghostex.desktop"
 # AppStream metadata: software centers and AppImage catalogs read the homepage,
-# description and release from it.
+# description and release from it. No vcs-browser URL: the AppStream 0.15
+# validator on the Ubuntu 22.04 build runner rejects that type as a warning,
+# and the bugtracker URL already leads to the repository.
 METAINFO="$APPDIR/usr/share/metainfo/$APPSTREAM_ID.metainfo.xml"
 cat >"$METAINFO" <<METAINFO_XML
 <?xml version="1.0" encoding="UTF-8"?>
@@ -107,7 +115,6 @@ cat >"$METAINFO" <<METAINFO_XML
   <launchable type="desktop-id">ghostex.desktop</launchable>
   <url type="homepage">$APPIMAGE_HOMEPAGE</url>
   <url type="bugtracker">https://github.com/maddada/Ghostex/issues</url>
-  <url type="vcs-browser">https://github.com/maddada/Ghostex</url>
   <categories>
     <category>Development</category>
   </categories>
@@ -225,8 +232,9 @@ MEMBERS="$(unsquashfs -o "$OFFSET" -lc "$APPIMAGE" | sed 's|^squashfs-root||')"
 for required in /AppRun /.ghostex-appimage /ghostex.desktop /ghostex.png /.DirIcon \
 	"/usr/share/metainfo/$APPSTREAM_ID.metainfo.xml" \
 	/opt/ghostex/Ghostex /opt/ghostex/ghostex-gpui-runtime /opt/ghostex/gxserver/bin/gxserver \
-	/opt/ghostex/gxserver/bin/ghostex /opt/ghostex/resources/on-demand-resources.json \
-	/opt/ghostex/gxserver/skills/ghostex-cli/SKILL.md; do
+	/opt/ghostex/gxserver/bin/ghostex /opt/ghostex/gxserver/bin/tailcat \
+	/opt/ghostex/resources/on-demand-resources.json \
+	/opt/ghostex/gxserver/skills/ghostex-cli/SKILL.md /opt/ghostex/libxkbcommon-x11.so.0; do
 	grep -qxF "$required" <<<"$MEMBERS" || {
 		echo "AppImage is missing $required" >&2
 		exit 1

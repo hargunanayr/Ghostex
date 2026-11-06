@@ -70,6 +70,7 @@ pub(crate) enum GpuiAppModalKind {
     AddSessionLink,
     /// "Paste potentially unsafe text?" for terminal paste protection (terminal_input/paste_and_shortcuts.rs).
     TerminalPasteConfirm,
+    CloseSessionsConfirm,
 }
 
 impl GpuiAppModalKind {
@@ -121,6 +122,7 @@ impl GpuiAppModalKind {
             "workLinkPicker" => Some(Self::WorkLinkPicker),
             "addSessionLink" => Some(Self::AddSessionLink),
             "terminalPasteConfirm" => Some(Self::TerminalPasteConfirm),
+            "closeSessionsConfirm" => Some(Self::CloseSessionsConfirm),
             _ => None,
         }
     }
@@ -171,6 +173,7 @@ impl GpuiAppModalKind {
             Self::WorkLinkPicker => "workLinkPicker",
             Self::AddSessionLink => "addSessionLink",
             Self::TerminalPasteConfirm => "terminalPasteConfirm",
+            Self::CloseSessionsConfirm => "closeSessionsConfirm",
         }
     }
 
@@ -218,6 +221,7 @@ impl GpuiAppModalKind {
             Self::WorkLinkPicker => "Ghostex Link Session",
             Self::AddSessionLink => "Ghostex Add a Link",
             Self::TerminalPasteConfirm => "Ghostex Paste",
+            Self::CloseSessionsConfirm => "Ghostex Close",
         }
     }
 
@@ -412,6 +416,10 @@ impl GpuiAppModalKind {
             Self::Extension(id) => extension_modal_window_size(id),
             // `TERMINAL_PASTE_CONFIRM_MODAL_WIDTH` / `_INITIAL_HEIGHT` in window/terminal_paste_confirm_modal.rs.
             Self::TerminalPasteConfirm => size(px(440.0), px(180.0)),
+            Self::CloseSessionsConfirm => size(
+                px(crate::app::window::CLOSE_SESSIONS_CONFIRM_MODAL_WIDTH),
+                px(crate::app::window::CLOSE_SESSIONS_CONFIRM_MODAL_INITIAL_HEIGHT),
+            ),
             Self::RemoteGxserverInstall => size(
                 px(APP_MODAL_HOST_REMOTE_GXSERVER_INSTALL_WINDOW_WIDTH),
                 px(APP_MODAL_HOST_REMOTE_GXSERVER_INSTALL_WINDOW_HEIGHT),
@@ -526,6 +534,7 @@ impl GpuiAppModalKind {
             | Self::RemoteSetup
             | Self::Feedback
             | Self::TerminalPasteConfirm
+            | Self::CloseSessionsConfirm
             | Self::Onboarding => serde_json::json!({
                 "modal": self.modal_id(),
                 "type": "open",

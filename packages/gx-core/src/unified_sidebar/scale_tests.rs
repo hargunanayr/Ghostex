@@ -67,6 +67,8 @@ fn group(project: &str, origin: &str, sessions: Vec<SessionRow>) -> GroupView {
                 .collect(),
             remote_machine: None,
             is_stale: false,
+            machine_names: Vec::new(),
+            action_target: None,
         }),
         collection_color: None,
         collection_id: None,
@@ -262,6 +264,7 @@ fn dragging_a_header_saves_the_whole_order_so_hidden_projects_keep_their_place()
         key: key.to_string(),
         label: key.to_string(),
         detail: None,
+        ..UnifiedFilterOption::default()
     };
     let options = [option("a"), option("b"), option("c"), option("d")];
     // `gone` is a saved repository no machine lists right now, `b` is filtered off screen.
@@ -398,6 +401,8 @@ fn choice_machines() -> Vec<UnifiedChoiceMachineInput> {
         path: format!("/{id}"),
         git_remote_origin_url: Some(origin.to_string()),
         worktree_parent_path: parent.map(str::to_string),
+        has_sessions: id == "acme",
+        last_activity_ms: (id == "acme").then_some(500),
     };
     vec![
         UnifiedChoiceMachineInput {
@@ -424,7 +429,7 @@ fn choice_machines() -> Vec<UnifiedChoiceMachineInput> {
 
 #[test]
 fn a_repository_on_several_machines_is_one_row_with_a_chip_per_machine() {
-    let choices = unified_project_choices(&choice_machines(), &BTreeMap::new(), "local");
+    let choices = unified_project_choices(&choice_machines(), &BTreeMap::new(), &[], "local");
     let labels: Vec<&str> = choices.iter().map(|choice| choice.label.as_str()).collect();
     assert_eq!(labels, ["acme", "bill", "zebra"]);
     let acme = &choices[0];
@@ -448,42 +453,146 @@ fn a_repository_on_several_machines_is_one_row_with_a_chip_per_machine() {
 
 #[test]
 fn a_row_starts_on_the_machine_last_used_then_the_current_then_this_computer() {
-    let machines = choice_machines();
-    let start_of = |last: &BTreeMap<String, String>, current: &str| {
-        let choices = unified_project_choices(&machines, last, current);
-        choices[0]
-            .selected_machine()
-            .map(|chip| chip.machine_id.clone())
-            .unwrap()
-    };
+    let mut machines = choice_machines();
+    machines[1].connected = true;
+    let start_of =
+        |machines: &[UnifiedChoiceMachineInput], last: &BTreeMap<String, String>, current: &str| {
+            let choices = unified_project_choices(machines, last, &[], current);
+            choices[0]
+                .selected_machine()
+                .map(|chip| chip.machine_id.clone())
+                .unwrap()
+        };
     let mut last = BTreeMap::new();
-    assert_eq!(start_of(&last, "local"), "local");
-    assert_eq!(start_of(&last, "studio"), "studio");
-    assert_eq!(start_of(&last, "elsewhere"), "local");
+    assert_eq!(start_of(&machines, &last, "local"), "local");
+    assert_eq!(start_of(&machines, &last, "studio"), "studio");
+    assert_eq!(start_of(&machines, &last, "elsewhere"), "local");
     last.insert("github.com/o/acme".to_string(), "studio".to_string());
-    assert_eq!(start_of(&last, "local"), "studio");
+    assert_eq!(start_of(&machines, &last, "local"), "studio");
     // A last machine that no longer has it falls through.
     last.insert("github.com/o/acme".to_string(), "gone".to_string());
-    assert_eq!(start_of(&last, "local"), "local");
-    // Only one machine has it: that one, wherever the draft is.
-    let choices = unified_project_choices(&machines, &BTreeMap::new(), "local");
+    assert_eq!(start_of(&machines, &last, "local"), "local");
+    // A machine that isn't connected is skipped while another one has the project.
+    machines[1].connected = false;
+    last.insert("github.com/o/acme".to_string(), "studio".to_string());
+    assert_eq!(start_of(&machines, &last, "studio"), "local");
+    // Only one machine has it: that one, connected or not, wherever the draft is.
+    let choices = unified_project_choices(&machines, &BTreeMap::new(), &[], "local");
     assert_eq!(choices[1].selected_machine().unwrap().machine_id, "studio");
 }
 
 #[test]
 fn arrows_move_along_the_chips_and_stop_at_the_ends() {
-    let choices = unified_project_choices(&choice_machines(), &BTreeMap::new(), "local");
+    let mut machines = choice_machines();
+    machines[1].connected = true;
+    let choices = unified_project_choices(&machines, &BTreeMap::new(), &[], "local");
     let mut acme = choices[0].clone();
     assert_eq!(move_project_choice_machine(&acme, false), 0);
     assert_eq!(move_project_choice_machine(&acme, true), 1);
     acme.selected = 1;
     assert_eq!(move_project_choice_machine(&acme, true), 1);
     assert_eq!(move_project_choice_machine(&acme, false), 0);
+    // A machine that isn't connected is stepped over.
+    acme.machines[1].connected = false;
+    acme.selected = 0;
+    assert_eq!(move_project_choice_machine(&acme, true), 0);
+}
+
+#[test]
+fn recent_projects_come_first_then_the_rest_a_to_z() {
+    // Session activity first (acme), then the picker's own starts (zebra); a start that is no
+    // longer listed is skipped.
+    let recent = ["github.com/o/zebra".to_string(), "gone/repo".to_string()];
+    let choices = unified_project_choices(&choice_machines(), &BTreeMap::new(), &recent, "local");
+    let rows: Vec<(&str, bool, bool)> = choices
+        .iter()
+        .map(|choice| (choice.label.as_str(), choice.recent, choice.has_sessions))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("acme", true, true),
+            ("zebra", true, false),
+            ("bill", false, false)
+        ]
+    );
+}
+
+#[test]
+fn recent_holds_the_newest_active_projects_up_to_its_cap() {
+    let machine = |projects: Vec<ProjectChoiceInput>| UnifiedChoiceMachineInput {
+        machine: MachineId::Local,
+        label: "Local".to_string(),
+        connected: true,
+        projects,
+    };
+    let project = |id: &str, at: Option<i64>| ProjectChoiceInput {
+        project_id: id.to_string(),
+        title: id.to_string(),
+        path: format!("/{id}"),
+        git_remote_origin_url: Some(format!("https://github.com/o/{id}")),
+        worktree_parent_path: None,
+        has_sessions: at.is_some(),
+        last_activity_ms: at,
+    };
+    let projects = vec![
+        project("a", Some(1)),
+        project("b", Some(7)),
+        project("c", Some(3)),
+        project("d", Some(9)),
+        project("e", Some(5)),
+        project("f", Some(2)),
+        project("g", None),
+    ];
+    let choices = unified_project_choices(&[machine(projects)], &BTreeMap::new(), &[], "local");
+    let labels: Vec<(&str, bool)> = choices
+        .iter()
+        .map(|choice| (choice.label.as_str(), choice.recent))
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            ("d", true),
+            ("b", true),
+            ("e", true),
+            ("c", true),
+            ("f", true),
+            ("a", false),
+            ("g", false)
+        ]
+    );
+}
+
+#[test]
+fn a_started_session_moves_its_repository_to_the_top_of_recent_and_remembers_the_machine() {
+    let mut saved = UnifiedSavedState::default();
+    for repo in ["a", "b", "c", "d", "e", "f"] {
+        saved.remember_new_session(repo, "local");
+    }
+    saved.remember_new_session("c", "studio");
+    assert_eq!(saved.recent_repos, ["c", "f", "e", "d", "b"]);
+    assert_eq!(saved.last_machines["c"], "studio");
+}
+
+#[test]
+fn a_new_session_outside_the_filter_joins_only_the_kinds_that_are_picked() {
+    let filter = UnifiedFilter {
+        repos: ["r1".to_string()].into(),
+        query: "typed".to_string(),
+        ..UnifiedFilter::default()
+    };
+    let widened = widen_filter_for_new_session(&filter, "r2", "studio", Some("studio|s"));
+    assert_eq!(widened.repos, ["r1".to_string(), "r2".to_string()].into());
+    assert!(widened.machines.is_empty());
+    assert!(widened.spaces.is_empty());
+    assert_eq!(widened.query, "typed");
+    let nothing = widen_filter_for_new_session(&UnifiedFilter::default(), "r2", "local", None);
+    assert!(nothing.keeps_everything());
 }
 
 #[test]
 fn the_project_search_matches_names_and_machines() {
-    let choices = unified_project_choices(&choice_machines(), &BTreeMap::new(), "local");
+    let choices = unified_project_choices(&choice_machines(), &BTreeMap::new(), &[], "local");
     let found = |query: &str| -> Vec<String> {
         filter_project_choices(&choices, query)
             .into_iter()
@@ -498,44 +607,74 @@ fn the_project_search_matches_names_and_machines() {
 
 #[test]
 fn new_session_aims_at_the_filtered_repository_without_activating_anything() {
-    let choices = unified_project_choices(&choice_machines(), &BTreeMap::new(), "local");
+    let choices = unified_project_choices(&choice_machines(), &BTreeMap::new(), &[], "local");
     let filter = |repo: &[&str]| UnifiedFilter {
         repos: repo.iter().map(|key| key.to_string()).collect(),
         ..UnifiedFilter::default()
     };
-    // Nothing or several filtered: the active project.
+    let at = |repo: &str, machine: &str, project: &str| {
+        Some(UnifiedNewSessionTarget {
+            repo_key: repo.to_string(),
+            machine_id: machine.to_string(),
+            project_id: project.to_string(),
+        })
+    };
+    let active = |machine_id, project_id| {
+        let repo_key = match project_id {
+            "zebra" => "github.com/o/zebra",
+            _ => "github.com/o/acme",
+        };
+        Some(ActiveProject {
+            repo_key,
+            machine_id,
+            project_id,
+        })
+    };
+    // Nothing or several filtered: the open project, on its machine.
     assert_eq!(
-        unified_new_session_target(&filter(&[]), &choices, Some("zebra")),
-        None
+        unified_new_session_target(&filter(&[]), &choices, active("local", "zebra")),
+        at("github.com/o/zebra", "local", "zebra")
     );
     assert_eq!(
         unified_new_session_target(
             &filter(&["github.com/o/acme", "github.com/o/zebra"]),
             &choices,
-            Some("zebra")
+            active("studio", "racme")
         ),
-        None
+        at("github.com/o/acme", "studio", "racme")
     );
-    // Already in that repository, on any machine: stay.
+    // Already in that repository, on any machine: stay there.
     assert_eq!(
-        unified_new_session_target(&filter(&["github.com/o/acme"]), &choices, Some("racme")),
-        None
+        unified_new_session_target(
+            &filter(&["github.com/o/acme"]),
+            &choices,
+            active("studio", "racme")
+        ),
+        at("github.com/o/acme", "studio", "racme")
     );
     // Elsewhere: the row's own start.
     assert_eq!(
-        unified_new_session_target(&filter(&["github.com/o/acme"]), &choices, Some("zebra")),
-        Some(UnifiedNewSessionTarget {
-            machine_id: "local".to_string(),
-            project_id: "acme".to_string(),
-        })
+        unified_new_session_target(
+            &filter(&["github.com/o/acme"]),
+            &choices,
+            active("local", "zebra")
+        ),
+        at("github.com/o/acme", "local", "acme")
     );
     // A repository only another machine has.
     assert_eq!(
         unified_new_session_target(&filter(&["github.com/o/bill"]), &choices, None),
-        Some(UnifiedNewSessionTarget {
-            machine_id: "studio".to_string(),
-            project_id: "rbill-wt".to_string(),
-        })
+        at("github.com/o/bill", "studio", "rbill-wt")
+    );
+    // A worktree you have open is "here", though the row points at the main checkout.
+    assert_eq!(
+        unified_new_session_target(&filter(&[]), &choices, active("local", "acme-wt")),
+        at("github.com/o/acme", "local", "acme-wt")
+    );
+    // Nothing open and nothing filtered: the list's first project.
+    assert_eq!(
+        unified_new_session_target(&filter(&[]), &choices, None),
+        at("github.com/o/acme", "local", "acme")
     );
 }
 

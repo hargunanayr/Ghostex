@@ -229,6 +229,16 @@ impl SidebarList {
         self.model.close_project_successor_session_id(group_id)
     }
 
+    /// The same when `closing_too` are going with it.
+    pub(crate) fn close_projects_successor_session_id(
+        &self,
+        group_id: &str,
+        closing_too: &[String],
+    ) -> Option<String> {
+        self.model
+            .close_projects_successor_session_id(group_id, closing_too)
+    }
+
     /// Folds what one pump changed into what the next update must apply.
     pub(super) fn note_changes(&mut self, changes: &ChangeSummary) {
         self.changes.merge(changes.clone());
@@ -427,7 +437,10 @@ impl GhostexGpuiApp {
     pub(crate) fn gx_store_update_sidebar_list(&mut self, cx: &mut gpui::Context<Self>) {
         self.gx_store_publish_if_focus_moved(cx);
         // The chats name the other session on a message between agents from this list.
-        crate::app::gx_chat::session_directory::publish(self.gx_store.core.presentation());
+        crate::app::gx_chat::session_directory::publish(
+            self.gx_store.core.presentation(),
+            self.gx_store.remote.tabs(),
+        );
         let now_ms = now_ms();
         let machine = self.gx_store.core.presentation().machine(&MachineId::Local);
         let loaded = machine.is_some_and(|machine| machine.loaded().is_some());
@@ -608,6 +621,8 @@ impl GhostexGpuiApp {
         // here once through `gx_store_sidebar_state_changed` when it changes something, and that
         // pass finds the request already taken and does nothing.
         self.gx_store_replay_held_sidebar_reveal(cx);
+        // A new session in Drafts opens it; this may rebuild the list, re-entering here once.
+        self.gx_store_open_arrived_drafts(cx);
         let carry_moved = self
             .gx_store
             .sidebar_list

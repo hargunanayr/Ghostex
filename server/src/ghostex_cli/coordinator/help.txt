@@ -12,8 +12,8 @@ USAGE
   ghostex coordinator status [--coordinator <ref>] [--all] [--json]
   ghostex coordinator start-thread --title <title> (--task <text> | --body-file <path>)
                               [--agent <agent-id> [--allow-hidden]] [--model <m>] [--effort <e>]
-                              [--worktree [--base-branch <branch>]] [--project-id <id>]
-                              [--coordinator <ref>] [--json]
+                              [--account <number|email>] [--worktree [--base-branch <branch>]]
+                              [--project-id <id>] [--computer <name>] [--coordinator <ref>] [--json]
   ghostex coordinator link <session-ref> [--task <text>] [--coordinator <ref>]
   ghostex coordinator unlink <thread-ref> [--coordinator <ref>] [--json]
   ghostex coordinator rename-self "<title>" [--json]
@@ -22,6 +22,15 @@ USAGE
   ghostex coordinator reopen <thread-ref> [--json]
   ghostex coordinator sleep-inactive-threads [<coordinator-ref>] [--coordinator <ref>] [--json]
   ghostex coordinator acknowledge-threads [<coordinator-ref>] [--coordinator <ref>] [--json]
+  ghostex coordinator board [--all] [--json] [--coordinator <ref>]
+  ghostex coordinator board add "<title>" [--group <group>] [--note "<line>"] [--link <url|path>]
+                              [--release <name>] [--answers "Yes,No" [--recommended Yes]]
+                              [--untested] [--json]
+  ghostex coordinator board move <B7|thread-ref> <group> [--note "<line>"] [--json]
+  ghostex coordinator board note <B7|thread-ref> "<line>" [--untested | --tested] [--json]
+  ghostex coordinator board done <B7|thread-ref> [--keep-open] [--json]
+  ghostex coordinator board drop <B7|thread-ref> [--json]
+  ghostex coordinator board restore <B7|thread-ref> [--json]
   ghostex coordinator remember <note> [--coordinator <ref>]
   ghostex coordinator forget <number> [--coordinator <ref>]
   ghostex coordinator set-goal <text> [--coordinator <ref>]
@@ -40,8 +49,17 @@ WHAT A COORDINATOR IS
   the sidebar. When a thread finishes a turn, Ghostex forwards its final message
   to the coordinator as a "Message from another agent" (first line
   "Ghostex thread report: ...", sender block last); when a thread waits on a question or an
-  approval, the coordinator is told what it asks. The coordinator never has to
-  poll. Its role is the ghostex-orchestrator skill: Ghostex installs it for the
+  approval, the coordinator is told what it asks. When a working thread shows no
+  new output (no transcript row, no screen change) for 8 minutes, Ghostex nudges
+  the thread and tells the coordinator, again every 8 minutes until it moves; the
+  coordinator heals it (interrupt and "carry on", or reload). 8 minutes after the
+  nudge the user sees the thread as not moving (a red dot, a notification and a
+  sound); any other agent session gets that after 8 minutes. A thread that ended
+  its turn waiting on a background job (job notifications it never took, or a job
+  that no longer runs) is nudged and reported the same way after 10 minutes
+  without a new turn. `coordinator status`
+  shows when each working thread started and last showed output. The coordinator
+  never has to poll. Its role is the ghostex-orchestrator skill: Ghostex installs it for the
   coordinator's agent, and its first message always starts with "Read and
   adhere to this skill: /ghostex-orchestrator" ($ghostex-orchestrator for agents
   other than Claude Code and Copilot). `ghostex coordinator guide` prints the
@@ -53,15 +71,15 @@ CREATE
   --agent takes an id from `ghostex agents types`; it must be a Claude, Codex,
   ZCode, Cursor, Grok, Copilot, Antigravity, Pi, OMP or OpenCode agent, and
   defaults to the first configured one, preferring Claude. --model picks its model (a value from
-  the agent's model list, such as sonnet or opus[1m]) for Claude, Codex, Pi, ZCode
-  and Antigravity; a Claude coordinator defaults to Opus 5.5 (opus[1m]), every
-  other one to its configured model. --effort defaults to high for Claude, Codex
-  and Antigravity; a ZCode coordinator takes no effort, and the
-  other agents keep their own unless you pass one. --goal is one line the
+  the agent's model list, such as sonnet or opus[1m]); a Claude coordinator defaults to Opus 5.5
+  (opus[1m]), every other one to its configured model. --effort defaults to high for Claude, Codex
+  and Antigravity; Cursor and ZCode coordinators take no effort, an OpenCode coordinator's --model
+  is provider/model (such as openai/gpt-6.1-terra) and its --effort one of that model's variants,
+  set before its first message, and the other agents keep their own unless you pass one. --goal is one line the
   coordinator works toward. --task follows the skill line in its first message.
   options lists the agents a coordinator can run on, with each one's models,
-  the model it starts on, the efforts it offers (Medium, High and XHigh, or the agent's
-  levels from Medium up to its highest below Max), and the skill line its first message starts with.
+  the model it starts on, the efforts it offers (Low, Medium, High and XHigh, or the agent's
+  levels from Low up to its highest below Max), and the skill line its first message starts with.
 
 PROMOTE
   promote makes a session that already exists (of an agent create accepts) an
@@ -88,8 +106,12 @@ THREADS
   itself. The agent defaults to the coordinator's own agent; an --agent turned off
   in Settings > Agents is refused unless --allow-hidden is passed. --worktree gives the
   thread its own git worktree and branch (from --base-branch, or the default
-  branch). --model and --effort apply to this thread only (Claude, Codex, Pi, Empryo
-  and Antigravity CLI; a ZCode thread keeps its configured model).
+  branch). --model and --effort apply to this thread only (Claude, Codex, Pi, OMP,
+  Copilot, Grok Build, Hermes Agent, Empryo and Antigravity CLI; Cursor and Gemini take
+  --model only, and an OpenCode, ZCode or DeepSeek Harness thread keeps its configured model).
+  --account starts a Claude or Codex thread on that saved account (its number or email, as
+  `ghostex accounts` lists them) instead of the Account for new sessions rule; an account that
+  needs signing in or is turned off is refused, with the accounts that would work.
   start-thread then waits up to a minute for the thread's transcript to show
   the brief and answers `started`, or `pending: <reason>` (still starting, or
   its screen shows a question only a person can answer). A brief whose send
@@ -97,6 +119,16 @@ THREADS
   the thread has the work. Do not resend a pending brief: if it never
   arrives, Ghostex sends the coordinator "Ghostex thread report: your message
   did not reach it.", and does the same for a follow-up that never arrives.
+  --computer <name> starts the thread on another computer this one is
+  connected to (`ghostex computers` lists them): in its project with the
+  coordinator's project name unless --project-id names one of its projects,
+  with its agents and models. It sits under the coordinator in the sidebar,
+  and its turn-end and waiting reports arrive like a local thread's, with the
+  computer's name after its title. Its ref names that computer, so agents
+  send, read-session-chat, resolve, reopen and unlink take it unchanged.
+  While the computer is not connected its reports wait and status lists it
+  as on a computer that isn't connected; resolve and unlink still work then,
+  changing only the link here and leaving its session there as it is.
   link adopts a session that already exists as a thread. unlink does the
   opposite: the session stops being a thread and becomes an ordinary session
   of its project, shown as its own sidebar row, with no more thread reports to
@@ -132,6 +164,44 @@ THREADS
   blue dot clears, while a thread waiting on a question or approval keeps its
   dot. Opening the coordinator in the app leaves them alone; a finished thread
   stays under Needs you until you open it.
+
+BOARD
+  The board is the Board pill above the coordinator's chat box: its lines of
+  work grouped by who has the ball. Backlog, To do (nobody is on it yet:
+  parked, up next or held for a release), Needs you, Blocked, Moving, Done
+  (today only), and last Removed. It stays light: only open work and today's
+  Done; a thread idle for 3 days leaves it unless it was moved there by hand.
+  Threads place themselves: working is Moving, waiting on a question or
+  approval is Needs you, asleep or finished is To do (parked), resolved today
+  is Done. A finished thread's open PR places it too: CI failing or changes
+  asked is Blocked, CI running is Moving, green or approved is Needs you.
+  Only an open PR the thread opened, reported or has on its branch counts,
+  or one linked to it in the last day.
+  Open questions in the coordinator's chat join Needs you by themselves.
+  board prints the board with every row's id (Done, Backlog and Removed with
+  --all). add puts something that is not a thread on it, as B<number>
+  (never reused): --group is todo (the default; later works too), parked,
+  next, held, needs-you, blocked, moving, done or backlog (ideas works
+  too); --release <name>
+  holds it for that release (To do, held); --link names a URL or file it
+  opens, and a GitHub PR link shows the PR's checks. --answers gives an
+  item that asks the user something its one-click answers (--recommended
+  marks one); a click sends you "B7: <answer>" and moves the item to Done.
+  A Needs you item whose title or note names a question you asked in the
+  chat (Q12) moves to Done by itself once the user answers Q12 (its form, an
+  answer link, a page, or "Q12: yes" in the chat) or you withdraw it. A task
+  for the user that names no question stays until you run done. A card
+  shows --note when it has no links. In the user's messages, [title](board:B7) names item B7, and
+  a thread's card names its session ref, as the + mention does. move puts an item in
+  another group, or pins a thread to one its state cannot tell (Blocked on a
+  token, Needs you for a test only the user can do); a pin gives way while
+  the thread works or waits, and `move <thread-ref> auto` takes it off. note
+  replaces an item's or pin's line, and --untested / --tested tags it. done
+  marks an item done today, and resolves a thread like resolve. drop moves an
+  item or a thread to Removed, as the two-click x on its row does; restore
+  puts it back. Removing never closes or resolves a thread, and one that
+  works or waits on the user again comes back by itself. Removed rows are
+  deleted after 7 days.
 
 MEMORY AND INSTRUCTIONS
   remember saves a one-line note (a preference, a decision, a pitfall); every

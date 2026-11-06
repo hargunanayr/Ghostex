@@ -61,8 +61,12 @@ impl GhostexGpuiApp {
         };
         // Every local row drags: a drop on an Agents pane splits it (session_pane_placement.rs),
         // and the reorder drop line still shows only when the sort mode allows a reorder.
-        let can_drag =
-            !session.is_browser() && !group.is_stale && group.remote_machine_context.is_none();
+        // Another machine's session in a merged project (`machineName`) has no place in this
+        // computer's groups to move to.
+        let can_drag = !session.is_browser()
+            && !group.is_stale
+            && group.remote_machine_context.is_none()
+            && session.details.get("machineName").is_none();
         let selected = session
             .details
             .get("isMultiSelected")
@@ -89,6 +93,8 @@ impl GhostexGpuiApp {
         // A folded coordinator carries the active fill for the focused thread it hides.
         let highlighted = focused || super::threads::coordinator_holds_active(session);
         let stale = group.is_stale && !session.is_browser();
+        // A coordinator's thread drawn here from another computer (`computerName`, threads.rs).
+        let borrowed_thread = session.details.get("computerName").is_some();
         let sleeping = session.lifecycle_state.as_deref() == Some("sleeping");
         // CDXC:SessionSleep 2026-09-29 DECISION: User (issue 177): by default a sleeping row dims only its last-active time; Advanced > Dim sleeping sessions fades the whole row, and hovering it brings the row back to full strength so its hover buttons stay readable.
         let dim_sleeping = sleeping
@@ -125,6 +131,17 @@ impl GhostexGpuiApp {
             Some(lines) => format!("{tooltip}\n\n{lines}"),
             None => tooltip,
         };
+        // The computer badge draws a short name; the tooltip says it in full.
+        let tooltip = match session
+            .details
+            .get("computerName")
+            .or_else(|| session.details.get("machineName"))
+            .and_then(Value::as_str)
+            .filter(|name| !name.trim().is_empty())
+        {
+            Some(name) => format!("{tooltip}\nOn {}", name.trim()),
+            None => tooltip,
+        };
         // CDXC:Tooltips 2026-10-29 DECISION: User: "please let me disable the tooltip for sessions in the sidebar with a toggle (advanced setting)". `showSidebarSessionTooltips` (on unless saved off) gates only this title tooltip; this one row renderer draws every sidebar session row (project lists, a coordinator's thread rows, the peek), and the Running Agents panel has no session tooltip. Chip, badge, hover-button and project-row tooltips stay.
         let session_tooltips =
             hud["settings"]["showSidebarSessionTooltips"].as_bool() != Some(false);
@@ -135,7 +152,8 @@ impl GhostexGpuiApp {
             .unwrap_or(0)
             > 0;
         let question_fill = super::status::pending_question_fill(&hud["settings"], question);
-        let failed = session.model_selection_failed || session.program_status_failed;
+        let failed =
+            session.model_selection_failed || session.program_status_failed || session.stuck;
         // The red approval dot wins over every other status (CDXC:SessionStatus 2026-10-27 in status.rs).
         let approval = session.awaiting_approval;
         let folded_dots = (!failed && !approval)
@@ -222,11 +240,13 @@ impl GhostexGpuiApp {
                 // CDXC:Sidebar 2026-10-29 DECISION: User: "please swap the order of these 2 things (the threads one for orchestrator with the link tag)". The links badge comes before a coordinator's workers badge; the phone's SessionRow.tsx follows.
                 .when(!buttons_shown, |row| row.children(self.render_native_session_links_badge(session, appearance)))
                 .when(!buttons_shown, |row| row.children(super::threads::coordinator_badge(session, appearance)))
+                .when(!buttons_shown, |row| row.children(super::threads::computer_badge(session, appearance)))
                 .when(!buttons_shown, |row| row.children(self.render_voice_call_badge(&session.session_id, appearance)))
                 .when(!buttons_shown, |row| row.children(super::agentbox::agentbox_badge(session, appearance, tooltip_span, self.native_sidebar.pointer_inside && self.native_sidebar.menu.is_none() && !cx.has_active_drag())))
-                .when(!buttons_shown && folded_dots.is_none() && !question && !approval, |row| row.children(super::status::activity_indicator(&session.activity, session.has_background_work, session.model_selection_failed || session.program_status_failed, scale)))
+                .when(!buttons_shown, |row| row.children(super::cloud_box::cloud_box_badge(session, appearance, tooltip_span, self.native_sidebar.pointer_inside && self.native_sidebar.menu.is_none() && !cx.has_active_drag())))
+                .when(!buttons_shown && folded_dots.is_none() && !question && !approval, |row| row.children(super::status::activity_indicator(&session.activity, session.has_background_work, failed, scale)))
                 // CDXC:SessionStatus 2026-09-13 DECISION: User: hide Last Active while the question dot is shown so they do not overlap, including when the session is not working.
-                .when(!buttons_shown && folded_dots.is_none() && !question && !approval && !session.model_selection_failed && !session.program_status_failed && (timer.is_some() || (show_time && session.activity != "working" && session.activity != "attention" && !session.has_background_work)), |row| row.child(div().text_size(px(13.55 * scale)).text_color(if sleeping { chrome_color(0x686868, 0x959595) } else { chrome_color(0xa6a6a6, 0x424242) }).child(time)))
+                .when(!buttons_shown && folded_dots.is_none() && !question && !approval && !failed && (timer.is_some() || (show_time && session.activity != "working" && session.activity != "attention" && !session.has_background_work)), |row| row.child(div().text_size(px(13.55 * scale)).text_color(if sleeping { chrome_color(0x686868, 0x959595) } else { chrome_color(0xa6a6a6, 0x424242) }).child(time)))
                 .when(buttons_shown, |row| row.child(self.render_native_session_hover_actions(group, session, appearance, cx)))
                 .when(approval, |row| row.child(super::status::approval_indicator(scale)))
                 .when(question, |row| row.child(super::status::question_indicator(&session.activity, scale, super::status::session_row_ring(appearance, highlighted, visible, question_fill, hovered))))
@@ -245,7 +265,7 @@ impl GhostexGpuiApp {
                     cx.stop_propagation();
                     app.close_native_sidebar_menu(window, cx);
                     app.dispatch_native_sidebar_command(
-                        json!({"type": "closeSession", "sessionId": close_id}),
+                        json!({"type": "closeSession", "sessionId": close_id, "closeSource": "sidebarMiddleClick"}),
                         cx,
                     );
                 }))
@@ -258,6 +278,8 @@ impl GhostexGpuiApp {
                     if stale { return; }
                     let modifiers = event.modifiers();
                     let mode = if modifiers.shift { "range" } else if modifiers.platform || modifiers.control { "additive" } else { "focus" };
+                    // A coordinator's thread nested from another computer this app has not connected to yet: connect, then open it.
+                    if mode == "focus" && borrowed_thread && app.open_borrowed_thread_row_when_connected(&session_id, cx) { return; }
                     // The page Claude's sidebar button opened over the sessions closes first, so the
                     // session shows (CDXC:Extensions 2026-10-25 in app/claude_web/sidebar_button.rs).
                     if mode == "focus" { app.close_sidebar_extension_view(window, cx); }

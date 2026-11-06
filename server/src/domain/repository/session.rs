@@ -187,6 +187,15 @@ impl<'a> DomainRepository<'a> {
             )
             .map_err(sql_error)?;
         self.record_id_allocation("session", &project_id, &session_id, &timestamp)?;
+        // A session created on a known conversation (a fork, a restore, a resume) starts with it.
+        crate::session_identity_log::log_identity_change(
+            &self.server_id,
+            &project_id,
+            &session_id,
+            read_optional_text(session.get("agentId")).as_deref(),
+            &crate::session_identity_log::StoredIdentity::default(),
+            &crate::session_identity_log::StoredIdentity::of_session(&session),
+        );
         /*
         CDXC:Telemetry 2026-08-26:
         The one INSERT INTO sessions in the crate, so every route that creates a
@@ -277,6 +286,7 @@ impl<'a> DomainRepository<'a> {
         }
         let updated_at = now_iso();
         let was_pinned = current.get("isPinned").and_then(Value::as_bool) == Some(true);
+        let identity_before = crate::session_identity_log::StoredIdentity::of_session(&current);
         let mut session = merge_session_update(&self.server_id, current, &updated_at, params)?;
         if !was_pinned
             && session.get("isPinned").and_then(Value::as_bool) == Some(true)
@@ -326,6 +336,16 @@ impl<'a> DomainRepository<'a> {
                 session_insert_params(&session)?,
             )
             .map_err(sql_error)?;
+        // CDXC:SessionIdentity 2026-11-05: every identity change reaches SQLite here or at the
+        // INSERT below; see server/src/session_identity_log.rs.
+        crate::session_identity_log::log_identity_change(
+            &self.server_id,
+            &project_id,
+            &session_id,
+            read_optional_text(session.get("agentId")).as_deref(),
+            &identity_before,
+            &crate::session_identity_log::StoredIdentity::of_session(&session),
+        );
         Ok(session)
     }
 
@@ -553,7 +573,7 @@ impl<'a> DomainRepository<'a> {
                             THEN json_extract(runtimeSettingsJson, '$.sessionPersistenceProvider') END,
                        CASE WHEN json_type(runtimeSettingsJson, '$.previousAgentSessionIds') = 'array'
                             THEN json_extract(runtimeSettingsJson, '$.previousAgentSessionIds') END,
-                       restoredFromSessionId
+                       restoredFromSessionId, createdAt, lastActiveAt
                 FROM sessions
                 ORDER BY updatedAt DESC, projectId ASC, sessionId ASC
                 "#,
@@ -572,6 +592,8 @@ impl<'a> DomainRepository<'a> {
                     session_persistence_provider: row.get(7)?,
                     previous_agent_session_ids_json: row.get(8)?,
                     restored_from_session_id: row.get(9)?,
+                    created_at: row.get(10)?,
+                    last_active_at: row.get(11)?,
                 })
             })
             .map_err(sql_error)?;
@@ -770,6 +792,54 @@ impl<'a> DomainRepository<'a> {
         rows.into_iter()
             .map(|row| session_from_row(&self.server_id, row))
             .collect()
+    }
+
+    /// `list_presentation_sessions` narrowed to `keys` (project id, session id): the same rows the
+    /// full list holds for those sessions, read by key instead of listing the whole registry.
+    pub fn list_presentation_sessions_for(
+        &self,
+        keys: &[(String, String)],
+    ) -> DomainResult<Vec<Value>> {
+        let mut statement = self
+            .db
+            .prepare_cached(
+                r#"
+                SELECT * FROM sessions
+                WHERE projectId = ?1 AND sessionId = ?2
+                  AND (lifecycleState IN ('running', 'sleeping', 'missing', 'unknown')
+                    OR (lifecycleState = 'stopped'
+                      AND (isPinned = 1 OR isParked = 1 OR isFavorite = 1
+                        OR (sessionTag IS NOT NULL AND sessionTag <> ''))))
+                "#,
+            )
+            .map_err(sql_error)?;
+        let mut sessions = Vec::with_capacity(keys.len());
+        for (project_id, session_id) in keys {
+            let rows = statement
+                .query_map([project_id, session_id], session_row_from_sql)
+                .map_err(sql_error)?
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(sql_error)?;
+            for row in rows {
+                sessions.push(session_from_row(&self.server_id, row)?);
+            }
+        }
+        // The full list's order (`ORDER BY updatedAt DESC, projectId, sessionId`), so a reader that
+        // ranks rows by their place sees them as it would in the whole list.
+        let text = |session: &Value, key: &str| {
+            session
+                .get(key)
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        };
+        sessions.sort_by(|a, b| {
+            text(b, "updatedAt")
+                .cmp(&text(a, "updatedAt"))
+                .then_with(|| text(a, "projectId").cmp(&text(b, "projectId")))
+                .then_with(|| text(a, "sessionId").cmp(&text(b, "sessionId")))
+        });
+        Ok(sessions)
     }
 
     /// `list_sessions` narrowed to rows that are not durably `stopped`, i.e.
@@ -1044,6 +1114,8 @@ struct SessionForkRow {
     /// stored value is an array.
     previous_agent_session_ids_json: Option<String>,
     restored_from_session_id: Option<String>,
+    created_at: Option<String>,
+    last_active_at: Option<String>,
 }
 
 fn session_fork_row_value(server_id: &str, row: SessionForkRow) -> DomainResult<Value> {
@@ -1093,6 +1165,8 @@ fn session_fork_row_value(server_id: &str, row: SessionForkRow) -> DomainResult<
         runtime_settings.insert("previousAgentSessionIds".to_string(), previous_ids);
     }
     let mut session = Map::new();
+    insert_optional_string(&mut session, "createdAt", row.created_at);
+    insert_optional_string(&mut session, "lastActiveAt", row.last_active_at);
     session.insert("hiddenMetadata".to_string(), Value::Object(hidden));
     session.insert("launchSettings".to_string(), Value::Object(launch_settings));
     session.insert(

@@ -23,8 +23,19 @@ impl GhostexGpuiApp {
             "remoteAppUpdate" => {
                 self.handle_remote_app_update_command(command, cx);
             }
+            // Settings > Updates and the top bar's update list (app/updates/).
+            "updates" => {
+                self.handle_updates_command(command, cx);
+            }
             "requestRemoteMachineConnectStates" => {
                 self.handle_request_remote_machine_connect_states(cx);
+            }
+            // Settings › Voice (voice_agent/microphones.rs).
+            "requestDictateDevices" => {
+                self.answer_dictate_devices(cx);
+            }
+            "revealDictateModelsFolder" => {
+                self.reveal_dictate_models_folder(cx);
             }
             "addProjectDialogRequest" => {
                 self.handle_gpui_add_project_dialog_request_message(command, cx);

@@ -85,33 +85,6 @@
       "agentWritable": true
     },
     {
-      "key": "sessionChatFontFamily",
-      "title": "Chat font family",
-      "subtitle": "Use any installed font in chat messages and the prompt composer.",
-      "tab": "chat",
-      "tabTitle": "Chat",
-      "section": "chat",
-      "sectionTitle": "Chat",
-      "type": "string",
-      "default": "",
-      "agentWritable": true
-    },
-    {
-      "key": "sessionChatZoomPercent",
-      "title": "Default chat zoom (%)",
-      "subtitle": "Scale every desktop chat, including messages and the prompt composer, from 70% to 200% in 5% steps. Cmd+= and Cmd+- in a chat change it too, and Cmd+0 sets 100%. Default: 100%.",
-      "tab": "chat",
-      "tabTitle": "Chat",
-      "section": "chat",
-      "sectionTitle": "Chat",
-      "type": "number",
-      "default": 100,
-      "min": 70,
-      "max": 200,
-      "step": 5,
-      "agentWritable": true
-    },
-    {
       "key": "sessionChatCustomTranscriptWidthEnabled",
       "title": "Custom transcript width (set with Transcript width)",
       "subtitle": "On once Transcript width is dragged to a percentage; off keeps Auto, where the transcript matches the prompt composer's width.",
@@ -153,19 +126,6 @@
       "agentWritable": true
     },
     {
-      "key": "sessionChatMutedThinking",
-      "title": "Show thinking in grey",
-      "subtitle": "Show the agent's thinking in grey and its replies in the full text colour, so the two are easy to tell apart.",
-      "tab": "chat",
-      "tabTitle": "Chat",
-      "section": "chat",
-      "sectionTitle": "Chat",
-      "type": "boolean",
-      "default": false,
-      "advanced": true,
-      "agentWritable": true
-    },
-    {
       "key": "chatToolCallCards",
       "title": "Tool call cards (preview)",
       "subtitle": "Show each run of tool calls as one card: it counts the calls, says what each one is doing and then did, with its result and time, explains a failure, and folds to one line once the agent writes again. Off keeps the current look.",
@@ -175,6 +135,19 @@
       "sectionTitle": "Chat",
       "type": "boolean",
       "default": false,
+      "agentWritable": true
+    },
+    {
+      "key": "sessionChatDetailedView",
+      "title": "Default to Detailed view",
+      "subtitle": "New chats open in Detailed view, with the work under each agent reply shown. Off, they open in Normal view. More actions > View in a chat picks Summary, Normal or Detailed for that chat.",
+      "tab": "chat",
+      "tabTitle": "Chat",
+      "section": "chat",
+      "sectionTitle": "Chat",
+      "type": "boolean",
+      "default": false,
+      "advanced": true,
       "agentWritable": true
     },
     {
@@ -229,6 +202,19 @@
       "agentWritable": true
     },
     {
+      "key": "chatAnswersWaitForIdle",
+      "title": "Wait for turn end before sending form answers",
+      "subtitle": "Send answers from question forms and chat pages only after the agent finishes its turn. Off sends them like a normal chat message, which the agent can read after its current tool call finishes.",
+      "tab": "chat",
+      "tabTitle": "Chat",
+      "section": "chat",
+      "sectionTitle": "Chat",
+      "type": "boolean",
+      "default": false,
+      "advanced": true,
+      "agentWritable": true
+    },
+    {
       "key": "chatPageOpenTarget",
       "title": "Open chat pages in",
       "subtitle": "Where a page an agent shows in chat (a mockup, a question form, a comparison) opens when you click its card: a popup over the chat, the Files view, or your default web browser. Answers you send from the page reach the agent the same way in all three. The phone always opens pages in its own viewer.",
@@ -255,9 +241,43 @@
       "agentWritable": true
     },
     {
+      "key": "coordinatorBoardView",
+      "title": "Coordinator board opens as",
+      "subtitle": "What the Board pill above a coordinator's chat box opens: its lines of work as a list beside the chat, or as columns over the chat, one per group. The switch at the top of either view changes this too.",
+      "tab": "chat",
+      "tabTitle": "Chat",
+      "section": "chat",
+      "sectionTitle": "Chat",
+      "type": "enum",
+      "default": "list",
+      "options": [
+        {
+          "label": "Side list",
+          "value": "list"
+        },
+        {
+          "label": "Columns",
+          "value": "columns"
+        }
+      ],
+      "agentWritable": true
+    },
+    {
+      "key": "agentGhostexNote",
+      "title": "Tell agents about Ghostex",
+      "subtitle": "Agent sessions Ghostex starts get a short note that they run in Ghostex: it can show pages, questions and charts in the chat, install Ghostex skills, and `ghostex agent-guide` explains the rest. Agents use it only when you ask for one of those things. Applies to sessions started or resumed after you change it.",
+      "tab": "chat",
+      "tabTitle": "Chat",
+      "section": "chat",
+      "sectionTitle": "Chat",
+      "type": "boolean",
+      "default": true,
+      "agentWritable": true
+    },
+    {
       "key": "orchestratorAllEfforts",
       "title": "Every effort level in coordinator pickers",
-      "subtitle": "Lists every effort level in the coordinator effort pickers. Anything below Medium isn't recommended for coordinators.",
+      "subtitle": "Also lists the levels above XHigh (Max, Ultra and the like) in the coordinator effort pickers, where the agent has them. Coordinators work best on High or XHigh.",
       "tab": "chat",
       "tabTitle": "Chat",
       "section": "chat",
@@ -352,33 +372,9 @@
       "agentWritable": true
     },
     {
-      "key": "sessionChatSimpleMode",
-      "title": "Simple mode by default",
-      "subtitle": "New chats open in Simple mode (on by default). More actions > View in a chat picks Simple, Detailed or Verbose for that chat.",
-      "tab": "chat",
-      "tabTitle": "Chat",
-      "section": "chat",
-      "sectionTitle": "Chat",
-      "type": "boolean",
-      "default": true,
-      "agentWritable": true
-    },
-    {
-      "key": "sessionChatVerboseMode",
-      "title": "Verbose mode by default",
-      "subtitle": "New chats open in Verbose mode when Simple mode by default is off. More actions > View in a chat picks the level for that chat.",
-      "tab": "chat",
-      "tabTitle": "Chat",
-      "section": "chat",
-      "sectionTitle": "Chat",
-      "type": "boolean",
-      "default": false,
-      "agentWritable": true
-    },
-    {
       "key": "markedHandovers",
       "title": "Marked handovers in every session",
-      "subtitle": "Coordinators and their threads start each part of the message they hand back with a marker such as ❓ Needs you, ✅ Done, ⚠️ Read this, 🧪 Untested or 🛑 Blocked, so a quick skim shows what needs you. Turn this on to have every other agent session do the same. Applies to sessions started or resumed after you change it.",
+      "subtitle": "Coordinators and their threads start each part of the message they hand back with a marker such as ✅ Done or 🧪 Untested, and end it with what needs you (⚠️ Read this, 🛑 Blocked, 💡 Suggestions, ❓ Needs you), so you never miss it. Turn this on to have every other agent session do the same. Applies to sessions started or resumed after you change it.",
       "tab": "chat",
       "tabTitle": "Chat",
       "section": "markedHandovers",
@@ -514,7 +510,7 @@
     {
       "key": "sidebarView",
       "title": "Sidebar",
-      "subtitle": "Project sidebar lists each machine, Space and project on its own. Unified sidebar shows every session from every machine, Space and project in one list, with the ones that need you on top; the same repository on two machines is one project there.",
+      "subtitle": "Project sidebar lists each project with its sessions under it. Unified sidebar shows every session in one list, with the ones that need you on top. Both show every connected computer together unless Separate by machine is on.",
       "tab": "sidebar",
       "tabTitle": "Sidebar & Sessions",
       "section": "sidebar",
@@ -531,6 +527,18 @@
           "value": "unified"
         }
       ],
+      "agentWritable": true
+    },
+    {
+      "key": "sidebarSeparateByMachine",
+      "title": "Separate by machine",
+      "subtitle": "Show one computer at a time, each with its own tab, project list and Spaces. Off (the default): one list for every connected computer, where a project on several computers is one entry with the sessions of all of them, and Spaces and project groups are shared by all of them.",
+      "tab": "sidebar",
+      "tabTitle": "Sidebar & Sessions",
+      "section": "sidebar",
+      "sectionTitle": "Sidebar",
+      "type": "boolean",
+      "default": false,
       "agentWritable": true
     },
     {
@@ -932,20 +940,6 @@
       "sectionTitle": "Sidebar",
       "type": "boolean",
       "default": false,
-      "agentWritable": true
-    },
-    {
-      "key": "agentManagerZoomPercent",
-      "title": "Sidebar zoom (%)",
-      "subtitle": "Scale the sidebar interface.",
-      "tab": "sidebar",
-      "tabTitle": "Sidebar & Sessions",
-      "section": "sidebar",
-      "sectionTitle": "Sidebar",
-      "type": "number",
-      "default": 100,
-      "min": 50,
-      "max": 200,
       "agentWritable": true
     },
     {
@@ -1529,7 +1523,7 @@
     {
       "key": "terminalBackgroundOpacity",
       "title": "Background opacity (%)",
-      "subtitle": "How much of the work area's glass tint terminals keep while transparency is on (Settings > Theme > Transparency). 100% matches the rest of the work area; lower shows more of what is behind the window. Off while transparency is off.",
+      "subtitle": "How much of the work area's glass tint terminals keep while transparency is on (Settings > Interface > Transparency). 100% matches the rest of the work area; lower shows more of what is behind the window. Off while transparency is off.",
       "tab": "terminal",
       "tabTitle": "Terminal",
       "section": "terminal",
@@ -1563,30 +1557,6 @@
       "type": "number",
       "default": 1,
       "advanced": true,
-      "agentWritable": true
-    },
-    {
-      "key": "terminalFontFamily",
-      "title": "Font family",
-      "subtitle": "Type a Ghostty font-family name.",
-      "tab": "terminal",
-      "tabTitle": "Terminal",
-      "section": "terminal",
-      "sectionTitle": "Terminal",
-      "type": "string",
-      "default": "JetBrains Mono",
-      "agentWritable": true
-    },
-    {
-      "key": "terminalFontSize",
-      "title": "Font size",
-      "subtitle": "Set terminal text size.",
-      "tab": "terminal",
-      "tabTitle": "Terminal",
-      "section": "terminal",
-      "sectionTitle": "Terminal",
-      "type": "number",
-      "default": 13,
       "agentWritable": true
     },
     {
@@ -2230,6 +2200,30 @@
       "agentWritable": true
     },
     {
+      "key": "showFinishedWorkBorder",
+      "title": "Finished-work border",
+      "subtitle": "Outline a session's pane in a colour when its agent finishes work or needs you, until you look at it. The sidebar dot, sounds and notifications stay either way.",
+      "tab": "notifications",
+      "tabTitle": "Notifications",
+      "section": "sounds",
+      "sectionTitle": "Sounds",
+      "type": "boolean",
+      "default": false,
+      "agentWritable": true
+    },
+    {
+      "key": "finishedWorkBorderColor",
+      "title": "Finished-work border colour",
+      "subtitle": "The colour of the border a session's pane gets when its agent finishes work or needs you. Shown while Finished-work border is on.",
+      "tab": "notifications",
+      "tabTitle": "Notifications",
+      "section": "sounds",
+      "sectionTitle": "Sounds",
+      "type": "string",
+      "default": "#95d7f6",
+      "agentWritable": true
+    },
+    {
       "key": "resetExpirySystemNotifications",
       "title": "Warn before a banked usage reset expires",
       "subtitle": "Show a system notification when a banked Claude or Codex usage reset expires within 3 days and again within 24 hours. The red notification in the bell stays either way.",
@@ -2417,7 +2411,7 @@
     {
       "key": "documentFileOpenTarget",
       "title": "HTML, Markdown and images",
-      "subtitle": "Choose where HTML, Markdown and picture files open from Quick Access, agent chat, the terminal and `ghostex open`: Files, VS Code, or an editor app installed on this computer.",
+      "subtitle": "Choose where HTML, Markdown and picture files open from Quick Access, agent chat, the terminal and `ghostex open`: Files, VS Code, the system app (your computer's default app for that file type), or an editor app installed on this computer.",
       "tab": "tools",
       "tabTitle": "Files & Links",
       "section": "fileOpening",
@@ -2432,6 +2426,10 @@
         {
           "label": "VS Code",
           "value": "code"
+        },
+        {
+          "label": "System App",
+          "value": "system-app"
         },
         {
           "label": "VS Code app",
@@ -2519,7 +2517,7 @@
     {
       "key": "otherFileOpenTarget",
       "title": "Other files",
-      "subtitle": "Choose where every other file (code and text) opens from Quick Access, agent chat, the terminal and `ghostex open`: Files, VS Code, or an editor app installed on this computer.",
+      "subtitle": "Choose where every other file (code and text) opens from Quick Access, agent chat, the terminal and `ghostex open`: Files, VS Code, the system app (your computer's default app for that file type), or an editor app installed on this computer.",
       "tab": "tools",
       "tabTitle": "Files & Links",
       "section": "fileOpening",
@@ -2534,6 +2532,10 @@
         {
           "label": "VS Code",
           "value": "code"
+        },
+        {
+          "label": "System App",
+          "value": "system-app"
         },
         {
           "label": "VS Code app",
@@ -2693,7 +2695,7 @@
       "section": "fileOpening",
       "sectionTitle": "File opening",
       "type": "boolean",
-      "default": false,
+      "default": true,
       "agentWritable": true
     },
     {
@@ -2713,6 +2715,32 @@
         },
         {
           "label": "System Default Browser",
+          "value": "system-default-browser"
+        }
+      ],
+      "agentWritable": true
+    },
+    {
+      "key": "agentPreviewBrowser",
+      "title": "Agents open pages in",
+      "subtitle": "Where an agent opens a page it built for you, such as a website preview: the project Browser view or your default browser. Ask has the agent ask you the first time and save your answer here.",
+      "tab": "tools",
+      "tabTitle": "Files & Links",
+      "section": "browser",
+      "sectionTitle": "Browser",
+      "type": "enum",
+      "default": "ask",
+      "options": [
+        {
+          "label": "Ask",
+          "value": "ask"
+        },
+        {
+          "label": "Ghostex Browser",
+          "value": "internal-browser"
+        },
+        {
+          "label": "My default browser",
           "value": "system-default-browser"
         }
       ],
@@ -2825,6 +2853,42 @@
       ],
       "advanced": true,
       "agentWritable": false
+    },
+    {
+      "key": "startServerAtLogin",
+      "title": "Start Ghostex's server when you log in",
+      "subtitle": "Runs Ghostex's server in the background from the moment you log in, so your other computers, your phone and coordinators keep working while the app is closed.",
+      "tab": "system",
+      "tabTitle": "Power & Sleep",
+      "section": "computerStartup",
+      "sectionTitle": "When your computer starts",
+      "type": "boolean",
+      "default": false,
+      "agentWritable": true
+    },
+    {
+      "key": "openAppAtLogin",
+      "title": "Also open the Ghostex app",
+      "subtitle": "Opens the Ghostex window after the server starts at login. Needs Start Ghostex's server when you log in.",
+      "tab": "system",
+      "tabTitle": "Power & Sleep",
+      "section": "computerStartup",
+      "sectionTitle": "When your computer starts",
+      "type": "boolean",
+      "default": false,
+      "agentWritable": true
+    },
+    {
+      "key": "resumeSessionsAfterRestart",
+      "title": "Resume sessions after a restart or power loss",
+      "subtitle": "Continues the agent sessions that were running when the computer shut down, restarted or lost power, each in its own chat. Sessions you closed, slept or that had already ended stay as they were. Needs Start Ghostex's server when you log in.",
+      "tab": "system",
+      "tabTitle": "Power & Sleep",
+      "section": "computerStartup",
+      "sectionTitle": "When your computer starts",
+      "type": "boolean",
+      "default": false,
+      "agentWritable": true
     },
     {
       "key": "autoSleepViews",
@@ -3387,11 +3451,11 @@
       "title": "Appearance",
       "subtitle": "Follow the system appearance by default, or choose Light or Dark.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "enum",
       "default": "system",
       "options": [
@@ -3415,11 +3479,11 @@
       "title": "Dark mode colour",
       "subtitle": "The colour of the sidebar and window in dark mode: one of sixteen colour squares, or the + square for a custom colour.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "enum",
       "default": "gray",
       "options": [
@@ -3499,11 +3563,11 @@
       "title": "Custom dark mode tint",
       "subtitle": "The custom dark mode colour, chosen in the colour picker the + square opens.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "string",
       "default": "#808080",
       "agentWritable": true
@@ -3513,11 +3577,11 @@
       "title": "Light mode colour",
       "subtitle": "The colour of the sidebar and window in light mode: one of sixteen colour squares, or the + square for a custom colour.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "enum",
       "default": "gray",
       "options": [
@@ -3597,11 +3661,11 @@
       "title": "Sidebar colourfulness",
       "subtitle": "How much of the theme colour shows in the sidebar, from Subtle (deeper, nearly neutral) through Vivid (lighter, more colourful) to Full, where dark mode shows the colour you picked itself. Colourfulness sets the sidebar and work area together, and how deep a custom colour is.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "number",
       "default": 0,
       "agentWritable": true
@@ -3611,11 +3675,11 @@
       "title": "Work area colourfulness",
       "subtitle": "How much of the theme colour shows in the work area (chat, terminals and views), from Subtle to Full. Colourfulness sets the sidebar and work area together.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "number",
       "default": 0,
       "agentWritable": true
@@ -3625,13 +3689,167 @@
       "title": "Custom light mode tint",
       "subtitle": "The custom light mode colour, chosen in the colour picker the + square opens.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "string",
       "default": "#808080",
+      "agentWritable": true
+    },
+    {
+      "key": "sessionChatFontFamily",
+      "title": "App font",
+      "subtitle": "Pick one of the fonts installed on this computer for the whole app: sidebar, chat, menus, dialogs and Settings, then press Apply. App default keeps Ghostex's own fonts. Terminals and code use the Monospace font.",
+      "tab": "theme",
+      "tabTitle": "Interface",
+      "group": "appearance",
+      "groupTitle": "Interface",
+      "section": "theming",
+      "sectionTitle": "Interface",
+      "type": "string",
+      "default": "",
+      "agentWritable": true
+    },
+    {
+      "key": "terminalFontFamily",
+      "title": "Monospace font",
+      "subtitle": "Font family for terminals, code in the Files view, diffs, code blocks and tool output in chat. Pick an installed monospace font, or type a Ghostty font-family name, then press Apply.",
+      "tab": "theme",
+      "tabTitle": "Interface",
+      "group": "appearance",
+      "groupTitle": "Interface",
+      "section": "theming",
+      "sectionTitle": "Interface",
+      "type": "string",
+      "default": "JetBrains Mono",
+      "agentWritable": true
+    },
+    {
+      "key": "interfaceScalePercent",
+      "title": "Scale (%)",
+      "subtitle": "Scale the sidebar, every chat, files open in the Files view and the terminal text together, from 70% to 200%. The header, tabs, menus and dialogs keep their size. Cmd+= and Cmd+- (Ctrl on Windows and Linux) change it from anywhere, and Cmd+0 sets 100%. Default: 100%.",
+      "tab": "theme",
+      "tabTitle": "Interface",
+      "group": "appearance",
+      "groupTitle": "Interface",
+      "section": "theming",
+      "sectionTitle": "Interface",
+      "type": "number",
+      "default": 100,
+      "min": 70,
+      "max": 200,
+      "step": 5,
+      "agentWritable": true
+    },
+    {
+      "key": "interfaceScaleAreasSeparately",
+      "title": "Scale areas separately",
+      "subtitle": "Give the sidebar, chat, Files and terminal text their own sizes instead of one Scale. Cmd+= and Cmd+- then change only the area you are in. Default: off, or on when you had already changed one of those sizes.",
+      "tab": "theme",
+      "tabTitle": "Interface",
+      "group": "appearance",
+      "groupTitle": "Interface",
+      "section": "theming",
+      "sectionTitle": "Interface",
+      "type": "boolean",
+      "default": false,
+      "agentWritable": true
+    },
+    {
+      "key": "agentManagerZoomPercent",
+      "title": "Sidebar zoom (%)",
+      "subtitle": "Scale the sidebar, from 50% to 200%, when Scale areas separately is on.",
+      "tab": "theme",
+      "tabTitle": "Interface",
+      "group": "appearance",
+      "groupTitle": "Interface",
+      "section": "theming",
+      "sectionTitle": "Interface",
+      "type": "number",
+      "default": 100,
+      "min": 50,
+      "max": 200,
+      "agentWritable": true
+    },
+    {
+      "key": "sessionChatZoomPercent",
+      "title": "Chat zoom (%)",
+      "subtitle": "Scale every desktop chat, including messages and the prompt composer, from 70% to 200% in 5% steps, when Scale areas separately is on. Cmd+= and Cmd+- in a chat change it too, and Cmd+0 sets 100%. Default: 100%.",
+      "tab": "theme",
+      "tabTitle": "Interface",
+      "group": "appearance",
+      "groupTitle": "Interface",
+      "section": "theming",
+      "sectionTitle": "Interface",
+      "type": "number",
+      "default": 100,
+      "min": 70,
+      "max": 200,
+      "step": 5,
+      "agentWritable": true
+    },
+    {
+      "key": "filesZoomPercent",
+      "title": "Files zoom (%)",
+      "subtitle": "Scale the text of a file open in the Files view (Markdown, text and code, with its line numbers) and the Changes diff, from 70% to 200% in 5% steps, when Scale areas separately is on. Cmd+= and Cmd+- (Ctrl on Windows and Linux) in an open file change it too, and Cmd+0 sets 100%. Default: 100%.",
+      "tab": "theme",
+      "tabTitle": "Interface",
+      "group": "appearance",
+      "groupTitle": "Interface",
+      "section": "theming",
+      "sectionTitle": "Interface",
+      "type": "number",
+      "default": 100,
+      "min": 70,
+      "max": 200,
+      "step": 5,
+      "agentWritable": true
+    },
+    {
+      "key": "terminalFontSize",
+      "title": "Terminal font size",
+      "subtitle": "The terminal text size in points, when Scale areas separately is on. Cmd+= and Cmd+- in a terminal change it for that terminal only until it restarts. Default: 13.",
+      "tab": "theme",
+      "tabTitle": "Interface",
+      "group": "appearance",
+      "groupTitle": "Interface",
+      "section": "theming",
+      "sectionTitle": "Interface",
+      "type": "number",
+      "default": 13,
+      "agentWritable": true
+    },
+    {
+      "key": "sessionChatTextStrengthPercent",
+      "title": "Text strength",
+      "subtitle": "How strong agents' replies and your messages read in chat, on the computer and the phone. 0% is the standard colour; 100% is full white in dark mode and full black in light mode. Muted text, links, code blocks and status colours stay as they are.",
+      "tab": "theme",
+      "tabTitle": "Interface",
+      "group": "appearance",
+      "groupTitle": "Interface",
+      "section": "theming",
+      "sectionTitle": "Interface",
+      "type": "number",
+      "default": 0,
+      "min": 0,
+      "max": 100,
+      "step": 10,
+      "agentWritable": true
+    },
+    {
+      "key": "sessionChatMutedThinking",
+      "title": "Show thinking in grey",
+      "subtitle": "Show the agent's thinking in grey and its replies in the full text colour, so the two are easy to tell apart.",
+      "tab": "theme",
+      "tabTitle": "Interface",
+      "group": "appearance",
+      "groupTitle": "Interface",
+      "section": "theming",
+      "sectionTitle": "Interface",
+      "type": "boolean",
+      "default": false,
       "agentWritable": true
     },
     {
@@ -3639,11 +3857,11 @@
       "title": "Chat theme",
       "subtitle": "Follow the app theme by default, or override chat with Light, Dark, or System.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "enum",
       "default": "app",
       "options": [
@@ -3671,11 +3889,11 @@
       "title": "Terminal theme",
       "subtitle": "Follow the app theme by default, or override terminals with Light, Dark, or System.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "enum",
       "default": "app",
       "options": [
@@ -3703,11 +3921,11 @@
       "title": "Terminal palette in light mode",
       "subtitle": "Uses the light theme set in Ghostex's terminal config, or GitHub Light when none is set.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "enum",
       "default": "GitHub Light Default",
       "options": [
@@ -5663,11 +5881,11 @@
       "title": "Terminal palette in dark mode",
       "subtitle": "Uses the dark theme set in Ghostex's terminal config, or GitHub Dark when none is set.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "enum",
       "default": "GitHub Dark",
       "options": [
@@ -7627,11 +7845,11 @@
       "title": "Transparency",
       "subtitle": "Let your desktop show through the window: Off, Dark only (light mode stays solid) or Always.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "enum",
       "default": "auto",
       "options": [
@@ -7658,11 +7876,11 @@
       "title": "Behind the glass",
       "subtitle": "Desktop and windows, your wallpaper, a picture you choose, or Live: a calm animation in your theme colours or your own video.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "enum",
       "default": "desktopAndWindows",
       "options": [
@@ -7690,11 +7908,11 @@
       "title": "Same for light and dark",
       "subtitle": "Use the dark-mode picture, video, Live background and tints in light mode too. Turn off to pick them for light mode separately.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "boolean",
       "default": true,
       "agentWritable": true
@@ -7704,11 +7922,11 @@
       "title": "Picture position",
       "subtitle": "Where the wallpaper, custom picture or your own Live video sits behind the glass. Stays with the desktop can trail the window while you drag it.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "enum",
       "default": "static",
       "options": [
@@ -7728,11 +7946,11 @@
       "title": "Picture for dark mode",
       "subtitle": "The picture the glass blurs in dark mode when Picture shows behind the glass.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "string",
       "default": "",
       "agentWritable": true
@@ -7742,11 +7960,11 @@
       "title": "Picture for light mode",
       "subtitle": "The picture the glass blurs in light mode when Picture shows behind the glass.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "string",
       "default": "",
       "agentWritable": true
@@ -7756,11 +7974,11 @@
       "title": "Your video for dark mode",
       "subtitle": "The video file the glass plays in dark mode when Live is set to Your video.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "string",
       "default": "",
       "agentWritable": true
@@ -7770,11 +7988,11 @@
       "title": "Your video for light mode",
       "subtitle": "The video file the glass plays in light mode when Live is set to Your video.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "string",
       "default": "",
       "agentWritable": true
@@ -7784,11 +8002,11 @@
       "title": "Play only when plugged in",
       "subtitle": "Pause the Live animation or video while your computer runs on battery. It always pauses when Ghostex is in the background.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "boolean",
       "default": true,
       "agentWritable": true
@@ -7798,11 +8016,11 @@
       "title": "Live background for dark mode",
       "subtitle": "The animation, or your own video, the glass shows in dark mode when Live shows behind the glass.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "enum",
       "default": "aurora",
       "options": [
@@ -7850,11 +8068,11 @@
       "title": "Live background for light mode",
       "subtitle": "The animation, or your own video, the glass shows in light mode when Live shows behind the glass.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "enum",
       "default": "drift",
       "options": [
@@ -7902,11 +8120,11 @@
       "title": "Live background speed",
       "subtitle": "How fast the Live animation moves, from a quarter of its pace to twice as fast.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "number",
       "default": 1,
       "agentWritable": true
@@ -7916,11 +8134,11 @@
       "title": "Live background brightness",
       "subtitle": "How bright the Live animation glows behind the glass. Lower keeps it a subtle glow.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "number",
       "default": 60,
       "agentWritable": true
@@ -7930,11 +8148,11 @@
       "title": "Blur",
       "subtitle": "How soft what shows behind the window looks, in points. 0 shows it sharp. On Windows and Linux, Desktop and windows uses the system blur, so this sets the wallpaper, picture and video blur; on Windows, Blur on Windows picks that system blur.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "number",
       "default": 60,
       "agentWritable": true,
@@ -7945,11 +8163,11 @@
       "title": "Blur on Windows",
       "subtitle": "How Windows blurs what shows behind the window while Desktop and windows shows behind the glass. Windows has no blur amount to set, so pick Acrylic (Windows' own frosted blur), Plain blur (the same blur without Windows' grey frost, so the tints can go fully clear; it takes more work to draw) or Off (sharp, the fastest).",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "enum",
       "default": "acrylic",
       "options": [
@@ -7974,11 +8192,11 @@
       "title": "Menu blur",
       "subtitle": "How soft what shows behind menus, panels, dialogs and tooltips looks, in points. Menus, panels and dialogs blur a quarter more than this number; tooltips use it as is. 0 shows it sharp.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "number",
       "default": 20,
       "agentWritable": true,
@@ -7989,11 +8207,11 @@
       "title": "Sidebar tint in dark mode",
       "subtitle": "How much of the desktop the sidebar hides in dark mode. Lower shows more of your desktop through it.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "number",
       "default": 94,
       "agentWritable": true
@@ -8003,11 +8221,11 @@
       "title": "Work area tint in dark mode",
       "subtitle": "How much of the desktop the work area hides in dark mode, set on its own so either area can be the darker one. Lower shows more of your desktop through it.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "number",
       "default": 94,
       "agentWritable": true
@@ -8017,11 +8235,11 @@
       "title": "Sidebar tint in light mode",
       "subtitle": "How much of the desktop the sidebar hides in light mode. Lower shows more of your desktop through it.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "number",
       "default": 97,
       "agentWritable": true
@@ -8031,11 +8249,11 @@
       "title": "Work area tint in light mode",
       "subtitle": "How much of the desktop the work area hides in light mode, set on its own so either area can be the darker one. Lower shows more of your desktop through it.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "number",
       "default": 97,
       "agentWritable": true
@@ -8045,11 +8263,11 @@
       "title": "Show active pane outline",
       "subtitle": "Show an outline around the currently focused pane.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "boolean",
       "default": false,
       "advanced": true,
@@ -8060,26 +8278,41 @@
       "title": "Active pane outline colour",
       "subtitle": "Color of the outline around the currently focused pane.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "string",
       "default": "#3b82f6",
       "advanced": true,
       "agentWritable": true
     },
     {
+      "key": "workAreaFrame",
+      "title": "Frame the work area",
+      "subtitle": "Show the work area as a card inside the window, with a thin margin all around, a hairline border and a light shadow. Off keeps the work area edge to edge.",
+      "tab": "theme",
+      "tabTitle": "Interface",
+      "group": "appearance",
+      "groupTitle": "Interface",
+      "section": "theming",
+      "sectionTitle": "Interface",
+      "type": "boolean",
+      "default": false,
+      "agentWritable": true,
+      "availability": "Only on macOS."
+    },
+    {
       "key": "workspacePaneGap",
       "title": "Pane gap",
       "subtitle": "Gap in pixels between split panes in the Agents view.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "number",
       "default": 0,
       "agentWritable": true
@@ -8089,11 +8322,11 @@
       "title": "Custom dark mode depth (set by Colourfulness)",
       "subtitle": "How deep the custom dark mode colour is. Colourfulness sets it whenever it moves; it has no control of its own.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "number",
       "default": 96,
       "min": 85,
@@ -8105,11 +8338,11 @@
       "title": "Custom light mode depth (set by Colourfulness)",
       "subtitle": "How deep the custom light mode colour is. Colourfulness sets it whenever it moves; it has no control of its own.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "number",
       "default": 96,
       "agentWritable": true
@@ -8119,11 +8352,11 @@
       "title": "Sidebar foreground color (derived)",
       "subtitle": "Derived from Background Contrast and Background Tint; change those instead.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "string",
       "default": "#d8d8d8",
       "agentWritable": false
@@ -8133,19 +8366,63 @@
       "title": "Sidebar background color (derived)",
       "subtitle": "Derived from Background Contrast and Background Tint; change those instead.",
       "tab": "theme",
-      "tabTitle": "Theme",
+      "tabTitle": "Interface",
       "group": "appearance",
-      "groupTitle": "Theme",
+      "groupTitle": "Interface",
       "section": "theming",
-      "sectionTitle": "Theme",
+      "sectionTitle": "Interface",
       "type": "string",
       "default": "#0b0b0b",
       "agentWritable": false
     },
     {
+      "key": "updatesUpdateAll",
+      "title": "Update all",
+      "subtitle": "Updates everything listed that has an update: the agents you use, Claude Swap and Codex Swap, Fast Computer & Browser Use, SpaceO, the tools Ghostex installed, extensions, remote machines, the VS Code view and the Chromium runtime. Ghostex itself updates last and restarts once; your agents keep running, and each agent whose CLI changed restarts into the same chat once it finishes its turn.",
+      "tab": "updates",
+      "tabTitle": "Updates",
+      "section": "updates",
+      "sectionTitle": "Updates",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "updatesAutoUpdate",
+      "title": "Update automatically",
+      "subtitle": "A switch on each card, off by default: Ghostex installs that item's updates by itself, only while it isn't in use (an agent while none of its sessions is working, the other tools while no agent is working). On Ghostex's own card it is Keep this machine up to date.",
+      "tab": "updates",
+      "tabTitle": "Updates",
+      "section": "updates",
+      "sectionTitle": "Updates",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "updatesCheckNow",
+      "title": "Check now",
+      "subtitle": "Checks every item for a newer version now instead of waiting for the next check (every half hour).",
+      "tab": "updates",
+      "tabTitle": "Updates",
+      "section": "updates",
+      "sectionTitle": "Updates",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "updatesUpToDate",
+      "title": "Up to date",
+      "subtitle": "Everything already current, and the agents Ghostex can't read the version of (such as Cursor), with a button that runs their own updater.",
+      "tab": "updates",
+      "tabTitle": "Updates",
+      "section": "upToDate",
+      "sectionTitle": "Up to date",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
       "key": "debuggingMode",
       "title": "Show debug UI controls",
-      "subtitle": "Show diagnostic logs.",
+      "subtitle": "Show diagnostic logs. From the next start, also opens Chromium's DevTools port (9334) for developer tools.",
       "tab": "debugging",
       "tabTitle": "Debugging",
       "section": "controls",
@@ -8215,9 +8492,25 @@
         {
           "label": "Session links",
           "value": "gxserver.sessionLinks"
+        },
+        {
+          "label": "Hook-free activity comparison",
+          "value": "gxserver.hooklessActivity"
         }
       ],
       "agentWritable": false
+    },
+    {
+      "key": "claudeHookFreeActivity",
+      "title": "Track Claude without its hooks",
+      "subtitle": "Follow Claude sessions' activity and conversation from the session files Claude writes itself instead of from its hooks. The hooks stay installed and are only compared.",
+      "tab": "debugging",
+      "tabTitle": "Debugging",
+      "section": "controls",
+      "sectionTitle": "Debug controls",
+      "type": "boolean",
+      "default": false,
+      "agentWritable": true
     },
     {
       "key": "version",
@@ -8435,10 +8728,14 @@
         "toggleChatSummaryMode": "ctrl+alt+s",
         "toggleChatComposerMaximized": "ctrl+alt+m",
         "toggleChatFilesLinks": "ctrl+alt+l",
+        "newChatPickProject": "alt+o",
+        "newChatPickComputer": "alt+m",
+        "newChatPickWhere": "alt+w",
+        "newChatPickBranch": "alt+b",
         "toggleVoiceAgent": "ctrl+alt+v",
         "voiceCallAboutSession": "",
         "holdToTalk": "",
-        "toggleDictation": "ctrl+alt+d",
+        "toggleDictation": "ctrl+alt+space",
         "createAgentSession": "cmd+shift+o",
         "createSession": "cmd+shift+t",
         "openCommandPalette": "cmd+shift+p",
@@ -8679,7 +8976,7 @@
     {
       "key": "accounts",
       "title": "Accounts, usage stats and automatic continuation",
-      "subtitle": "Current CLI login, Claude cswap, Codex xswap, add account, reconnect, sign in again, enable or disable an account, update, reinstall or uninstall Claude Swap and Codex Swap, show usage in the sidebar, status lines, usage limits and resets (5h, 7d), session badges, account numbers, auto-switch, new sessions start on, when an account hits its limit, hide emails, privacy, error recovery and retry settings.",
+      "subtitle": "Current CLI login, Claude cswap, Codex xswap, add account, Cursor, Gemini and Copilot usage, reconnect, sign in again, use this account automatically, only when I pick it, or paused, update, reinstall or uninstall Claude Swap and Codex Swap, show usage in the sidebar, status lines, usage limits and resets (5h, 7d, Mo), session badges, account numbers, auto-switch, new sessions start on, when an account hits its limit, hide emails, privacy, error recovery and retry settings.",
       "tab": "accounts",
       "tabTitle": "Accounts",
       "section": "accounts",
@@ -8690,7 +8987,7 @@
     {
       "key": "accountTitlebarUsage",
       "title": "Account usage in the sidebar",
-      "subtitle": "Show or hide usage stats for saved Claude and Codex accounts at the bottom of the desktop sidebar. Star accounts to pin their usage.",
+      "subtitle": "Show or hide usage stats for saved Claude, Codex, Cursor, Gemini and Copilot accounts at the bottom of the desktop sidebar. Adding an account pins the usage there.",
       "tab": "accounts",
       "tabTitle": "Accounts",
       "section": "accounts",
@@ -9262,8 +9559,16 @@
           "value": "ghostex-help"
         },
         {
+          "label": "Ghostex Agent Guide",
+          "value": "ghostex-agent-guide"
+        },
+        {
           "label": "Ghostex Visuals",
           "value": "ghostex-visuals"
+        },
+        {
+          "label": "Ghostex Secrets",
+          "value": "ghostex-secrets"
         },
         {
           "label": "Ghostex Computer Use",
@@ -9412,16 +9717,186 @@
       "agentWritable": true
     },
     {
+      "key": "cloudBoxesInstabox",
+      "title": "Instabox",
+      "subtitle": "Connect your Instabox.sh account in the browser, or paste an API key. Boxes run on your account and bill to it.",
+      "tab": "cloudBoxes",
+      "tabTitle": "Cloud Boxes",
+      "section": "cloudProviders",
+      "sectionTitle": "Providers",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "cloudBoxesBoat",
+      "title": "Boat",
+      "subtitle": "Connect your Boat.dev account: Ghostex asks for your email, opens Boat's page and shows a 6-digit code to type there. Or paste an API key.",
+      "tab": "cloudBoxes",
+      "tabTitle": "Cloud Boxes",
+      "section": "cloudProviders",
+      "sectionTitle": "Providers",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "cloudBoxesSpend",
+      "title": "This month",
+      "subtitle": "What your Cloud Boxes cost this month, per provider and in total. Instabox counts everything on that account; Boat counts the boxes Ghostex made.",
+      "tab": "cloudBoxes",
+      "tabTitle": "Cloud Boxes",
+      "section": "cloudSpending",
+      "sectionTitle": "Spending",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "cloudBoxesMonthlyCapUsd",
+      "title": "Monthly cap",
+      "subtitle": "Ghostex warns at 80% of this many dollars a month and starts no new box at 100%. Running boxes keep running. 0 turns the cap off.",
+      "tab": "cloudBoxes",
+      "tabTitle": "Cloud Boxes",
+      "section": "cloudSpending",
+      "sectionTitle": "Spending",
+      "type": "number",
+      "default": 0,
+      "min": 0,
+      "max": 10000,
+      "step": 1,
+      "agentWritable": true
+    },
+    {
+      "key": "cloudBoxesIdleStopMinutes",
+      "title": "Stop idle boxes after",
+      "subtitle": "A box with no agent working and no terminal open pauses (Instabox) or stops (Boat) after this long. Sending a message wakes it.",
+      "tab": "cloudBoxes",
+      "tabTitle": "Cloud Boxes",
+      "section": "cloudLifetime",
+      "sectionTitle": "Stopping and deleting",
+      "type": "number",
+      "default": 15,
+      "options": [
+        {
+          "label": "5 minutes",
+          "value": "5"
+        },
+        {
+          "label": "10 minutes",
+          "value": "10"
+        },
+        {
+          "label": "15 minutes",
+          "value": "15"
+        },
+        {
+          "label": "30 minutes",
+          "value": "30"
+        },
+        {
+          "label": "1 hour",
+          "value": "60"
+        },
+        {
+          "label": "2 hours",
+          "value": "120"
+        }
+      ],
+      "min": 1,
+      "max": 1440,
+      "step": 1,
+      "agentWritable": true
+    },
+    {
+      "key": "cloudBoxesDeleteStoppedAfterDays",
+      "title": "Delete archived boxes after",
+      "subtitle": "When every session on a box is archived, the box stops and is deleted after this many days. A box with unpushed work is kept until you push or delete it.",
+      "tab": "cloudBoxes",
+      "tabTitle": "Cloud Boxes",
+      "section": "cloudLifetime",
+      "sectionTitle": "Stopping and deleting",
+      "type": "number",
+      "default": 7,
+      "options": [
+        {
+          "label": "1 day",
+          "value": "1"
+        },
+        {
+          "label": "3 days",
+          "value": "3"
+        },
+        {
+          "label": "7 days",
+          "value": "7"
+        },
+        {
+          "label": "14 days",
+          "value": "14"
+        },
+        {
+          "label": "30 days",
+          "value": "30"
+        }
+      ],
+      "min": 1,
+      "max": 365,
+      "step": 1,
+      "agentWritable": true
+    },
+    {
+      "key": "cloudBoxesPhoneStartEnabled",
+      "title": "Start boxes from your phone",
+      "subtitle": "Keep your provider key, agent logins, Default snapshots and picked secrets on your paired phones, so they can start a box while this computer is off.",
+      "tab": "cloudBoxes",
+      "tabTitle": "Cloud Boxes",
+      "section": "cloudLifetime",
+      "sectionTitle": "Stopping and deleting",
+      "type": "boolean",
+      "default": false,
+      "agentWritable": true
+    },
+    {
+      "key": "cloudBoxesBoxes",
+      "title": "Your boxes",
+      "subtitle": "Every box with its state, project, age and cost. Stop a box, or delete it; a box with unpushed work asks first.",
+      "tab": "cloudBoxes",
+      "tabTitle": "Cloud Boxes",
+      "section": "cloudBoxList",
+      "sectionTitle": "Your boxes",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "cloudBoxesClaudeLogins",
+      "title": "Claude on cloud boxes",
+      "subtitle": "Allow a Claude account on boxes: it makes a one-year box token after one approval in your browser, so Claude on this computer stays signed in.",
+      "tab": "cloudBoxes",
+      "tabTitle": "Cloud Boxes",
+      "section": "cloudAgentLogins",
+      "sectionTitle": "Agent logins for boxes",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "cloudBoxesCodexLogins",
+      "title": "Codex on cloud boxes",
+      "subtitle": "Allow a Codex account on boxes: each box gets a fresh copy of its login and sends refreshed sign-ins back to this computer.",
+      "tab": "cloudBoxes",
+      "tabTitle": "Cloud Boxes",
+      "section": "cloudAgentLogins",
+      "sectionTitle": "Agent logins for boxes",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
       "key": "agentboxStatus",
       "title": "agentbox",
       "subtitle": "Install agentbox, the free open-source command line tool Ghostex uses to run agent sessions in boxes, see its version and whether Docker is running, and run its check.",
       "tab": "cloudBoxes",
       "tabTitle": "Cloud Boxes",
       "section": "overview",
-      "sectionTitle": "Cloud Boxes",
+      "sectionTitle": "More providers (agentbox)",
       "type": "ui",
-      "agentWritable": false,
-      "availability": "Only on macOS and Linux."
+      "agentWritable": false
     },
     {
       "key": "agentboxSetUpForMe",
@@ -9430,7 +9905,7 @@
       "tab": "cloudBoxes",
       "tabTitle": "Cloud Boxes",
       "section": "overview",
-      "sectionTitle": "Cloud Boxes",
+      "sectionTitle": "More providers (agentbox)",
       "type": "ui",
       "agentWritable": false,
       "availability": "Only on macOS and Linux."
@@ -9442,7 +9917,7 @@
       "tab": "cloudBoxes",
       "tabTitle": "Cloud Boxes",
       "section": "overview",
-      "sectionTitle": "Cloud Boxes",
+      "sectionTitle": "More providers (agentbox)",
       "type": "ui",
       "agentWritable": false,
       "availability": "Only on macOS and Linux."
@@ -9578,7 +10053,7 @@
     },
     {
       "key": "agentboxStartThread",
-      "title": "Start a thread in a box",
+      "title": "Start a thread in an agentbox box",
       "subtitle": "Open New Thread and pick where it runs under Run on. Boxes open in the terminal view.",
       "tab": "cloudBoxes",
       "tabTitle": "Cloud Boxes",
@@ -10246,7 +10721,7 @@
     {
       "key": "cloudBoxes",
       "title": "Cloud Boxes",
-      "subtitle": "Run agent sessions in isolated boxes, in Docker on this computer or in the cloud, from New Thread's Run on choice or Run in a Box in the Select Agent menu.",
+      "subtitle": "Run agent sessions on a Cloud Box: a Linux machine on your Instabox or Boat account, started from a new chat, with more providers through agentbox.",
       "tab": "extensions",
       "tabTitle": "Extensions",
       "section": "official",
@@ -10382,17 +10857,16 @@
       "agentWritable": true
     },
     {
-      "key": "cloudBoxesHidden",
-      "title": "Turn off Cloud Boxes",
-      "subtitle": "Turn off Cloud Boxes everywhere: the Cloud Boxes page in Settings, the Run on choice of a new thread, Run in a Box in the Select Agent menu and the agentbox commands. Off by default; your boxes and box settings are kept.",
+      "key": "cloudBoxesEnabled",
+      "title": "Cloud Boxes",
+      "subtitle": "Turn Cloud Boxes on or off everywhere: the Cloud Boxes page in Settings, the Cloud Box choice of a new chat, the Run on choice of a new thread, Run in a Box in the Select Agent menu and the cloud and agentbox commands. On by default; your boxes and box settings are kept while it is off.",
       "tab": "extensions",
       "tabTitle": "Extensions",
       "section": "official",
       "sectionTitle": "Built-in",
       "type": "boolean",
       "default": true,
-      "agentWritable": true,
-      "availability": "Only on macOS and Linux."
+      "agentWritable": true
     },
     {
       "key": "workspacesHidden",
@@ -10493,7 +10967,7 @@
     {
       "key": "voiceAgentHidden",
       "title": "Turn off the voice agent",
-      "subtitle": "Turn off the voice agent everywhere: the headset at the top of the window and its arrow menu, voice calls about one session, the call rows on Settings > Extensions > Voice agent and the voice agent hotkeys, on this computer and in the phone app connected to it. A call that is running ends. Dictate keeps working, and the xAI and OpenAI keys stay on Settings > Extensions > Voice agent. On by default; your voice settings are kept.",
+      "subtitle": "Turn off the voice agent everywhere: the headset at the top of the window and its arrow menu, voice calls about one session, the call rows on Settings > Voice and the voice agent hotkeys, on this computer and in the phone app connected to it. A call that is running ends. Dictate keeps working, and the xAI and OpenAI keys stay on Settings > Voice. On by default; your voice settings are kept.",
       "tab": "extensions",
       "tabTitle": "Extensions",
       "section": "official",
@@ -10841,9 +11315,9 @@
       "agentWritable": false
     },
     {
-      "key": "setTerminalLinks",
-      "title": "Set Terminal Links",
-      "subtitle": "Make Ghostex the handler for ghostex:// terminal links.",
+      "key": "setGhostexLinks",
+      "title": "Set Ghostex Links",
+      "subtitle": "Make Ghostex the handler for ghostex:// links, which open a session from a browser or another app.",
       "tab": "osIntegration",
       "tabTitle": "OS Integration",
       "section": "defaults",
@@ -10865,7 +11339,7 @@
     {
       "key": "setAll",
       "title": "Set All",
-      "subtitle": "Set Ghostex as default editor, terminal-link handler, and script runner.",
+      "subtitle": "Set Ghostex as default editor, ghostex:// link handler, and script runner.",
       "tab": "osIntegration",
       "tabTitle": "OS Integration",
       "section": "defaults",
@@ -10894,6 +11368,18 @@
       "sectionTitle": "Diagnostics",
       "type": "ui",
       "agentWritable": false
+    },
+    {
+      "key": "defaultProjectsFolder",
+      "title": "Default projects folder",
+      "subtitle": "Folder that holds your projects, like ~/dev. Add Project's New project folder makes new projects here, and Local folder starts here. Left blank, Add Project suggests the folder that holds the selected project (else ~/dev) and saves the folder your first new project is made in.",
+      "tab": "projects",
+      "tabTitle": "Projects",
+      "section": "newProjects",
+      "sectionTitle": "New projects",
+      "type": "string",
+      "default": "",
+      "agentWritable": true
     },
     {
       "key": "docsFolders",
@@ -11033,6 +11519,39 @@
       "agentWritable": false
     },
     {
+      "key": "projectCloudBoxDefaults",
+      "title": "Cloud box provider and size",
+      "subtitle": "Which provider and machine size a new Cloud Box for this project starts on.",
+      "tab": "projects",
+      "tabTitle": "Projects",
+      "section": "projectSettings",
+      "sectionTitle": "Project settings",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "projectCloudBoxSnapshots",
+      "title": "Cloud box snapshots",
+      "subtitle": "This project's saved snapshots: what a new Cloud Box starts from. Make one the Default (★), update the Default from a running box, or delete one.",
+      "tab": "projects",
+      "tabTitle": "Projects",
+      "section": "projectSettings",
+      "sectionTitle": "Project settings",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "projectCloudBoxSecrets",
+      "title": "Send to the box",
+      "subtitle": "Tick the project's .env files and name the variables a Cloud Box gets at start. Their values are read from this computer each time and never saved in a snapshot.",
+      "tab": "projects",
+      "tabTitle": "Projects",
+      "section": "projectSettings",
+      "sectionTitle": "Project settings",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
       "key": "easyConnectEnabled",
       "title": "Easy Connect",
       "subtitle": "Connect a phone or a remote machine. Install the Tailcat CLI helper with one click.",
@@ -11068,7 +11587,18 @@
     {
       "key": "pairedDevices",
       "title": "Paired devices",
-      "subtitle": "Phones and computers paired with this computer; remove one to unpair it.",
+      "subtitle": "Phones and computers paired with this computer; remove one to unpair it and revoke its access.",
+      "tab": "remote",
+      "tabTitle": "Remote",
+      "section": "easyConnect",
+      "sectionTitle": "Easy Connect",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "pairedDevicesOnly",
+      "title": "Only paired devices can connect",
+      "subtitle": "Easy Connect lets in only paired phones and the keys listed under Advanced; a new phone can still pair while the QR is showing.",
       "tab": "remote",
       "tabTitle": "Remote",
       "section": "easyConnect",
@@ -11144,6 +11674,17 @@
       "agentWritable": false
     },
     {
+      "key": "shortName",
+      "title": "Short names",
+      "subtitle": "Each computer's 2-character name on the sidebar's computer pills, this one's included.",
+      "tab": "remote",
+      "tabTitle": "Remote",
+      "section": "remoteMachines",
+      "sectionTitle": "Remote machines",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
       "key": "sshHost",
       "title": "SSH host",
       "subtitle": "Remote machine SSH host.",
@@ -11210,6 +11751,18 @@
       "agentWritable": false
     },
     {
+      "key": "localMachineShortName",
+      "title": "This computer's short name",
+      "subtitle": "Up to 2 characters on the sidebar's computer pills; empty uses one made from the computer's name.",
+      "tab": "remote",
+      "tabTitle": "Remote",
+      "section": "remoteMachines",
+      "sectionTitle": "Remote machines",
+      "type": "string",
+      "default": "",
+      "agentWritable": false
+    },
+    {
       "key": "servedPorts",
       "title": "Easy Connect served ports",
       "subtitle": "Local ports Easy Connect exposes to paired phones.",
@@ -11272,6 +11825,133 @@
       "tabTitle": "Remote",
       "section": "remoteAdvanced",
       "sectionTitle": "Advanced",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "syncSpaces",
+      "title": "Spaces",
+      "subtitle": "Keep Spaces and project groups the same on your computers while they are connected to each other: their names, icons, colours, order and which projects are in them. On by default.",
+      "tab": "sync",
+      "tabTitle": "Sync",
+      "section": "whatSyncs",
+      "sectionTitle": "What syncs",
+      "type": "boolean",
+      "default": true,
+      "agentWritable": true
+    },
+    {
+      "key": "syncAppearance",
+      "title": "Appearance",
+      "subtitle": "Keep the theme, colours, fonts, the chat's look and the glass the same on your computers. The glass picture or video, the interface scale and zoom stay on each computer. Off by default.",
+      "tab": "sync",
+      "tabTitle": "Sync",
+      "section": "whatSyncs",
+      "sectionTitle": "What syncs",
+      "type": "boolean",
+      "default": false,
+      "agentWritable": true
+    },
+    {
+      "key": "syncAgentDefaults",
+      "title": "Agent defaults",
+      "subtitle": "Keep the default agent, how new sessions open, the title agent, Accept all, and each agent's default model and effort the same on your computers. Off by default.",
+      "tab": "sync",
+      "tabTitle": "Sync",
+      "section": "whatSyncs",
+      "sectionTitle": "What syncs",
+      "type": "boolean",
+      "default": false,
+      "agentWritable": true
+    },
+    {
+      "key": "syncSoundsAndNotifications",
+      "title": "Sounds and notifications",
+      "subtitle": "Keep completion and copy sounds, attention notifications and the finished-work border the same on your computers. Off by default.",
+      "tab": "sync",
+      "tabTitle": "Sync",
+      "section": "whatSyncs",
+      "sectionTitle": "What syncs",
+      "type": "boolean",
+      "default": false,
+      "agentWritable": true
+    },
+    {
+      "key": "syncKeybindings",
+      "title": "Keybindings",
+      "subtitle": "Keep keyboard shortcuts the same on your computers of the same system (a Mac with a Mac, Windows with Windows). Off by default.",
+      "tab": "sync",
+      "tabTitle": "Sync",
+      "section": "whatSyncs",
+      "sectionTitle": "What syncs",
+      "type": "boolean",
+      "default": false,
+      "agentWritable": true
+    },
+    {
+      "key": "syncCoordinator",
+      "title": "Coordinator",
+      "subtitle": "Keep coordinator settings and your edited playbooks (the one for all projects and each project's own, matched by repository) the same on your computers. Off by default.",
+      "tab": "sync",
+      "tabTitle": "Sync",
+      "section": "whatSyncs",
+      "sectionTitle": "What syncs",
+      "type": "boolean",
+      "default": false,
+      "agentWritable": true
+    },
+    {
+      "key": "syncComputerList",
+      "title": "Computers that sync",
+      "subtitle": "Every computer connected to this one (Remote machines, Easy Connect, Tailscale) joins. Remove one to stop syncing with it; Add back lets it sync again.",
+      "tab": "sync",
+      "tabTitle": "Sync",
+      "section": "syncComputers",
+      "sectionTitle": "Your computers",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "syncChangeNotes",
+      "title": "Recent changes",
+      "subtitle": "When two computers changed the same thing while apart, the later change wins on both. Undo puts the other one back everywhere.",
+      "tab": "sync",
+      "tabTitle": "Sync",
+      "section": "syncChanges",
+      "sectionTitle": "Changed on two computers",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "secretProviders",
+      "title": "1Password accounts",
+      "subtitle": "The 1Password accounts Ghostex reads keys and tokens from, so you can paste an op://vault/item/field reference instead of the key itself. Needs the 1Password CLI (op) with \"Integrate with 1Password CLI\" turned on in 1Password. Ghostex keeps only the account name; 1Password may ask you to unlock when a key is read.",
+      "tab": "secrets",
+      "tabTitle": "Secrets",
+      "section": "providers",
+      "sectionTitle": "Secret providers",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "secretReferenceCheck",
+      "title": "Check a 1Password reference",
+      "subtitle": "Reads an op://vault/item/field reference once to see that it works. Ghostex says only whether it could read it and never shows the value.",
+      "tab": "secrets",
+      "tabTitle": "Secrets",
+      "section": "check",
+      "sectionTitle": "Check a reference",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "secretRequests",
+      "title": "Private secret requests",
+      "subtitle": "When an agent needs a password, API key or token, it asks in a private card above the chat box instead of in the chat. What you type goes to a private file only that agent's commands can read, deleted after 24 hours; it never appears in the chat or reaches the model. With a 1Password account added, you can answer with an op:// reference instead.",
+      "tab": "secrets",
+      "tabTitle": "Secrets",
+      "section": "requests",
+      "sectionTitle": "Secrets agents ask for",
       "type": "ui",
       "agentWritable": false
     },
@@ -11421,7 +12101,7 @@
     {
       "key": "slackUser",
       "title": "Your Slack user",
-      "subtitle": "Your Slack member ID, so @Ghostex commands you send in Slack reach this computer.",
+      "subtitle": "Your Slack member ID and the one-time code from Ghostex's private Slack reply, so @Ghostex commands you send in Slack reach this computer.",
       "tab": "workspaces",
       "tabTitle": "Workspaces",
       "section": "team",
@@ -11617,11 +12297,138 @@
       "agentWritable": false
     },
     {
+      "key": "dictateEngine",
+      "title": "Engine",
+      "subtitle": "Which service turns your recording into text: a local model on this computer (no key, works offline), OpenAI or xAI. A new install picks your saved key (xAI, then OpenAI) and the local model when there is no key; after that it stays on what you pick. Each computer has its own engine, and the phone changes it per computer.",
+      "tab": "voiceAgent",
+      "tabTitle": "Voice",
+      "section": "dictate",
+      "sectionTitle": "Dictate",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "dictateModels",
+      "title": "Local models",
+      "subtitle": "Models that run on this computer with no key and work offline: Parakeet TDT 0.6B v3 (fastest, English and 24 European languages), Whisper large-v3-turbo (99 languages) and Whisper base (small and quick). Download, cancel or remove each one; the one you pick transcribes. Stored in gxserver's data folder.",
+      "tab": "voiceAgent",
+      "tabTitle": "Voice",
+      "section": "dictate",
+      "sectionTitle": "Dictate",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "dictateLanguage",
+      "title": "Language",
+      "subtitle": "Auto works for most people. Pick one when short phrases come out in the wrong language.",
+      "tab": "voiceAgent",
+      "tabTitle": "Voice",
+      "section": "dictate",
+      "sectionTitle": "Dictate",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "dictateHotkey",
+      "title": "Hotkey",
+      "subtitle": "Dictate into the chat box you are in. Change it in Hotkeys.",
+      "tab": "voiceAgent",
+      "tabTitle": "Voice",
+      "section": "dictate",
+      "sectionTitle": "Dictate",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "dictateHotkeyMode",
+      "title": "Hotkey mode",
+      "subtitle": "Auto: tap to start and tap again to stop, or hold for 300 ms or more and it stops when you let go. Toggle: every press starts or stops. Hold: it records only while you hold the keys. Escape cancels.",
+      "tab": "voiceAgent",
+      "tabTitle": "Voice",
+      "section": "dictate",
+      "sectionTitle": "Dictate",
+      "type": "enum",
+      "default": "auto",
+      "options": [
+        {
+          "label": "Auto",
+          "value": "auto"
+        },
+        {
+          "label": "Toggle",
+          "value": "toggle"
+        },
+        {
+          "label": "Hold",
+          "value": "hold"
+        }
+      ],
+      "agentWritable": true
+    },
+    {
+      "key": "dictateMicrophone",
+      "title": "Microphone",
+      "subtitle": "The microphone this computer records Dictate from. System default follows the input device chosen in your sound settings.",
+      "tab": "voiceAgent",
+      "tabTitle": "Voice",
+      "section": "dictate",
+      "sectionTitle": "Dictate",
+      "type": "string",
+      "default": "",
+      "agentWritable": true
+    },
+    {
+      "key": "dictateDictionary",
+      "title": "Dictionary",
+      "subtitle": "Names and terms it should expect. An alias fixes a word it keeps mishearing (\"GX server\" becomes gxserver). Your project names are added on their own.",
+      "tab": "voiceAgent",
+      "tabTitle": "Voice",
+      "section": "cleanup",
+      "sectionTitle": "Clean-up",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "dictateRemoveFillers",
+      "title": "Remove filler words",
+      "subtitle": "Drops \"um\", \"uh\" and other hesitation sounds.",
+      "tab": "voiceAgent",
+      "tabTitle": "Voice",
+      "section": "cleanup",
+      "sectionTitle": "Clean-up",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "dictateInsertSpacing",
+      "title": "Insert with spacing",
+      "subtitle": "Adds a space before or after the text when the characters next to the caret need one.",
+      "tab": "voiceAgent",
+      "tabTitle": "Voice",
+      "section": "cleanup",
+      "sectionTitle": "Clean-up",
+      "type": "boolean",
+      "default": true,
+      "agentWritable": true
+    },
+    {
+      "key": "dictatePolish",
+      "title": "AI polish",
+      "subtitle": "Claude Sonnet 5.5 fixes punctuation and keeps what you meant when you corrected yourself (\"no, I mean…\"), through Claude Code on the computer that transcribes. The chat box shows Polishing with a Skip button; if it fails, the text goes in unpolished.",
+      "tab": "voiceAgent",
+      "tabTitle": "Voice",
+      "section": "cleanup",
+      "sectionTitle": "Clean-up",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
       "key": "voiceAgentProvider",
       "title": "Voice provider",
-      "subtitle": "Which realtime voice model you talk to: xAI Grok Voice or OpenAI GPT Realtime. Both are billed by the provider while a conversation is open.",
+      "subtitle": "Which realtime voice model you talk to: xAI Grok Voice or OpenAI GPT Realtime. Both are billed by the provider while a conversation is open. It doesn't follow Dictate's engine: Dictate can stay local while calls use xAI or OpenAI.",
       "tab": "voiceAgent",
-      "tabTitle": "Voice agent",
+      "tabTitle": "Voice",
       "section": "provider",
       "sectionTitle": "Voice agent",
       "type": "enum",
@@ -11643,7 +12450,7 @@
       "title": "Grok voice",
       "subtitle": "The voice Grok Voice speaks with.",
       "tab": "voiceAgent",
-      "tabTitle": "Voice agent",
+      "tabTitle": "Voice",
       "section": "provider",
       "sectionTitle": "Voice agent",
       "type": "enum",
@@ -11769,7 +12576,7 @@
       "title": "OpenAI voice",
       "subtitle": "The voice GPT Realtime speaks with. Marin and Cedar sound the most natural.",
       "tab": "voiceAgent",
-      "tabTitle": "Voice agent",
+      "tabTitle": "Voice",
       "section": "provider",
       "sectionTitle": "Voice agent",
       "type": "enum",
@@ -11823,7 +12630,7 @@
       "title": "Speaking speed",
       "subtitle": "How fast the voice agent talks, from normal speed to twice as fast. The voice keeps its pitch, and the speed menu next to the voice in the voice panel changes it too, even mid-sentence.",
       "tab": "voiceAgent",
-      "tabTitle": "Voice agent",
+      "tabTitle": "Voice",
       "section": "provider",
       "sectionTitle": "Voice agent",
       "type": "enum",
@@ -11861,7 +12668,7 @@
       "title": "Call mode",
       "subtitle": "Regular calls listen hands-free; on Grok they're billed for the whole time the call is connected, quiet and muted time included (about $0.08 a minute). Push-to-talk calls listen only while you hold the talk button next to Mute (or Space, or the Hold to Talk hotkey); on Grok you pay only for the audio you send and the agent's replies. In a muted Regular call, holding it unmutes you for as long as you hold. GPT Realtime bills only audio in both modes. A change applies to your next call; the gear in the voice panel changes it too.",
       "tab": "voiceAgent",
-      "tabTitle": "Voice agent",
+      "tabTitle": "Voice",
       "section": "provider",
       "sectionTitle": "Voice agent",
       "type": "enum",
@@ -11883,7 +12690,7 @@
       "title": "Last conversation",
       "subtitle": "A short summary of your last voice conversation, kept on this computer until the next conversation replaces it. Press Continue in the voice panel, or say \"pick up where we left off\", to carry on from it. Forget deletes it.",
       "tab": "voiceAgent",
-      "tabTitle": "Voice agent",
+      "tabTitle": "Voice",
       "section": "memory",
       "sectionTitle": "Memory",
       "type": "ui",
@@ -11892,9 +12699,9 @@
     {
       "key": "voiceAgentXaiKey",
       "title": "xAI API key",
-      "subtitle": "Your xAI API key for Grok Voice and for the chat box's dictation microphone. Kept encrypted on this computer; your phone uses it through this computer and never stores it.",
+      "subtitle": "Used by the voice agent on Grok Voice, and by Dictate when its engine is xAI. Kept encrypted on this computer; your phone uses it through this computer and never stores it. With a 1Password account added in Settings > Secrets, paste an op://vault/item/field reference instead and the key is read from 1Password each time.",
       "tab": "voiceAgent",
-      "tabTitle": "Voice agent",
+      "tabTitle": "Voice",
       "section": "keys",
       "sectionTitle": "API keys",
       "type": "ui",
@@ -11903,9 +12710,9 @@
     {
       "key": "voiceAgentOpenaiKey",
       "title": "OpenAI API key",
-      "subtitle": "Your OpenAI API key for GPT Realtime, and for the chat box's dictation microphone when no xAI key is saved. Kept encrypted on this computer and never shown again after you save it.",
+      "subtitle": "Used by the voice agent on GPT Realtime, and by Dictate when its engine is OpenAI. Kept encrypted on this computer and never shown again after you save it. With a 1Password account added in Settings > Secrets, paste an op://vault/item/field reference instead.",
       "tab": "voiceAgent",
-      "tabTitle": "Voice agent",
+      "tabTitle": "Voice",
       "section": "keys",
       "sectionTitle": "API keys",
       "type": "ui",
@@ -11914,9 +12721,9 @@
     {
       "key": "voiceAgentDictationHistory",
       "title": "Dictation history",
-      "subtitle": "Every recording you made with the Dictate microphone, newest first, with its text. Play, download or delete a recording, copy its text, recover one you cancelled, or transcribe one that failed (the text is copied to your clipboard too). Recordings stay on this computer until you delete them.",
+      "subtitle": "Every recording you made with the Dictate microphone, newest first, with its text and the engine that made it. Play, download or delete a recording, copy its text, recover one you cancelled, or transcribe one that failed (the text is copied to your clipboard too). Recordings stay on this computer until you delete them.",
       "tab": "voiceAgent",
-      "tabTitle": "Voice agent",
+      "tabTitle": "Voice",
       "section": "dictations",
       "sectionTitle": "Dictation history",
       "type": "ui",
@@ -11983,7 +12790,7 @@
     {
       "id": "toggleChatSummaryMode",
       "title": "Toggle Summary Mode",
-      "description": "Turn Summary mode on or off in the chat session you are in.",
+      "description": "Turn Summary view on in the chat session you are in, or off again to Normal view.",
       "defaultKey": "ctrl+alt+s",
       "windowsLinuxDefaultKey": "cmd+alt+shift+s",
       "retiredDefaultKeys": [
@@ -12005,6 +12812,34 @@
       "description": "Show or hide the files and links mentioned in the chat session you are in.",
       "defaultKey": "ctrl+alt+l",
       "windowsLinuxDefaultKey": "cmd+alt+shift+l",
+      "noTerminalBinding": true
+    },
+    {
+      "id": "newChatPickProject",
+      "title": "New Chat: Project",
+      "description": "While a new chat's message box has focus, open the project search in the bar above it. It takes Option+O from the message box on a Mac (no ø there): if your keyboard types a letter with Option+O, pick another key.",
+      "defaultKey": "alt+o",
+      "noTerminalBinding": true
+    },
+    {
+      "id": "newChatPickComputer",
+      "title": "New Chat: Computer",
+      "description": "While a new chat's message box has focus, open the computers that have the project, in the bar above it. It takes Option+M from the message box on a Mac (no µ there): if your keyboard types a letter with Option+M, pick another key.",
+      "defaultKey": "alt+m",
+      "noTerminalBinding": true
+    },
+    {
+      "id": "newChatPickWhere",
+      "title": "New Chat: Where It Runs",
+      "description": "While a new chat's message box has focus, open where it runs (This folder, New worktree, Existing, Cloud Box) in the bar above it; 1 to 4 pick. It takes Option+W from the message box on a Mac (no ∑ there): if your keyboard types a letter with Option+W, pick another key.",
+      "defaultKey": "alt+w",
+      "noTerminalBinding": true
+    },
+    {
+      "id": "newChatPickBranch",
+      "title": "New Chat: Branch",
+      "description": "While a new chat's message box has focus, open the last part of the bar above it: a new worktree's base branch, the existing worktree, or the Cloud Box pick. It takes Option+B from the message box on a Mac (no ∫ there): if your keyboard types a letter with Option+B, pick another key.",
+      "defaultKey": "alt+b",
       "noTerminalBinding": true
     },
     {
@@ -12033,9 +12868,8 @@
     {
       "id": "toggleDictation",
       "title": "Dictate",
-      "description": "Start dictating into the chat box of the chat session you are in; press again to stop and type what you said.",
-      "defaultKey": "ctrl+alt+d",
-      "windowsLinuxDefaultKey": "cmd+alt+shift+d",
+      "description": "Dictate into the chat box of the chat session you are in. Tap to start and tap again to stop, or hold it and it stops when you let go (Settings > Voice > Hotkey mode).",
+      "defaultKey": "ctrl+alt+space",
       "noTerminalBinding": true
     },
     {
@@ -12110,7 +12944,7 @@
     {
       "id": "openNewThreadPalette",
       "title": "New Thread in Active Project",
-      "description": "Pick an agent, Browser, or Terminal to start in the active project.",
+      "description": "Pick an agent, Browser, or Terminal to start in the active project. Press it again in the picker to choose another project.",
       "defaultKey": "cmd+n",
       "retiredDefaultKeys": [
         "cmd+shift+t",
@@ -13030,21 +13864,21 @@
     {
       "id": "zoomInFocusedView",
       "title": "Zoom In",
-      "description": "Make the focused terminal, browser page or picture bigger.",
+      "description": "Make everything Interface scale sizes bigger (the sidebar, chats, Files and terminal text), or with Scale areas separately on, just the focused one. A browser page or picture zooms by itself.",
       "defaultKey": "cmd+=",
       "terminalDefaultKey": "cmd+="
     },
     {
       "id": "zoomOutFocusedView",
       "title": "Zoom Out",
-      "description": "Make the focused terminal, browser page or picture smaller.",
+      "description": "Make everything Interface scale sizes smaller (the sidebar, chats, Files and terminal text), or with Scale areas separately on, just the focused one. A browser page or picture zooms by itself.",
       "defaultKey": "cmd+-",
       "terminalDefaultKey": "cmd+-"
     },
     {
       "id": "resetFocusedViewZoom",
       "title": "Reset Zoom",
-      "description": "Return the focused terminal, browser page or picture to its normal size.",
+      "description": "Set Interface scale back to 100%, or with Scale areas separately on, return the focused area to its normal size. A browser page or picture resets by itself.",
       "defaultKey": "cmd+0",
       "terminalDefaultKey": "cmd+0"
     },

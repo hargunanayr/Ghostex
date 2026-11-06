@@ -3,11 +3,12 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    AnyElement, AppContext as _, DragMoveEvent, Hsla, InteractiveElement, IntoElement,
+    AnyElement, AppContext as _, DragMoveEvent, Hsla, InteractiveElement, IntoElement, MouseButton,
     ParentElement, Render, StatefulInteractiveElement, Styled, div, px,
 };
-use gpui_component::{h_flex, v_flex};
-use serde_json::{Value, json};
+use gpui_component::tooltip::ManagedTooltipExt as _;
+use gpui_component::{ElementExt as _, h_flex, v_flex};
+use serde_json::Value;
 
 use ghostex_gx_core::unified_sidebar::UnifiedStatus;
 
@@ -15,6 +16,7 @@ use super::cards::{repo_tile, show_project_icons, status_look};
 use super::model::{UnifiedCard, UnifiedGroupView};
 use crate::GhostexGpuiApp;
 use crate::app::native_sidebar::appearance::SidebarAppearance;
+use crate::app::native_sidebar::disclosure::unified_key;
 
 /// A project header on the move.
 #[derive(Clone)]
@@ -93,6 +95,10 @@ impl GhostexGpuiApp {
             background: appearance.selected,
         };
         let new_key = key.clone();
+        let menu_key = key.clone();
+        // The menu hangs below the header, as a Project sidebar header's does.
+        let owner = crate::app::native_sidebar::menus::MenuOwner::default();
+        let record_owner = crate::app::native_sidebar::menus::record_menu_owner(&owner);
         let header = h_flex()
             .id(format!("native-unified-group-header-{key}"))
             .group(hover_group.clone())
@@ -126,13 +132,57 @@ impl GhostexGpuiApp {
                     .next()
                     .map(|card| repo_tile(card, appearance, show_project_icons(hud), false)),
             )
-            .child(
-                div()
+            /*
+            CDXC:RemoteMachines 2026-11-06 DECISION:
+            User: "also we should show this name on unified sidebar project headers when group by proj is enabled". A project on more than one computer, or only on another one, used to name each of them after its title in the Project sidebar header's chip, with the computer's short name (gx-core machine_short_names.rs).
+            CDXC:RemoteMachines 2026-11-06 DECISION:
+            User, of the header reading "Ghostex  MM  WN": "please let's only show the machines that have this project on them in the tooltip when i hover not as pills on the project header". This supersedes the header part of the decision above: the Unified project header draws no computer pills; hovering its title shows a tooltip naming the computers that have the project, full name first and short name after ("Windows (WN)"), under the same rule (on more than one computer, or only on another one). The pills on cards, the session rows' computer badge and the Project sidebar's header chips stay.
+            */
+            .child({
+                let title = div()
+                    .id(gpui::SharedString::from(format!(
+                        "native-unified-group-title-{key}"
+                    )))
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .child(group.label.clone()),
-            )
+                    .child(group.label.clone());
+                let tooltip = (!group.machines.is_empty()).then(|| {
+                    let computers = group
+                        .machines
+                        .iter()
+                        .map(|(name, short)| format!("{name} ({short})"))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    format!("{}\n\nOn these computers:\n{computers}", group.label)
+                });
+                let span = crate::app::native_sidebar::tooltips::SidebarTooltipSpan::sidebar(
+                    self.sidebar_width,
+                    scale,
+                );
+                title.when_some(
+                    tooltip.filter(|_| {
+                        self.native_sidebar.pointer_inside
+                            && self.native_sidebar.menu.is_none()
+                            && !cx.has_active_drag()
+                    }),
+                    |title, tooltip| {
+                        title.managed_discrete_tooltip_with_placement(
+                            span.placement(),
+                            appearance.tooltip_delay,
+                            move |window, cx| {
+                                crate::app::native_sidebar::tooltips::sidebar_tooltip(
+                                    tooltip.clone(),
+                                    span,
+                                    scale,
+                                    window,
+                                    cx,
+                                )
+                            },
+                        )
+                    },
+                )
+            })
             .when(folded, |row| {
                 row.children(most_urgent(group).map(|status| {
                     let (_, color) = status_look(status, appearance);
@@ -177,13 +227,41 @@ impl GhostexGpuiApp {
                     .text_color(appearance.muted)
                     .child(group.count.to_string()),
             )
+            .on_prepaint(move |bounds, window, app| record_owner(bounds, window, app))
+            /*
+            CDXC:Sidebar 2026-11-05 DECISION:
+            User: "in the unified sidebar i can't right click on the project header when i group by project. pls fix." The header had no right-click handler at all. It now opens the Project sidebar header's menu for that project, from the same builder the filter menu's project row uses (`gx_store_unified_project_menu`), so its rows run the same actions. A repository on several computers opens the menu of its main checkout on this computer when it has one there, else on another (`repo_menu_groups`, CDXC:Sidebar 2026-11-01 in header.rs).
+            */
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |app, event: &gpui::MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    let Some(menu) = app.unified_group_menu(&menu_key) else {
+                        return;
+                    };
+                    Self::show_native_sidebar_context_menu(
+                        &menu,
+                        owner.get(),
+                        event.position,
+                        scale,
+                        window,
+                        cx,
+                    );
+                }),
+            )
             .on_click(cx.listener(move |app, _, _, cx| {
                 cx.stop_propagation();
                 let host = &mut app.gx_store.unified_sidebar;
-                if !host.saved.folded_groups.remove(&toggle_key) {
+                let folded = !host.saved.folded_groups.remove(&toggle_key);
+                if folded {
                     host.saved.folded_groups.insert(toggle_key.clone());
                 }
                 host.persist();
+                // It folds as a Project sidebar project does (disclosure.rs, fold_motion.rs).
+                let duration = app.native_sidebar_fold_duration();
+                app.native_sidebar
+                    .disclosures
+                    .fold(unified_key(&toggle_key), folded, duration);
                 cx.notify();
             }))
             .on_drag(drag, |drag, _, _, cx| cx.new(|_| drag.clone()));
@@ -218,18 +296,29 @@ impl GhostexGpuiApp {
                 app.gx_store_unified_move_group(&drag.repo_key, &drop_key, after, cx);
             }))
             .child(header)
-            .when(!folded, |column| {
-                column
-                    .children(
-                        group
-                            .cards
-                            .iter()
-                            .map(|card| self.render_native_unified_card(card, hud, appearance, cx)),
-                    )
-                    .children(group.shelves.iter().map(|shelf| {
-                        self.render_native_unified_shelf(shelf, Some(&key), hud, appearance, cx)
-                    }))
-            })
+            // Drawn while open and while it folds shut, inside the fold that moves it.
+            .when(
+                self.native_sidebar
+                    .disclosures
+                    .present(&unified_key(&key), folded),
+                |column| {
+                    let body = v_flex()
+                        .w_full()
+                        .children(
+                            group.cards.iter().map(|card| {
+                                self.render_native_unified_card(card, hud, appearance, cx)
+                            }),
+                        )
+                        .children(group.shelves.iter().map(|shelf| {
+                            self.render_native_unified_shelf(shelf, Some(&key), hud, appearance, cx)
+                        }));
+                    column.child(self.render_native_disclosure(
+                        unified_key(&key),
+                        body.into_any_element(),
+                        cx,
+                    ))
+                },
+            )
             .children(drop_line.map(|after| {
                 div()
                     .absolute()
@@ -244,54 +333,31 @@ impl GhostexGpuiApp {
             .into_any_element()
     }
 
-    /// The "+" on a header: the New session picker in that project when one machine has it, or a
-    /// menu of its machines when several do.
+    /// A header's right-click menu: the Project sidebar menu of the project its repository's filter
+    /// row opens.
+    fn unified_group_menu(&mut self, repo_key: &str) -> Option<Value> {
+        let group_id = self
+            .native_sidebar
+            .unified
+            .as_ref()?
+            .repo_menu_groups
+            .get(repo_key)?
+            .clone();
+        self.gx_store_unified_project_menu(&group_id)
+    }
+
+    /// The "+" on a header: the New thread picker on that project, on the machine it starts on.
+    ///
+    /// CDXC:Sidebar 2026-11-03 DECISION:
+    /// User (Q1167, the page's "+" opens the picker with the machine already chosen, unobjected): the machine is picked on the New thread picker, so the "+" no longer opens a menu of machines first. It starts on the last machine used for the project, a connected one when there is one.
     fn unified_group_new_session(
         &mut self,
         repo_key: &str,
-        event: &gpui::ClickEvent,
-        scale: f32,
-        window: &mut gpui::Window,
+        _event: &gpui::ClickEvent,
+        _scale: f32,
+        _window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        let choices = self.gx_store_project_choices();
-        let Some(choice) = choices.iter().find(|choice| choice.repo_key == repo_key) else {
-            return;
-        };
-        let reachable: Vec<_> = choice
-            .machines
-            .iter()
-            .filter(|machine| machine.connected)
-            .collect();
-        match reachable.as_slice() {
-            [] => {}
-            [machine] => {
-                let (machine_id, project_id) =
-                    (machine.machine_id.clone(), machine.project_id.clone());
-                self.open_new_session_in(&machine_id, &project_id, cx);
-            }
-            machines => {
-                let selected = choice
-                    .selected_machine()
-                    .map(|chip| chip.machine_id.as_str());
-                let menu = Value::Array(
-                    machines
-                        .iter()
-                        .map(|machine| {
-                            json!({
-                                "label": machine.label,
-                                "checked": selected == Some(machine.machine_id.as_str()),
-                                "command": {
-                                    "type": "unifiedNewSession",
-                                    "machineId": machine.machine_id,
-                                    "projectId": machine.project_id,
-                                },
-                            })
-                        })
-                        .collect(),
-                );
-                Self::show_native_sidebar_menu(&menu, event.position(), scale, window, cx);
-            }
-        }
+        self.open_new_session_in_repo(repo_key, cx);
     }
 }

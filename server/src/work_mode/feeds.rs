@@ -165,10 +165,21 @@ fn refresh_lock() -> &'static Mutex<()> {
 }
 
 /// What one Linear key is asked for: the viewer's issues plus these teams' open ones.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) struct LinearFeedRequest {
     pub(crate) api_key: String,
     pub(crate) team_keys: BTreeSet<String>,
+}
+
+/// Never prints the key.
+impl std::fmt::Debug for LinearFeedRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("LinearFeedRequest")
+            .field("api_key", &"••••")
+            .field("team_keys", &self.team_keys)
+            .finish()
+    }
 }
 
 impl LinearFeedRequest {
@@ -235,7 +246,7 @@ pub(crate) fn seed_work_feeds(
 
 /// Whether any of the plan's feeds is missing or stale.
 pub(crate) fn work_feeds_stale(plan: &WorkFeedPlan) -> bool {
-    WorkSourceId::BUILT_IN
+    plan.sources()
         .into_iter()
         .any(|source| work_source(source).list_stale(plan))
         || {
@@ -270,7 +281,7 @@ pub(crate) fn refresh_work_feeds(plan: &WorkFeedPlan, force: bool) {
     };
     std::thread::scope(|scope| {
         // First, so each source judges what is stale before the `gh` checks below take their time.
-        for source in WorkSourceId::BUILT_IN {
+        for source in plan.sources() {
             scope.spawn(move || work_source(source).refresh_list(plan, force));
         }
         let github_cwds = plan.github_cwds();
@@ -479,16 +490,66 @@ pub(crate) fn parse_linear_list_issue(issue: &Value) -> Option<LinearListIssue> 
         project_url: text("/project/url"),
         cycle,
         labels: names(issue.pointer("/labels/nodes"), "name"),
-        pull_request_urls: names(issue.pointer("/attachments/nodes"), "url")
-            .into_iter()
-            .filter(|url| is_github_pull_request_url(url))
-            .collect(),
+        pull_request_urls: canonical_github_pull_request_urls(
+            names(issue.pointer("/attachments/nodes"), "url")
+                .iter()
+                .map(String::as_str),
+        ),
         identifier,
     })
 }
 
-pub(crate) fn is_github_pull_request_url(url: &str) -> bool {
-    url.contains("github.com/") && url.contains("/pull/")
+/// The longest link a ticket may carry.
+pub(crate) const MAX_URL_BYTES: usize = 2048;
+
+/// Whether `url` is exactly `https://github.com/<owner>/<repo>/pull/<number>`.
+///
+/// CDXC:WorkMode 2026-10-31 WHY:
+/// A ticket's first PR link becomes the selector of `gh pr view` (the details in item_details.rs, the card pass through refresh.rs), whoever sent it: a command source's answer, or an attachment anyone with access to the Linear workspace added. The old check only looked for `github.com/` and `/pull/`, so `gh` ran with `--repo=a/github.com/x/pull/1` and took it as its flag. The repository owner, on what a source sends: "`-x` must never read as a flag." So every PR link a source gives is this one shape.
+pub(crate) fn is_canonical_github_pull_request_url(url: &str) -> bool {
+    let Some(path) = url.strip_prefix("https://github.com/") else {
+        return false;
+    };
+    let parts: Vec<&str> = path.split('/').collect();
+    let [owner, repo, "pull", number] = parts[..] else {
+        return false;
+    };
+    url.len() <= MAX_URL_BYTES
+        && !owner.is_empty()
+        && owner.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        && !matches!(repo, "" | "." | "..")
+        && repo
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+        && number.chars().all(|c| c.is_ascii_digit())
+        && number.parse::<u64>().is_ok()
+}
+
+/// A GitHub PR's link trimmed to its canonical form: what a browser's address bar adds after the
+/// number (`/files`, `/commits/<sha>`, `#discussion_r1`, `?w=1`) goes. `None` when no PR is left.
+pub(crate) fn canonical_github_pull_request_url(url: &str) -> Option<String> {
+    let path = url
+        .strip_prefix("https://github.com/")?
+        .split(['?', '#'])
+        .next()?;
+    let parts: Vec<&str> = path.split('/').take(4).collect();
+    let canonical = format!("https://github.com/{}", parts.join("/"));
+    is_canonical_github_pull_request_url(&canonical).then_some(canonical)
+}
+
+/// The PRs these links name, canonical, each once, in the order they came.
+pub(crate) fn canonical_github_pull_request_urls<'a>(
+    urls: impl IntoIterator<Item = &'a str>,
+) -> Vec<String> {
+    let mut canonical: Vec<String> = Vec::new();
+    for url in urls {
+        if let Some(url) = canonical_github_pull_request_url(url) {
+            if !canonical.contains(&url) {
+                canonical.push(url);
+            }
+        }
+    }
+    canonical
 }
 
 fn names(nodes: Option<&Value>, key: &str) -> Vec<String> {

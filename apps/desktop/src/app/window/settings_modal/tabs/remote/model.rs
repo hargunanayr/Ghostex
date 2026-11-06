@@ -239,6 +239,8 @@ pub(crate) struct PairedDevice {
     pub(super) platform: String,
     pub(super) paired_at: String,
     pub(super) last_seen_at: Option<String>,
+    /// The phone's Easy Connect client key; `None` for a phone paired by an older Ghostex app.
+    pub(super) tailcat_client_key: Option<String>,
 }
 
 /// `readPairedDevicesResult`.
@@ -258,6 +260,7 @@ pub(super) fn read_paired_devices_result(value: &Value) -> Result<Vec<PairedDevi
             platform: text(device, "platform").unwrap_or_default(),
             paired_at: text(device, "pairedAt").unwrap_or_default(),
             last_seen_at: non_empty(device, "lastSeenAt"),
+            tailcat_client_key: non_empty(device, "tailcatClientKey"),
         })
         .collect())
 }
@@ -729,6 +732,8 @@ pub(super) fn read_easy_connect_code_input(input: &str) -> CodeReading {
 pub(super) struct MachineDraft {
     pub(super) id: String,
     pub(super) name: String,
+    /// The sidebar pill's short name, at most two characters (gx-core `machine_short_names`).
+    pub(super) short_name: String,
     /// `ssh` or `easyConnect`.
     pub(super) easy_connect: bool,
     pub(super) easy_connect_code: String,
@@ -741,6 +746,8 @@ pub(super) struct MachineDraft {
     pub(super) ssh_user: String,
     pub(super) wsl_distribution: String,
     pub(super) disabled: bool,
+    /// The machine's Agent access switch is off (it is on by default).
+    pub(super) agent_access_off: bool,
 }
 
 fn base36(mut value: u128) -> String {
@@ -777,6 +784,7 @@ pub(super) fn machine_draft_from_settings(machine: &Value) -> MachineDraft {
     MachineDraft {
         id: text(machine, "id").unwrap_or_default(),
         name: text(machine, "name").unwrap_or_default(),
+        short_name: text(machine, "shortName").unwrap_or_default(),
         easy_connect: machine.get("transport").and_then(Value::as_str) == Some("easyConnect"),
         easy_connect_code: String::new(),
         easy_connect_address: text(machine, "easyConnectAddress").unwrap_or_default(),
@@ -793,6 +801,7 @@ pub(super) fn machine_draft_from_settings(machine: &Value) -> MachineDraft {
         ssh_user: text(machine, "sshUser").unwrap_or_default(),
         wsl_distribution: text(machine, "wslDistribution").unwrap_or_default(),
         disabled: machine.get("disabled").and_then(Value::as_bool) == Some(true),
+        agent_access_off: machine.get("agentAccess").and_then(Value::as_bool) == Some(false),
     }
 }
 
@@ -856,6 +865,7 @@ pub(super) fn normalize_remote_machine_draft(draft: &MachineDraft) -> Option<Val
     let candidate = json!([{
         "id": draft.id,
         "name": draft.name,
+        "shortName": draft.short_name,
         "transport": if draft.easy_connect { "easyConnect" } else { "ssh" },
         "easyConnectAddress": draft.easy_connect_address,
         "sshHost": if draft.easy_connect { "" } else { draft.ssh_host.as_str() },
@@ -865,6 +875,7 @@ pub(super) fn normalize_remote_machine_draft(draft: &MachineDraft) -> Option<Val
         "sshUser": draft.ssh_user,
         "wslDistribution": wsl_distribution,
         "disabled": draft.disabled,
+        "agentAccess": !draft.agent_access_off,
     }]);
     ghostex_gx_core::normalize_remote_machine_settings(Some(&candidate))
         .into_iter()

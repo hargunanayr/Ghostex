@@ -23,27 +23,23 @@ pub(super) fn detect_claude_missing_login(
         return None;
     }
     let slot = cswap_missing_login_slot(&flatten_tail(&screen.folded, NOTICE_EXIT_SCAN_LINES))?;
-    let email = claude_slot_email(&slot);
-    let account = match email {
-        Some(email) => format!("account {slot} ({email})"),
-        None => format!("account {slot}"),
-    };
+    let account = claude_slot_card_name(&slot);
     Some(
         SessionChatTerminalNotice::new(
             SESSION_CHAT_NOTICE_LOGIN_EXPIRED,
             SessionChatTerminalNoticeSeverity::Error,
             SessionChatTerminalNoticeSource::Screen,
-            format!("Claude couldn't start: {account} has no saved login on this computer"),
+            format!("{account} isn't signed in here"),
         )
         .with_input_blocking(true)
         .with_detail(format!(
-            "Switch this session to an account that works, or sign in to account {slot} on this computer. A message you send meanwhile waits in the chat and goes out as soon as Claude is up."
+            "Sign in to {account} on this computer, or switch this chat to another account. Messages you send wait until Claude starts."
         ))
         .with_screen_tail(screen.screen_tail())
         .with_actions(vec![
             SessionChatTerminalNoticeAction {
                 id: SESSION_CHAT_NOTICE_ACTION_SIGN_IN.to_string(),
-                label: format!("Sign in to account {slot}"),
+                label: "Sign in".to_string(),
                 kind: SessionChatTerminalNoticeActionKind::RestartAgent,
                 send: None,
             },
@@ -63,16 +59,11 @@ pub(super) fn detect_claude_missing_login(
 /// conversation, which make it a start failure, are checked by session_chat_start_failure.rs.
 pub fn agent_start_failure_notice(screen_text: &str) -> Option<SessionChatTerminalNotice> {
     let screen = NoticeScreen::new(screen_text);
-    if !screen.ends_with_shell_prompt() {
+    if !screen.ends_with_any_shell_prompt() {
         return None;
     }
     let screen_tail = screen.screen_tail();
-    let error_lines = screen_tail.as_deref().and_then(start_failure_error_lines);
-    let detail = if error_lines.is_some() {
-        "Its start command ended with the error below and the terminal is back at a shell prompt."
-    } else {
-        "Its start command ended and the terminal is back at a shell prompt."
-    };
+    let error_lines = start_failure_error_lines(screen_text);
     Some(
         SessionChatTerminalNotice::new(
             SESSION_CHAT_NOTICE_AGENT_EXITED,
@@ -81,7 +72,7 @@ pub fn agent_start_failure_notice(screen_text: &str) -> Option<SessionChatTermin
             "The agent couldn't start",
         )
         .with_input_blocking(true)
-        .with_detail(format!("{detail} Fix that, then try again. A message you send meanwhile waits in the chat and goes out once the agent is up."))
+        .with_detail(START_FAILURE_DETAIL)
         .with_error_lines(error_lines)
         .with_screen_tail(screen_tail)
         .with_actions(vec![
@@ -94,6 +85,43 @@ pub fn agent_start_failure_notice(screen_text: &str) -> Option<SessionChatTermin
             SessionChatTerminalNoticeAction::switch_to_terminal(OPEN_TERMINAL.label),
         ]),
     )
+}
+
+/// What a failed start's card says; its error lines sit behind the card's Details toggle.
+pub const START_FAILURE_DETAIL: &str =
+    "It stopped with an error. Fix it and try again; messages you send wait until it starts.";
+
+/// How a card names a saved account, the way Settings > Accounts lists it: the name the user gave
+/// it, else its email, else "Account N". With Hide account emails on, an email (alone or inside
+/// the name) is masked the way Settings masks it (`m•••3@•••••.•••`).
+/// CDXC:AgentProviders 2026-11-03 DECISION: User (Q1135): a card names the account by its email ("maddada123spam@gmail.com is signed out"); "watch out we need to hide email if it's hidden in settings". gxserver picks the name, so the desktop, the web build and the phone all get the same words.
+/// CDXC:AgentProviders 2026-11-06 DECISION: User, about "Account 5 is signed out": "how would i know wtf is Account 5. why not put the email or the nickname i gave the account anywhere??" The name comes first (the nickname, or the email Settings shows when there is none), then the email, and the number only when neither is known. Hidden emails are masked as Settings masks them instead of turning the card into "Account 5", so the card and the Accounts list read the same.
+/// SEE-ALSO: server/src/session_chat_account_sign_in.rs, accounts/store.rs (`saved_name`), packages/gx-core/src/sidebar_accounts/usage.rs (`mask_account_text`), packages/settings-catalog/src/data/defaults.rs (`hideAccountEmails`).
+pub(crate) fn card_account_name(selector: &str, name: Option<&str>, email: Option<&str>) -> String {
+    fn known(value: Option<&str>) -> Option<&str> {
+        value.map(str::trim).filter(|value| !value.is_empty())
+    }
+    let Some(label) = known(name).or_else(|| known(email)) else {
+        return format!("Account {selector}");
+    };
+    if account_emails_hidden() {
+        ghostex_gx_core::mask_account_text(label)
+    } else {
+        label.to_string()
+    }
+}
+
+/// `card_account_name` for Claude cswap `slot`, from the saved account list and the slot's email.
+pub(crate) fn claude_slot_card_name(slot: &str) -> String {
+    let name = crate::accounts::store::saved_name(crate::accounts::model::Provider::Claude, slot);
+    card_account_name(slot, name.as_deref(), claude_slot_email(slot).as_deref())
+}
+
+/// Settings > Accounts > Hide account emails, read fresh from the shared settings file.
+fn account_emails_hidden() -> bool {
+    crate::shared_settings_file::read_shared_settings(&crate::paths::get_gxserver_paths(None))
+        .and_then(|settings| settings.get("hideAccountEmails").and_then(Value::as_bool))
+        .unwrap_or(false)
 }
 
 /// The id of Install on the card of an agent whose command is not on this computer. It rides the
@@ -145,14 +173,13 @@ pub fn agent_command_missing_notice(
     command: &str,
     installed_at: Option<&str>,
 ) -> SessionChatTerminalNotice {
-    let send_note =
-        "A message you send meanwhile waits in the chat and goes out once the agent is up.";
     match installed_at {
         None => {
-            notice.title = format!("{agent_name} isn't installed on this computer");
-            notice.detail = Some(format!(
-                "Its command, {command}, wasn't found. Install installs it the way Settings > Agents does and then starts {agent_name}. {send_note}"
-            ));
+            notice.title = format!("{agent_name} isn't installed");
+            notice.detail = Some(
+                "Install it to start chatting. Messages you send wait until it's running."
+                    .to_string(),
+            );
             notice.actions = vec![
                 SessionChatTerminalNoticeAction {
                     id: SESSION_CHAT_NOTICE_ACTION_INSTALL_AGENT.to_string(),
@@ -166,7 +193,7 @@ pub fn agent_command_missing_notice(
         Some(path) => {
             notice.title = format!("This terminal can't find {command}");
             notice.detail = Some(format!(
-                "{agent_name} is installed at {path}, but the terminal's PATH doesn't include that folder. Add it with Add to PATH in Settings > Agents, then try again. {send_note}"
+                "{agent_name} is installed at {path}, but the terminal doesn't look there. Use Add to PATH in Settings > Agents, then try again."
             ));
         }
     }
@@ -175,24 +202,61 @@ pub fn agent_command_missing_notice(
 
 /// Lines the card shows for a failed start.
 const START_FAILURE_ERROR_LINES: usize = 4;
+/// Longest piece of one of those lines the card shows, from its start.
+const START_FAILURE_LINE_CHARS: usize = 300;
+/// Narrowest screen whose full rows are read as wrapped lines.
+const WRAPPED_ROW_MIN_WIDTH: usize = 60;
 
 /// CDXC:SessionChat 2026-10-16 WHY:
-/// The failed-start card has to say why without the user opening the terminal: a customer's card would have read "--share-history is not supported on Windows yet" had it shown cswap's own words. These are the last block of output above the shell prompt the failed start left (the prompt line dropped, at most four lines, stopping at a blank line so older output stays out).
+/// The failed-start card has to say why without the user opening the terminal: a customer's card would have read "--share-history is not supported on Windows yet" had it shown cswap's own words. These are the last block of output above the shell prompt the failed start left (the prompt line dropped, at most four lines, stopping at a blank line so older output stays out), shown behind the card's Details toggle since 2026-11-03 (Q1136).
+/// CDXC:SessionChat 2026-11-05 WHY:
+/// GitHub #422: Cursor refused its launch model with one line, "Cannot use this model: Auto Balance. Available models: auto, …", six thousand characters that fill the screen as wrapped rows, so the last four rows were the middle of the model list and the reason was never on the card. Rows as wide as the screen's widest row (or one cell short, where the wrap fell after a space the capture trims) are joined to the row under them, each line is cut at 300 characters from its start, and the lines come from the whole capture, not the notice's tail, which keeps only its last 6000 characters.
 /// SEE-ALSO: apps/desktop/src/app/native_chat/notice.rs and apps/mobile/app/src/chat/native/cards/NoticeCard.tsx draw `errorLines`.
-fn start_failure_error_lines(screen_tail: &str) -> Option<String> {
-    let mut lines: Vec<&str> = screen_tail.lines().map(str::trim_end).collect();
-    while lines.last().is_some_and(|line| line.trim().is_empty()) {
-        lines.pop();
-    }
-    lines.pop();
-    let block: Vec<&str> = lines
-        .iter()
-        .rev()
-        .copied()
-        .take_while(|line| !line.trim().is_empty())
-        .take(START_FAILURE_ERROR_LINES)
+fn start_failure_error_lines(screen_text: &str) -> Option<String> {
+    let mut rows: Vec<String> = screen_text
+        .lines()
+        .map(|row| {
+            normalize_spaces(&strip_ansi_sgr(row))
+                .trim_end()
+                .to_string()
+        })
         .collect();
-    (!block.is_empty()).then(|| block.into_iter().rev().collect::<Vec<_>>().join("\n"))
+    while rows.last().is_some_and(|row| row.trim().is_empty()) {
+        rows.pop();
+    }
+    rows.pop();
+    let width = rows.iter().map(|row| row.chars().count()).max()?;
+    let block_start = rows
+        .iter()
+        .rposition(|row| row.trim().is_empty())
+        .map_or(0, |blank| blank + 1);
+    let mut lines: Vec<String> = Vec::new();
+    // Set while the row above filled the screen: `Some(true)` when it ended on a space, which the
+    // capture trims, so it is one cell short.
+    let mut continues: Option<bool> = None;
+    for row in &rows[block_start..] {
+        match (lines.last_mut(), continues) {
+            (Some(line), Some(trimmed_space)) => {
+                if trimmed_space {
+                    line.push(' ');
+                }
+                line.push_str(row);
+            }
+            _ => lines.push(row.clone()),
+        }
+        let cells = row.chars().count();
+        continues = (width >= WRAPPED_ROW_MIN_WIDTH && cells + 1 >= width).then_some(cells < width);
+    }
+    let shown: Vec<String> = lines[lines.len().saturating_sub(START_FAILURE_ERROR_LINES)..]
+        .iter()
+        .map(
+            |line| match line.char_indices().nth(START_FAILURE_LINE_CHARS) {
+                Some((cut, _)) => format!("{}\u{2026}", &line[..cut]),
+                None => line.clone(),
+            },
+        )
+        .collect();
+    (!shown.is_empty()).then(|| shown.join("\n"))
 }
 
 /// The last email seen for each Claude cswap slot.
@@ -318,6 +382,67 @@ mod tests {
         assert!(missing.missing_login());
         assert!(!missing.sign_in_error());
     }
+
+    /// GitHub #422: Cursor 2026.11.05 refusing the "Auto Balance" name Ghostex had pinned as its
+    /// model. Captured live on 2026-11-05 and wrapped at the reporter's 200 columns: one line that
+    /// fills the screen above the shell prompt.
+    #[test]
+    fn cursor_refusing_its_launch_model_is_a_failed_start_that_says_why() {
+        let screen = include_str!("../../tests/fixtures/cursor-unknown-model-start-failure.txt");
+        assert!(classify_session_chat_terminal_notice(Some("cursor"), screen).is_none());
+        let notice = agent_start_failure_notice(screen).expect("a failed start");
+        assert!(notice.start_failed());
+        let lines = notice.error_lines.expect("the agent's words");
+        assert!(
+            lines.starts_with(
+                "Cannot use this model: Auto Balance. Available models: auto, gpt-5.3-codex-low,"
+            ),
+            "{lines}"
+        );
+        assert!(lines.ends_with('\u{2026}'), "{lines}");
+        assert_eq!(lines.lines().count(), 1, "{lines}");
+    }
+
+    /// The same failed start under prompts the bare-prompt test missed: oh-my-zsh's default theme
+    /// and a prompt with a right-hand part.
+    #[test]
+    fn a_failed_start_is_seen_under_any_common_prompt() {
+        let screen = include_str!("../../tests/fixtures/cursor-unknown-model-start-failure.txt");
+        let error = &screen[..screen.rfind("madda@").expect("the fixture's prompt")];
+        for prompt in [
+            "\u{279c}  scratch git:(main) \u{2717}",
+            "~/dev/scratch \u{276f}                                         \u{2714}  10:42:07",
+            "madda@mac scratch % ",
+        ] {
+            let notice = agent_start_failure_notice(&format!("{error}{prompt}\n"))
+                .unwrap_or_else(|| panic!("no failed start under {prompt:?}"));
+            assert!(notice
+                .error_lines
+                .is_some_and(|lines| lines.starts_with("Cannot use this model: Auto Balance.")));
+        }
+        // A running agent's own rows are not prompts.
+        for row in [
+            "  \u{2192} Plan, search, build anything",
+            "  New Agent \u{b7} Auto Balance \u{b7} 0 used",
+        ] {
+            assert!(
+                agent_start_failure_notice(&format!("{error}{row}\n")).is_none(),
+                "{row}"
+            );
+        }
+    }
+
+    #[test]
+    fn short_error_lines_are_shown_as_they_are() {
+        let notice = agent_start_failure_notice(
+            "PS C:\\Users\\me> cswap run 3 --share-history -- claude\n--share-history is not supported on Windows yet\nPS C:\\Users\\me>",
+        )
+        .expect("a failed start");
+        assert_eq!(
+            notice.error_lines.as_deref(),
+            Some("PS C:\\Users\\me> cswap run 3 --share-history -- claude\n--share-history is not supported on Windows yet")
+        );
+    }
 }
 
 #[cfg(test)]
@@ -358,10 +483,7 @@ mod missing_command_tests {
         .expect("a failed start");
         let missing =
             agent_command_missing_notice(base.clone(), "DeepSeek Harness", "dsh-tui", None);
-        assert_eq!(
-            missing.title,
-            "DeepSeek Harness isn't installed on this computer"
-        );
+        assert_eq!(missing.title, "DeepSeek Harness isn't installed");
         assert_eq!(
             missing.actions[0].id,
             SESSION_CHAT_NOTICE_ACTION_INSTALL_AGENT

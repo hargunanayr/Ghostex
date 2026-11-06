@@ -485,6 +485,7 @@ impl NativeChatView {
             .filter(|part| !part.is_empty())
             .collect::<Vec<_>>()
             .join(": ");
+        let pictures = self.read_pictures(&key, &entry["images"], p, cx);
         let trigger = div()
             .id(SharedString::from(format!("{card_key}:row:{position}")))
             .role(gpui::Role::Button)
@@ -525,6 +526,9 @@ impl NativeChatView {
                         )
                     }),
             )
+            // The picture the call opened from disk, at the row's right before its counts
+            // (gx-chat-core `read_images.rs`, `READ_TILE`).
+            .children(pictures)
             .child(meta)
             .child(
                 div()

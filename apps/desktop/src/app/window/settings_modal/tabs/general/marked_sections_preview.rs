@@ -19,7 +19,8 @@ use super::super::super::fields::{
 use super::{GeneralCx, GeneralTab, save};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, Context, FontWeight, IntoElement, ParentElement as _, Styled as _, Window, div, px,
+    AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
+    Styled as _, Window, div, px,
 };
 use gpui_component::{h_flex, v_flex};
 use marked_look::{MarkedLook, MarkerStyle, preview_reply};

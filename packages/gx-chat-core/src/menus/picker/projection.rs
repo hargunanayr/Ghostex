@@ -10,9 +10,9 @@ use crate::menus::catalog::AgentModelCatalog;
 use crate::menus::option_catalog::{session_option_catalog, SessionOptionCatalog};
 use crate::menus::picker::model_menu::{
     model_menu_empty_text, model_menu_entries, model_menu_legacy_count, model_menu_opening_tab,
-    model_menu_pick_value, model_menu_rows, model_menu_tabs, ModelMenuCatalogs, ModelMenuCurrent,
-    ModelMenuEffort, ModelMenuRow, ModelMenuView, MODEL_MENU_FAVORITES_TAB,
-    MODEL_MENU_SEARCH_PLACEHOLDER,
+    model_menu_pick_value, model_menu_rows, model_menu_search_enabled, model_menu_tabs,
+    ModelMenuCatalogs, ModelMenuCurrent, ModelMenuEffort, ModelMenuEntries, ModelMenuRow,
+    ModelMenuTabId, ModelMenuView, MODEL_MENU_FAVORITES_TAB, MODEL_MENU_SEARCH_PLACEHOLDER,
 };
 use crate::menus::picker::model_picker::{
     model_picker_scope_reason, model_picker_supports_session_scope, ModelPickerProvider,
@@ -118,6 +118,10 @@ pub fn model_menu_pick(
 ///
 /// `provider_catalogs` holds each provider's session option catalog for the whole menu: building
 /// one per row was most of the document's cost on every publish.
+///
+/// CDXC:SessionChat 2026-11-03 WHY:
+/// Both renderers draw the session's own row's start as its current level, so falling back to the model's default or middle level would claim a level the agent has not reported (for example OMP's Auto is not an offered fixed level). When the row's catalog `agent_keeps_effort`, its own row starts on no level (`""`) while the reported level is missing or unoffered: no level is marked, a pick without choosing a level leaves it to the agent, and Left and Right on the desktop start from an end of the list. Agents whose model switch always sets a level keep the session-level, default, then middle fallback, since an unmarked row would hide the level its pick sets.
+/// SEE-ALSO: `SessionOptionCatalog::agent_keeps_effort` in packages/gx-chat-core/src/menus/option_catalog.rs; `effort_for` and `reasoning_for` in apps/desktop/src/app/native_chat/option_menu/model_menu/state.rs and the phone's `modelMenuState.ts` read the row's level; Ghostex's chat extension (`thinkingLevel` in server/src/agent_hooks/chat_channel_source.rs) reports Pi's and OMP's level.
 fn model_menu_row_efforts(
     row: &ModelMenuRow,
     context: &ModelMenuContext,
@@ -201,10 +205,36 @@ fn model_menu_row_efforts(
             .filter(|value| efforts.iter().any(|effort| effort.value == *value))
             .map(str::to_string)
     };
-    let effort = offered(context.effort_value.as_deref())
+    let current = offered(context.effort_value.as_deref());
+    if current.is_none()
+        && row.selected
+        && provider_catalogs
+            .entry(row.entry.provider.as_str().to_string())
+            .or_insert_with(|| session_option_catalog(catalog, Some(row.entry.provider.as_str())))
+            .as_ref()
+            .is_some_and(SessionOptionCatalog::agent_keeps_effort)
+    {
+        return (efforts, String::new());
+    }
+    let effort = current
         .or_else(|| offered(default_value.as_deref()))
         .unwrap_or_else(|| efforts[efforts.len() / 2].value.clone());
     (efforts, effort)
+}
+
+/// The search text the open tab filters by: none on a tab too short to show the search field, so
+/// a query typed on a long tab never hides rows on a short one.
+fn search_query<'a>(
+    entries: &ModelMenuEntries,
+    tab: ModelMenuTabId,
+    view: &'a ModelMenuView,
+    favorites: &[String],
+) -> &'a str {
+    if model_menu_search_enabled(entries, tab, favorites) {
+        &view.query
+    } else {
+        ""
+    }
 }
 
 /// `modelMenuProjection`: the whole `modelMenu` document key.
@@ -219,6 +249,8 @@ pub fn model_menu_projection(
     let tab = view
         .tab
         .unwrap_or_else(|| model_menu_opening_tab(&entries, context.provider));
+    let search_enabled = model_menu_search_enabled(&entries, tab, favorites);
+    let query = search_query(&entries, tab, view, favorites);
     let traits = model_menu_traits(
         &entries,
         &context.descriptors,
@@ -237,27 +269,22 @@ pub fn model_menu_projection(
         model: context.model_value.clone(),
     };
     let mut provider_catalogs = std::collections::BTreeMap::new();
-    let rows: Vec<ModelMenuRow> = model_menu_rows(
-        &entries,
-        tab,
-        &view.query,
-        favorites,
-        &current,
-        view.legacy_open,
-    )
-    .into_iter()
-    .map(|mut row| {
-        (row.efforts, row.effort) =
-            model_menu_row_efforts(&row, context, catalog, &mut provider_catalogs);
-        row
-    })
-    .collect();
+    let rows: Vec<ModelMenuRow> =
+        model_menu_rows(&entries, tab, query, favorites, &current, view.legacy_open)
+            .into_iter()
+            .map(|mut row| {
+                (row.efforts, row.effort) =
+                    model_menu_row_efforts(&row, context, catalog, &mut provider_catalogs);
+                row
+            })
+            .collect();
     let session_scope = context
         .provider
         .is_some_and(model_picker_supports_session_scope);
     json!({
         "tab": tab.as_str(),
-        "query": view.query,
+        "query": query,
+        "searchEnabled": search_enabled,
         "placeholder": MODEL_MENU_SEARCH_PLACEHOLDER,
         "tabs": model_menu_tabs(&entries, tab)
             .into_iter()
@@ -271,7 +298,7 @@ pub fn model_menu_projection(
         "rows": rows,
         // The tab's Legacy models list: a toggle below the current models, whose rows follow
         // them in `rows` while it is open.
-        "legacy": match model_menu_legacy_count(&entries, tab, &view.query, favorites, &current) {
+        "legacy": match model_menu_legacy_count(&entries, tab, query, favorites, &current) {
             0 => Value::Null,
             count => json!({
                 "label": crate::menus::catalog::LEGACY_GROUP_LABEL,
@@ -281,7 +308,7 @@ pub fn model_menu_projection(
         },
         "emptyText": rows
             .is_empty()
-            .then(|| model_menu_empty_text(tab, &view.query)),
+            .then(|| model_menu_empty_text(tab, query)),
         "traits": traits.iter().map(|row| row.to_json()).collect::<Vec<_>>(),
         "pill": model_menu_pill_labels(
             &entries,
@@ -320,7 +347,7 @@ pub fn model_menu_visible_rows(
     model_menu_rows(
         &entries,
         tab,
-        &view.query,
+        search_query(&entries, tab, view, favorites),
         favorites,
         &ModelMenuCurrent {
             provider: context

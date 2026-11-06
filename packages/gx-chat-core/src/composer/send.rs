@@ -81,6 +81,47 @@ pub fn begin(
         return vec![submission_failed(mode, text)];
     }
     let version = version.map(|version| unconsumed_version(state, context, version));
+    // A message that only answers one-click questions goes as the answers their pills send (the
+    // SessionChat 2026-11-06 DECISION on `typed_answers`): this send carries the first, and each
+    // other goes as its own answers message, as a click on its pill would send it.
+    let mut answers = match mode {
+        SubmissionMode::Compact => None,
+        _ if !image_paths.is_empty() => None,
+        _ => crate::questions::inline_answers::typed_answers(state, text),
+    }
+    .unwrap_or_default();
+    let typed = (!answers.is_empty()).then(|| text.to_string());
+    let envelope = (!answers.is_empty()).then(|| {
+        let (form, first) = answers.remove(0);
+        crate::transcript::question_forms::answers_message(&form, &first)
+    });
+    let text = envelope.as_deref().unwrap_or(text);
+    // gxserver keeps each revision's text and refuses a send whose text differs from it, and the
+    // typed words may have been saved under this revision already while the reader paused: the
+    // envelope goes as the draft's next revision.
+    let version = match (&envelope, version) {
+        (Some(_), Some(version)) => Some(crate::composer::queue::DraftVersion {
+            revision: version.revision + 1,
+            ..version
+        }),
+        (_, version) => version,
+    };
+    // A side chat starts now whatever the main agent is doing: it is never queued behind it.
+    let side_chat = crate::composer::side_chat::starts_side_chat(state, text);
+    let mode = if side_chat && mode == SubmissionMode::Queue {
+        SubmissionMode::Send
+    } else if typed.is_some()
+        && state.core.answers_wait_for_idle
+        && crate::composer::document::queue(state)
+            .capabilities
+            .can_queue
+    {
+        // Answers wait for the agent to finish its turn when the Advanced setting says so, as a
+        // click's do (`forms::dispatch_answers`).
+        SubmissionMode::Queue
+    } else {
+        mode
+    };
     let send_request_id = submission_send_request_id(state, context, mode, text);
     let capabilities = crate::composer::document::queue(state).capabilities;
     let steps = match submission_steps(
@@ -115,7 +156,7 @@ pub fn begin(
         });
     }
     phases.push(SendPhase::MarkSubmitted);
-    let interrupt = interrupt && interrupts_turn(state, mode);
+    let interrupt = interrupt && !side_chat && interrupts_turn(state, mode);
     if interrupt {
         raise_interrupted_toast(state, context);
     }
@@ -136,9 +177,17 @@ pub fn begin(
         drawn: false,
         send_request_id,
         interrupt,
+        draft_unsaved: false,
+        typed,
     };
     draw_at_enter(state, context, &mut submission);
-    start_or_wait(state, context, submission)
+    let mut effects = start_or_wait(state, context, submission);
+    for (form, more) in answers {
+        effects.extend(crate::questions::forms::dispatch_answers(
+            state, context, &form, more,
+        ));
+    }
+    effects
 }
 
 /// Whether an interrupt and send stops a turn: only a plain send to a working agent does. An idle
@@ -164,6 +213,11 @@ fn raise_interrupted_toast(state: &mut ChatState, context: &ChatContext) {
 /// CDXC:SessionChat 2026-10-07 DECISION:
 /// User: "When I press Enter to send a message and there's an image (or maybe even without an image), the text I wrote doesn't instantly disappear from the chat box and appear in the chat transcript. Please fix this, I want this to be INSTANT." The echo (or the "Ran /x" marker, or the queued row) is drawn and published on the Enter itself, before the draft save, the gxserver draft push and the send that follow it; the closing publish of the send's chain (`CoreState::publish_awaits`) had held it until gxserver finished typing the message, about 1.2 seconds. A failed or refused send drops it again and the composer gets the text back with the error, as before.
 fn draw_at_enter(state: &mut ChatState, context: &ChatContext, submission: &mut Submission) {
+    // A side chat's question shows in the side chat, not in this transcript.
+    if crate::composer::side_chat::starts_side_chat(state, &submission.text) {
+        submission.drawn = true;
+        return;
+    }
     let body = match submission.mode {
         SubmissionMode::Send => Some(submission.text.clone()),
         SubmissionMode::Compact => Some("/compact".to_string()),
@@ -223,9 +277,10 @@ fn start_next(state: &mut ChatState, context: &ChatContext) -> Vec<Effect> {
                 params: Box::new(json!({ "error": "The session chat send was cancelled." })),
             });
         } else {
+            let typed = next.typed_text().to_string();
             returned = Some(match returned {
-                Some((mode, text)) => (mode, format!("{text}\n{}", next.text)),
-                None => (next.mode, next.text),
+                Some((mode, text)) => (mode, format!("{text}\n{typed}")),
+                None => (next.mode, typed),
             });
         }
     }
@@ -332,7 +387,7 @@ fn run_head(state: &mut ChatState, context: &ChatContext) -> Vec<Effect> {
         )
     {
         undo_optimistic(state);
-        return fail(state, "The session chat send was cancelled.");
+        return fail(state, "The session chat send was cancelled.", None);
     }
     let text = submission.text.clone();
     let version = submission.version.clone();
@@ -400,7 +455,7 @@ fn run_head(state: &mut ChatState, context: &ChatContext) -> Vec<Effect> {
                 ),
                 _ => (
                     text,
-                    version,
+                    version.filter(|_| !submission.draft_unsaved),
                     submission.image_paths.clone(),
                     submission.send_request_id.clone(),
                 ),
@@ -412,6 +467,19 @@ fn run_head(state: &mut ChatState, context: &ChatContext) -> Vec<Effect> {
                 let echoed = crate::composer::review_comments::expand_review_comments(&body);
                 let drawn = draw_agent_send(state, context, &echoed, &images);
                 adopt_send(state, drawn);
+            }
+            if let Some(question) = (phase == SendPhase::SendText)
+                .then(|| crate::composer::side_chat::side_chat_question(&body))
+                .flatten()
+                .filter(|_| crate::composer::side_chat::side_chat_available(state))
+            {
+                let request_id = state.core.allocate_request_id();
+                wait_request(state, request_id);
+                return vec![Effect::SendRpc {
+                    request_id,
+                    method: ChatRpcMethod::StartSideChat,
+                    params: Box::new(json!({ "question": question, "draftVersion": version })),
+                }];
             }
             if hold_for_gate(state, context) {
                 return Vec::new();
@@ -432,6 +500,7 @@ fn run_head(state: &mut ChatState, context: &ChatContext) -> Vec<Effect> {
         }
         SendPhase::QueueText => {
             let send_request_id = submission.send_request_id.clone();
+            let version = version.filter(|_| !submission.draft_unsaved);
             if hold_for_gate(state, context) {
                 return Vec::new();
             }
@@ -693,6 +762,31 @@ pub fn settle_request(
                 ));
                 state.session.synced_draft_revision += 1;
             }
+            // A Side chat send lists and opens the side chat it started.
+            let started_side_chat = state
+                .composer
+                .submitting
+                .as_ref()
+                .is_some_and(|submission| {
+                    submission.phases.first() == Some(&SendPhase::SendText)
+                        && crate::composer::side_chat::side_chat_question(&submission.text)
+                            .is_some()
+                });
+            if started_side_chat {
+                crate::extras::side_chats::note_started(state, result);
+            }
+            if let Some(opened) = state
+                .composer
+                .submitting
+                .as_ref()
+                .filter(|submission| submission.phases.first() == Some(&SendPhase::SendText))
+                .filter(|submission| {
+                    crate::composer::side_chat::side_chat_question(&submission.text).is_some()
+                })
+                .and_then(|_| crate::extras::side_chats::opened_by_start(result))
+            {
+                effects.push(opened);
+            }
             if let Some(submission) = state.composer.submitting.as_mut() {
                 let sent = submission.phases.first().copied();
                 submission.request = None;
@@ -713,10 +807,35 @@ pub fn settle_request(
             }
             effects.extend(run_head(state, context));
         }
+        // A sleeping Cloud Box refuses the draft push ahead of a send; the send itself is what
+        // wakes it (`session/cloud_box.rs`), so the submission goes on to it, without the draft
+        // revision the box never saved (the woken box refused it: "The submitted draft revision is
+        // no longer available").
+        crate::wire::RpcOutcome::Err { code, .. }
+            if crate::session::cloud_box::is_asleep(code.as_deref())
+                && state
+                    .composer
+                    .submitting
+                    .as_ref()
+                    .is_some_and(|submission| {
+                        submission.phases.first() == Some(&SendPhase::PushDraft)
+                    }) =>
+        {
+            state.core.refusal_claimed = true;
+            if let Some(submission) = state.composer.submitting.as_mut() {
+                submission.request = None;
+                submission.draft_unsaved = true;
+                submission.phases.remove(0);
+            }
+            effects.extend(run_head(state, context));
+        }
         crate::wire::RpcOutcome::Err { message, code, .. } => {
             remember_failed_send(state, code.as_deref());
             undo_optimistic(state);
-            effects.extend(fail(state, message));
+            // Only `unreachable` rides along (it draws Retry); every other refusal keeps the plain
+            // line it always had.
+            let code = code.clone().filter(|code| code == "unreachable");
+            effects.extend(fail(state, message, code));
         }
     }
     state.core.publish_after(&effects);
@@ -745,6 +864,15 @@ pub fn settle_queue_mutation(
                 state.session.queue_prompts = Some(queue.clone());
                 state.messages.new_composition_identity();
             }
+            if let Some(removed) = removed.as_deref() {
+                crate::questions::forms::reopen_after_removed_answers(state, removed);
+                sends::drop_queued_send(state, removed);
+            }
+        }
+        // The row or its session is gone by the time Remove arrived, so the card is all there is.
+        crate::wire::RpcOutcome::Err { code, .. }
+            if removed.is_some() && code.as_deref() == Some("notFound") =>
+        {
             if let Some(removed) = removed.as_deref() {
                 sends::drop_queued_send(state, removed);
             }
@@ -779,7 +907,7 @@ pub fn settle_storage(
         }
         Some(message) => {
             undo_optimistic(state);
-            effects.extend(fail(state, message));
+            effects.extend(fail(state, message, None));
         }
     }
     state.core.publish_after(&effects);
@@ -811,15 +939,6 @@ fn finish(state: &mut ChatState) -> Vec<Effect> {
             "version": submission.version,
         })),
     }];
-    if submission.mode == SubmissionMode::Send
-        && !submission.handoff
-        && crate::composer::side_chat::sent_side_chat_opens_terminal(state, &submission.text)
-    {
-        effects.push(Effect::HostAction {
-            action: "switchToTerminal".to_string(),
-            params: Box::new(json!({})),
-        });
-    }
     if submission.handoff {
         effects.push(Effect::HostAction {
             action: "draftHandoffToTerminalComplete".to_string(),
@@ -838,16 +957,17 @@ fn finish(state: &mut ChatState) -> Vec<Effect> {
 /// A refused handoff also has to tell the app shell, because the terminal side is already waiting
 /// for a draft that is never coming (`native-host.ts:1642`, the `catch` around the whole arm).
 /// Without it the terminal composer sits on a transfer that silently died.
-fn fail(state: &mut ChatState, message: &str) -> Vec<Effect> {
+/// `code` is set for an unreachable gxserver alone, which keeps the error line's Retry.
+fn fail(state: &mut ChatState, message: &str, code: Option<String>) -> Vec<Effect> {
     let Some(submission) = state.composer.submitting.take() else {
         return Vec::new();
     };
-    state.core.fail(message.to_string(), None);
+    state.core.fail(message.to_string(), code);
     let mut effects = Vec::new();
     // The sends waiting behind this one go back to the composer with it, in the order they were
     // typed, as one restore: the host answers each restore with the field it holds, so two in a
     // row would both merge into the same stale text.
-    let mut text = submission.text.clone();
+    let mut text = submission.typed_text().to_string();
     let mut handoffs = usize::from(submission.handoff);
     for waiting in std::mem::take(&mut state.composer.waiting) {
         undo_drawn(
@@ -859,7 +979,7 @@ fn fail(state: &mut ChatState, message: &str) -> Vec<Effect> {
             // A handoff never left the field, so its text is still there.
             handoffs += 1;
         } else if !waiting.text.is_empty() {
-            text = format!("{text}\n{}", waiting.text);
+            text = format!("{text}\n{}", waiting.typed_text());
         }
     }
     for _ in 0..handoffs {
@@ -920,6 +1040,8 @@ pub fn handoff(
         drawn: true,
         send_request_id: None,
         interrupt: false,
+        draft_unsaved: false,
+        typed: None,
     };
     // The head phase writes the unsubmitted record a handoff parks from.
     start_or_wait(state, context, submission)

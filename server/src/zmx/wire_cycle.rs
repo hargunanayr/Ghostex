@@ -517,7 +517,9 @@ session cannot claim it back. The session's launchd job is retired as
 `zmx kill` callers do.
 */
 #[cfg(unix)]
-fn terminate_zmx_session_daemon_processes(zmx_names: &[&str]) -> Vec<Result<(), String>> {
+pub(super) fn terminate_zmx_session_daemon_processes(
+    zmx_names: &[&str],
+) -> Vec<Result<(), String>> {
     let ps_output = match read_process_snapshot() {
         Ok(ps_output) => ps_output,
         Err(error) => return zmx_names.iter().map(|_| Err(error.clone())).collect(),
@@ -585,7 +587,7 @@ fn wait_for_processes_exit(mut process_ids: Vec<i64>, grace: Duration) -> Vec<i6
 /// Raw process table, read without a shell so a wedged daemon cannot be reached
 /// through `zmx list` on the way.
 #[cfg(unix)]
-fn read_process_snapshot() -> Result<String, String> {
+pub(super) fn read_process_snapshot() -> Result<String, String> {
     let output = Command::new("ps")
         .args(["-axo", "pid=,ppid=,command="])
         .stdin(Stdio::null())
@@ -614,6 +616,11 @@ pub(crate) fn end_unowned_zmx_session_daemons(
     logger: &GxserverLogger,
     server_id: &str,
 ) {
+    // A shared socket folder holds other profiles' daemons, which may carry this server's id (CDXC:ServerDaemon 2026-11-06 in screen_capture.rs).
+    #[cfg(unix)]
+    if super::zmx_socket_directory_is_shared() {
+        return;
+    }
     let Ok(live) = read_zmx_existing_session_names() else {
         return;
     };

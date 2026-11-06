@@ -16,6 +16,7 @@ use ghostex_gx_core::protocol::PresentationSnapshot;
 use ghostex_gx_core::{Intent, ProjectActivation, ProjectKey, plan_project_activation};
 use serde_json::json;
 
+use super::NewProjectStart;
 use super::focus_perform::RowFocusOptions;
 use super::gx_rpc;
 use crate::GhostexGpuiApp;
@@ -30,6 +31,8 @@ pub(crate) struct ProjectActivationCounters {
     pub(crate) failed: u64,
     /// Overtaken by a newer activation before its read came back.
     pub(crate) superseded: u64,
+    /// Planned from the machine's streamed rows, without reading its snapshot again.
+    pub(crate) from_live_rows: u64,
 }
 
 #[derive(Default)]
@@ -47,6 +50,30 @@ impl GhostexGpuiApp {
         project_id: &str,
         cx: &mut gpui::Context<Self>,
     ) -> bool {
+        self.gx_store_activate_project_starting(project_id, NewProjectStart::Default, cx)
+    }
+
+    /// A project Add Project's New project form just made: opened like any added project, and
+    /// started with what the form's Start picked instead of the default agent.
+    pub(crate) fn gx_store_activate_new_project(
+        &mut self,
+        project_id: &str,
+        start: NewProjectStart,
+        cx: &mut gpui::Context<Self>,
+    ) -> bool {
+        if !crate::app::helpers::gpui_status_bridge_id_allowed(project_id) {
+            return false;
+        }
+        self.gx_store_flush_local_selection(cx);
+        self.gx_store_activate_project_starting(project_id, start, cx)
+    }
+
+    fn gx_store_activate_project_starting(
+        &mut self,
+        project_id: &str,
+        start: NewProjectStart,
+        cx: &mut gpui::Context<Self>,
+    ) -> bool {
         let Some(project) = ProjectKey::parse_workspace_project_id(project_id.trim()) else {
             return false;
         };
@@ -57,7 +84,9 @@ impl GhostexGpuiApp {
         {
             let project_id = project_id.trim().to_string();
             cx.defer(move |cx| {
-                let _ = app.update(cx, |app, cx| app.gx_store_activate_project(&project_id, cx));
+                let _ = app.update(cx, |app, cx| {
+                    app.gx_store_activate_project_starting(&project_id, start, cx)
+                });
             });
             return true;
         }
@@ -76,6 +105,25 @@ impl GhostexGpuiApp {
             },
         };
         let remembered = Self::gx_store_read_remembered_session(&project);
+        /*
+        CDXC:Projects 2026-11-05 DECISION:
+        User (Q1244): the app's own readers take what its live store already holds. The plan is
+        made from the machine's streamed rows when they list the project; only a project they do not
+        list yet (restored from Recent Projects or added a moment ago, which `plan_project_activation`
+        exists for) reads the machine's snapshot again, about 0.9 MB on a Mac with 45 sessions.
+        */
+        let presentation = self.gx_store.core.presentation();
+        let live_plan = presentation
+            .loaded_live(&project.machine)
+            .and_then(|_| presentation.machine(&project.machine)?.to_snapshot())
+            .and_then(|snapshot| {
+                plan_project_activation(&snapshot, &project, remembered.as_deref())
+            });
+        if let Some(plan) = live_plan {
+            self.gx_store.project_activation.counters.from_live_rows += 1;
+            self.gx_store_perform_project_activation(&project, plan, start, cx);
+            return true;
+        }
         cx.spawn(async move |this, cx| {
             let read = gx_rpc(remote, "/api/readPresentationSnapshot", json!({})).await;
             // The answer is `{ snapshot }`, as the runtime's `fetchPresentationSnapshot` read it.
@@ -92,7 +140,9 @@ impl GhostexGpuiApp {
                     plan_project_activation(snapshot, &project, remembered.as_deref())
                 });
                 match plan {
-                    Some(plan) => this.gx_store_perform_project_activation(&project, plan, cx),
+                    Some(plan) => {
+                        this.gx_store_perform_project_activation(&project, plan, start, cx)
+                    }
                     None => this.gx_store_project_activation_failed(cx),
                 }
             });
@@ -105,6 +155,7 @@ impl GhostexGpuiApp {
         &mut self,
         project: &ProjectKey,
         plan: ProjectActivation,
+        start: NewProjectStart,
         cx: &mut gpui::Context<Self>,
     ) {
         match plan {
@@ -147,11 +198,32 @@ impl GhostexGpuiApp {
                     );
                     self.gx_store_publish_workspace_focus(cx);
                 }
-                let agent_id = self.git_default_prompt_agent_id(None);
-                if self.gx_store_preferred_interface(&agent_id) == "chat" {
-                    self.gx_store_request_agent_launch(&agent_id, Some(&group_id), None, cx);
-                } else {
-                    self.gx_store_create_terminal(Some(&group_id), cx).detach();
+                match start {
+                    NewProjectStart::Default => {
+                        let agent_id = self.git_default_prompt_agent_id(None);
+                        if self.gx_store_preferred_interface(&agent_id) == "chat" {
+                            self.gx_store_request_agent_launch(
+                                &agent_id,
+                                Some(&group_id),
+                                None,
+                                cx,
+                            );
+                        } else {
+                            self.gx_store_create_terminal(Some(&group_id), cx).detach();
+                        }
+                    }
+                    // The launcher's own launch, so the pick is remembered for the project and its
+                    // Space as a launch from its header would be.
+                    NewProjectStart::Agent(agent_id) => {
+                        self.gx_store_run_sidebar_agent_message(
+                            &json!({ "agentId": agent_id, "groupId": group_id }),
+                            cx,
+                        );
+                    }
+                    NewProjectStart::Terminal => {
+                        self.gx_store_create_terminal(Some(&group_id), cx).detach();
+                    }
+                    NewProjectStart::Nothing => {}
                 }
             }
         }

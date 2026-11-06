@@ -2,6 +2,7 @@ mod account_login;
 mod accounts;
 pub mod actions;
 mod agent_cli;
+mod agent_guide;
 pub mod agent_sync;
 mod agentbox_cli;
 mod agents;
@@ -10,9 +11,13 @@ pub mod args;
 pub mod attach;
 pub mod automations;
 pub mod board;
+mod box_cli;
 pub mod browser_mcp;
 mod built_in_extensions;
 mod claude_cloud_cli;
+mod cloud_attach;
+mod cloud_cli;
+mod computers;
 mod connectors;
 mod connectors_executor;
 mod connectors_mcp;
@@ -23,6 +28,8 @@ pub mod extensions;
 mod feedback;
 mod ghost;
 pub mod guide;
+mod help_ask;
+mod hookless_activity;
 pub mod launchers;
 mod mcp_stdio;
 pub mod notify;
@@ -36,6 +43,7 @@ pub mod resources;
 pub mod rpc;
 mod run_in_terminal;
 pub mod saved_prompts;
+mod secret;
 pub mod selector;
 mod session_chat_model;
 mod session_chat_rpc;
@@ -48,6 +56,7 @@ mod sessions_brief;
 pub mod settings;
 mod settings_hotkeys;
 mod show;
+mod side_chats;
 pub mod skills;
 pub mod tailcat;
 pub mod tailcat_tunnel;
@@ -60,6 +69,7 @@ mod voice;
 pub mod wait;
 pub mod web;
 mod work_mode;
+mod work_source;
 mod workspace;
 
 use rpc::{CliError, CliResult};
@@ -98,12 +108,17 @@ pub fn run() -> i32 {
 /// global help gate.
 const HELP_GATE_EXCLUDED: &[&str] = &[
     "account-login",
+    "agent-guide",
+    "computers",
+    "help",
     "accounts",
     "agent-cli",
     "agentbox",
     "agents",
     "app-update",
+    "box",
     "claude-cloud",
+    "cloud",
     "coordinator",
     "ghost",
     "orchestrator",
@@ -126,6 +141,8 @@ const HELP_GATE_EXCLUDED: &[&str] = &[
     "guide",
     "manage-beads",
     "notify",
+    "secret",
+    "secrets",
     "visual",
     "h",
     "history",
@@ -155,6 +172,15 @@ fn dispatch(argv: &[String]) -> CliResult<i32> {
     if command_name == "-h" || command_name == "--help" {
         println!("{}", usage::usage());
         return Ok(0);
+    }
+    // A Linux desktop entry runs this CLI with the link a click opened (CDXC:OsIntegration
+    // 2026-10-31 in apps/desktop/src/session_link_handoff.rs).
+    #[cfg(target_os = "linux")]
+    if ghostex_gx_protocol::is_session_link_route(command_name)
+        || ghostex_gx_protocol::is_terminal_link_route(command_name)
+    {
+        launchers::open_session_link_command(command_name)?;
+        return Ok(exit_code());
     }
     if !is_known_command(command_name) {
         if launchers::is_existing_bare_path_argument(command_name) {
@@ -210,7 +236,9 @@ fn is_known_command(name: &str) -> bool {
         "agent-cli",
         "agentbox",
         "agents",
+        "box",
         "claude-cloud",
+        "cloud",
         "coordinator",
         "ghost",
         "orchestrator",
@@ -311,6 +339,7 @@ fn is_known_command(name: &str) -> bool {
         "slack",
         "link-session",
         "link",
+        "side-chat",
         "delayed-send",
         "close-after-done",
         "send-text",
@@ -348,6 +377,7 @@ fn is_known_command(name: &str) -> bool {
         "send-session-chat-queued-prompt",
         "set-session-chat-draft",
         "export-transcript",
+        "count-transcript-turns",
         "wait-for-text",
         "rename-command",
         "set-visible-count",
@@ -367,6 +397,7 @@ fn is_known_command(name: &str) -> bool {
         "web",
         "ports",
         "resources",
+        "computers",
         "install-browser-skill",
         "install-browser-mcp-skill",
         "install-browser-use-skill",
@@ -386,9 +417,12 @@ fn is_known_command(name: &str) -> bool {
         "move-codex-session",
         "install-move-codex-session-skill",
         "guide",
+        "agent-guide",
         "agent-sync",
         "feedback",
         "notify",
+        "secret",
+        "secrets",
         "show",
         "visual",
         "install-help-skill",
@@ -398,6 +432,7 @@ fn is_known_command(name: &str) -> bool {
         "wait-for",
         "screenshot",
         "logs",
+        "hookless-activity",
         "bundle",
         "help",
         "voice",
@@ -406,6 +441,8 @@ fn is_known_command(name: &str) -> bool {
 }
 
 fn run_command(name: &str, args: &[String]) -> CliResult<()> {
+    let routed = computers::args_for_session_on_another_computer(name, args);
+    let args: &[String] = routed.as_deref().unwrap_or(args);
     use actions::{
         run_bridge_action, run_message_bridge_action, run_resolved_session_bridge_action,
         BridgeOptions, Parser,
@@ -431,7 +468,10 @@ fn run_command(name: &str, args: &[String]) -> CliResult<()> {
             agentbox_cli::run(args)
         }
         "agents" => agents::run(args),
+        "computers" => computers::run(args),
+        "box" => box_cli::run(args),
         "claude-cloud" => claude_cloud_cli::run(args),
+        "cloud" => cloud_cli::run(args),
         // CDXC:Coordinators 2026-10-28 DECISION: user renamed Orchestrator back to Coordinator and made `coordinator` the real command group; `orchestrator` stays as an alias (see ghostex_cli/coordinator/command.rs).
         "coordinator" | "orchestrator" => coordinator::run(args),
         "ghost" => ghost::run(args),
@@ -726,6 +766,7 @@ fn run_command(name: &str, args: &[String]) -> CliResult<()> {
         }
         "link-session" => work_mode::link_session_command(args),
         "link" => session_links::link_command(args),
+        "side-chat" => side_chats::side_chat_command(args),
         "delayed-send" => {
             // `--cancel` clears the armed automation; otherwise the parser
             // accepts the timer and both agent-completion trigger modes.
@@ -911,7 +952,14 @@ fn run_command(name: &str, args: &[String]) -> CliResult<()> {
         */
         "export-transcript" => run_bridge_action(
             "exportSessionTranscript",
-            Parser::SessionSelector,
+            Parser::ExportTranscript,
+            fail_on_not_ok,
+            args,
+        ),
+        // The History slider's estimate on the phone: the turns and each "last N" size, no file.
+        "count-transcript-turns" => run_bridge_action(
+            "countSessionTranscriptTurns",
+            Parser::ExportTranscript,
             fail_on_not_ok,
             args,
         ),
@@ -931,6 +979,7 @@ fn run_command(name: &str, args: &[String]) -> CliResult<()> {
         "bd" | "beads" => launchers::beads_command(args),
         "board" => board::board_command(args),
         "notify" => notify::notify_command(args),
+        "secret" | "secrets" => secret::secret_command(args),
         "feedback" => feedback::feedback_command(args),
         "show" => show::show_command(args),
         "visual" => visual::visual_command(args),
@@ -964,6 +1013,7 @@ fn run_command(name: &str, args: &[String]) -> CliResult<()> {
             skills::install_move_codex_session_skill_command(args)
         }
         "guide" => guide::guide_command(args),
+        "agent-guide" => agent_guide::agent_guide_command(args),
         "voice" => voice::voice_command(args),
         "agent-sync" => agent_sync::agent_sync_command(args),
         "install-help-skill" => skills::install_help_skill_command(args),
@@ -975,11 +1025,9 @@ fn run_command(name: &str, args: &[String]) -> CliResult<()> {
         "wait-for" => run_bridge_action("waitFor", Parser::WaitFor, assert_ok, args),
         "screenshot" => diagnostics::screenshot_command(args),
         "logs" => diagnostics::logs_command(args),
+        "hookless-activity" => hookless_activity::hookless_activity_command(args),
         "bundle" => diagnostics::bundle_command(args),
-        "help" => {
-            println!("{}", usage::usage());
-            Ok(())
-        }
+        "help" => help_ask::help_command(args),
         other if automations::is_automation_command(other) => {
             automations::run_automation_command(other, args)
         }

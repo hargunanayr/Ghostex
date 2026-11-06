@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use serde_json::Value;
 
 use crate::paths::GxserverPaths;
-use crate::session_git_status::gh_cli_is_available;
+use crate::session_git_status::{effective_session_git_cwd, gh_cli_is_available};
 
 use super::*;
 
@@ -15,13 +15,25 @@ use super::*;
 /// pass that follows knows which projects are on.
 pub(crate) fn refresh_issues_workflow_setup(paths: &GxserverPaths, projects: &[Value]) {
     gh_cli_is_available();
+    let credentials = WorkCredentials::new(paths);
+    let workspaces = crate::storage::open_gxserver_database(paths)
+        .ok()
+        .and_then(|db| crate::workspaces::read_sidebar_workspaces(&db).ok())
+        .unwrap_or(Value::Null);
     for project in projects {
         let Some(project_id) = project.get("projectId").and_then(Value::as_str) else {
             continue;
         };
         let workspace_id = crate::workspaces::stored_project_workspace_id(project);
-        let key = linear_api_key(paths, Some(project_id), workspace_id);
+        let key = credentials.linear_api_key(Some(project_id), workspace_id);
         remember_project_linear_key(project_id, key.as_deref().map(linear_key_fingerprint));
+        let picked_linear = crate::workspaces::project_workspace_id(&workspaces, project, projects);
+        remember_project_linear_create(
+            project_id,
+            key.is_some()
+                && (credentials.has_scoped_linear_key(Some(project_id), workspace_id)
+                    || workspace_picked_linear(&workspaces, &picked_linear)),
+        );
     }
 }
 
@@ -65,18 +77,8 @@ pub(crate) fn refresh_work_caches(paths: &GxserverPaths, projects: &[Value], ses
         }
     }
 
-    // Each source's card reads first: an issue Linear answers for can bring its PR along.
-    let credentials = WorkCredentials::new(paths);
-    let pass = TicketPass {
-        credentials: &credentials,
-        projects: &projects_by_id,
-        sessions,
-    };
-    for source in WorkSourceId::BUILT_IN {
-        work_source(source).refresh_tickets(&pass);
-    }
-
-    // The repo picks the ticket's PR in the session's own repo (presentation.rs).
+    // The repo picks the ticket's PR in the session's own repo (presentation.rs), so it is known
+    // before a source's card reads bring a ticket's PRs along.
     for session in sessions {
         let Some(project) = session
             .get("projectId")
@@ -85,9 +87,22 @@ pub(crate) fn refresh_work_caches(paths: &GxserverPaths, projects: &[Value], ses
         else {
             continue;
         };
-        if let Some(cwd) = work_targets(project, session).cwd.as_deref() {
-            refresh_work_repo(cwd);
+        if let Some(cwd) = effective_session_git_cwd(session, Some(project)) {
+            refresh_work_repo(&cwd);
         }
+    }
+
+    // Each source's card reads, before the code host's: an issue Linear answers for can bring its
+    // PR along.
+    let credentials = WorkCredentials::new(paths);
+    let pass = TicketPass {
+        paths,
+        credentials: &credentials,
+        projects: &projects_by_id,
+        sessions,
+    };
+    for source in work_sources_for(team_workspaces.iter().map(String::as_str)) {
+        work_source(source).refresh_tickets(&pass);
     }
 
     if !gh_cli_is_available() {
@@ -134,7 +149,7 @@ pub(crate) fn refresh_work_caches(paths: &GxserverPaths, projects: &[Value], ses
         }
         for read in wanted {
             let max_age = github_read_max_age(read.pull_request, idle, false);
-            if github_read_due(&read, max_age) && !due.contains(&read) {
+            if github_link_read_due(&read, Some(max_age)) && !due.contains(&read) {
                 due.push(read);
             }
         }

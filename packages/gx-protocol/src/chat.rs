@@ -162,6 +162,14 @@ pub struct DeferredWork {
     pub message_count: u64,
     #[serde(default, deserialize_with = "crate::de::null_as_default")]
     pub file_paths: Vec<String>,
+    /// The picture files the held-back rows opened from disk, which the turn's fold shows as
+    /// thumbnails before it is opened (gx-chat-core `transcript/read_images.rs`).
+    #[serde(
+        default,
+        deserialize_with = "crate::de::null_as_default",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub image_paths: Vec<String>,
 }
 
 /// One transcript row: the server's `SessionChatMessage` plus the client-only `deferredWork`.
@@ -212,6 +220,20 @@ pub struct ChatMessage {
     /// (server/src/session_chat_mention_paths.rs). Absent on every other row.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mention_paths: Option<Vec<String>>,
+    /// On a row OMP wrote as a `custom_message`: its own type and, for the types the chat draws as
+    /// cards or rows, the details OMP recorded with it (server/src/session_chat_decode_pi.rs).
+    /// Absent on every other row and from an older gxserver; the row's text is the same either way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_message: Option<CustomMessage>,
+}
+
+/// An OMP custom message's type (`advisor`, `async-result`, `irc:incoming`, …) and its details.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomMessage {
+    pub custom_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<Value>,
 }
 
 /// Where an accepted send stands with the terminal, as the sending client sees it.
@@ -227,6 +249,15 @@ pub struct StartupDelivery {
     /// minute (server/src/session_chat_queue_runtime/wait_reason.rs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wait_reason: Option<String>,
+}
+
+/// A mode the session's agent cannot use, and how to turn it on
+/// (server/src/session_chat_mode_availability.rs).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnavailableMode {
+    pub value: String,
+    pub why: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -245,7 +276,7 @@ pub struct TurnLifecycle {
 /// | Key | Absent means |
 /// | --- | --- |
 /// | `prompt`, `terminalNotice`, `terminalActivity`, `agentFleet`, `agentTasks` | CLEARED |
-/// | `selectedOptions`, `draft`, `appCommands`, `returnedPrompt`, `coordinatorThreads`, `agentMessageDeliveries` | UNCHANGED |
+/// | `selectedOptions`, `draft`, `appCommands`, `returnedPrompt`, `coordinatorThreads`, `sideChats`, `agentMessageDeliveries`, `secretRequests` | UNCHANGED |
 /// | `queue` | the daemon has no queue support (present even when empty otherwise) |
 /// | `screenProbed` | not probed yet (sticky once true) |
 /// | `agentSessionId` | snapshot or replaced: cleared; state: unchanged |
@@ -288,6 +319,26 @@ pub struct ChatSideState {
     /// session; the Threads panel above its composer. Absent means unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coordinator_threads: Option<Value>,
+    /// This session's side chats (`[{ projectId, sessionId, title, working, lifecycleState,
+    /// needsApproval?, needsAnswer?, unread? }]`, server/src/side_chats/panel.rs), carried once it
+    /// has had one; the Side chats pill above its composer. Absent means unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub side_chats: Option<Value>,
+    /// For a side chat, its main session (`{ sessionId, title }`); the "Side chat of" bar with
+    /// Bring back and Delete. Absent means unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub side_chat_of: Option<Value>,
+    /// The secret requests an agent of this session made with `ghostex secret request`
+    /// (`[{ id, label, reason, placeholder?, status, createdAtMs, expiresAtMs,
+    /// acceptsReference }]`, server/src/secret_requests/), never a value; the private cards above
+    /// its composer. gxserver writes it on every frame. Absent means unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret_requests: Option<Value>,
+    /// For a coordinator's thread, the approvals its coordinator's chat answered for it in the
+    /// last 12 hours (`[{ at, label, from, question }]`, server/src/coordinators/relay.rs), drawn
+    /// where its card was. Absent means unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relayed_answers: Option<Value>,
     /// How the messages this session's agent sent with `ghostex agents send` and left waiting
     /// ended, by `sendRequestId` (`{ "<id>": { state: "delivered" | "failed", failure? } }`;
     /// server/src/agent_message_deliveries.rs). Absent means unchanged.
@@ -316,6 +367,10 @@ pub struct ChatSideState {
     /// Absent means unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub later_question_ids: Option<Vec<String>>,
+    /// The modes this session's agent cannot use, which its mode menu greys out with how to turn
+    /// them on. Absent means unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unavailable_modes: Option<Vec<UnavailableMode>>,
     /// The question forms and pages the user removed without answering (form or page ids,
     /// server/src/session_chat_open_questions.rs): no longer counted as waiting. Absent means
     /// unchanged.
@@ -472,12 +527,18 @@ pub struct ReadSessionChatResult {
     /// Whether the Send when you pick an answer setting is on, the same way as `catch_up`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub send_on_pick: Option<bool>,
+    /// Whether form and page answers wait for an idle agent; absent on older daemons.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answers_wait_for_idle: Option<bool>,
     /// Whether the Show all effort levels setting is on, the same way as `catch_up`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub all_orchestrator_efforts: Option<bool>,
     /// The Handover heading color strength setting (0 to 100), the same way as `catch_up`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub marked_heading_strength: Option<f64>,
+    /// The Text strength setting (0 to 100), the same way as `catch_up`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_text_strength: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fork_info: Option<ChatForkInfo>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -492,4 +553,54 @@ pub struct ReadSessionChatResult {
 
 fn is_false(value: &bool) -> bool {
     !*value
+}
+
+#[cfg(test)]
+mod custom_message_tests {
+    use super::*;
+
+    fn row(extra: Value) -> Value {
+        let mut row = serde_json::json!({
+            "id": "c1",
+            "role": "system",
+            "source": "transcript",
+            "timestamp": 1,
+            "blocks": [{ "type": "text", "text": "<irc>\nhi\n</irc>" }],
+        });
+        row.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        row
+    }
+
+    #[test]
+    fn an_omp_row_reads_its_type_and_details_and_writes_them_back() {
+        let wire = row(serde_json::json!({
+            "customMessage": { "customType": "irc:incoming", "details": { "from": "Scout", "message": "hi" } },
+        }));
+        let message: ChatMessage = serde_json::from_value(wire.clone()).unwrap();
+        let custom = message.custom_message.as_ref().expect("the type");
+        assert_eq!(custom.custom_type, "irc:incoming");
+        assert_eq!(custom.details.as_ref().unwrap()["from"], "Scout");
+        assert_eq!(serde_json::to_value(&message).unwrap(), wire);
+    }
+
+    #[test]
+    fn a_row_from_an_older_gxserver_has_no_custom_message_and_writes_none() {
+        let wire = row(serde_json::json!({}));
+        let message: ChatMessage = serde_json::from_value(wire.clone()).unwrap();
+        assert!(message.custom_message.is_none());
+        assert_eq!(serde_json::to_value(&message).unwrap(), wire);
+        let typed_only: ChatMessage = serde_json::from_value(row(serde_json::json!({
+            "customMessage": { "customType": "launch-completion" },
+        })))
+        .unwrap();
+        assert_eq!(
+            typed_only.custom_message,
+            Some(CustomMessage {
+                custom_type: "launch-completion".into(),
+                details: None,
+            })
+        );
+    }
 }

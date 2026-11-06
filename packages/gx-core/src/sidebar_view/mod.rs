@@ -15,15 +15,20 @@ mod close_after_done;
 pub(crate) mod close_successor;
 pub(crate) mod collections;
 mod daemon_wait;
+mod draft_arrivals;
 mod drop_landing;
 mod groups;
+#[cfg(test)]
+mod hide_empty_tests;
 mod inputs;
 mod links;
 mod machine_connection;
 pub(crate) mod machine_spaces;
 mod machine_switch;
+mod machine_tab_layout;
 mod machines;
 pub(crate) mod membership;
+pub(crate) mod merged;
 mod model;
 pub(crate) mod ordering;
 mod program_status;
@@ -33,8 +38,6 @@ pub(crate) mod projects;
 mod reveal;
 pub(crate) mod rows;
 mod sections;
-#[cfg(test)]
-mod hide_empty_tests;
 #[cfg(test)]
 mod session_notes_tests;
 pub(crate) mod session_slot;
@@ -65,6 +68,10 @@ pub use daemon_wait::{
     DAEMON_RETRY_INTERVAL_MS, SERVICE_START_FAILED_TITLE, SESSIONS_LOADING_DETAIL,
     SESSIONS_LOADING_TITLE,
 };
+pub use draft_arrivals::{
+    open_draft_headings, project_draft_rows, DraftArrival, DraftArrivals, DraftRow,
+    DRAFT_ARRIVAL_WINDOW_MS, DRAFT_CLOCK_SLACK_MS, DRAFT_FOCUS_WAIT_MS,
+};
 pub use drop_landing::{DropLanding, DropWrites, TreeDropTarget};
 pub use inputs::{
     BrowserTabInput, CloseAfterDoneInput, DelayedSendInput, MachineTabInput, ProjectDiffStats,
@@ -83,6 +90,9 @@ pub use machine_connection::{
 };
 pub use machine_switch::{
     machine_switch_memory, plan_machine_switch_restore, MACHINE_SESSION_MEMORY_SPACE_ID,
+};
+pub use machine_tab_layout::{
+    machine_tab_layout, machine_tab_reveal_offset, machine_tabs_out_of_view, MachineTabLayout,
 };
 pub use model::{SidebarUpdateWork, SidebarViewModel};
 pub use ordering::session_is_snoozed;
@@ -104,11 +114,11 @@ pub use status_buckets::{
 pub use tags::{TagListItem, TagListItemKind, TagPresentation, UNTAGGED_TAG_FILTER};
 pub use view::{
     rename_shake_key, CollectionView, CoordinatorBadge, CoordinatorBadgeTone, DelayedSendView,
-    EmptyState, FoldedStatus, GhostView, GroupCore, GroupSummary, GroupView, LabelDeadline,
-    MachineNotice, MachineSummary, MachineTabView, NeedsYou, OrderItem, OrderKind,
-    ProjectContextView, RemoteMachineView, RowNesting, SectionView, SessionMenuFacts, SessionRow,
-    SessionTiming, SessionView, ShowAllProjectsRow, SidebarView, SpaceView, ThreadTally,
-    WorktreeView, RENAME_SHAKE_FRESH_MS,
+    EmptyState, FoldedStatus, GhostView, GroupActionTarget, GroupCore, GroupSummary, GroupView,
+    LabelDeadline, MachineChip, MachineNotice, MachineSummary, MachineTabView, NeedsYou, OrderItem,
+    OrderKind, ProjectContextView, RemoteMachineView, RowNesting, SectionView, SessionMenuFacts,
+    SessionRow, SessionTiming, SessionView, ShowAllProjectsRow, SidebarView, SpaceView,
+    ThreadTally, WorktreeView, RENAME_SHAKE_FRESH_MS,
 };
 pub use work::{SessionWork, WorkGithubIssue, WorkLinearIssue, WorkLinearProject, WorkPullRequest};
 pub use workspaces::{

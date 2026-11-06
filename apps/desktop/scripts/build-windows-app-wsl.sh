@@ -479,6 +479,8 @@ windows_robocopy "$GPUI_DIR/dist/sidebar" "$APP_DIR/dist/sidebar" /MIR
 # Keep in step with build-windows-app.ps1, build-linux-app.sh and the macOS asset list in build-macos-app.sh.
 mkdir -p "$APP_DIR/resources/sounds"
 cp "$REPO_ROOT"/media/sounds/*.mp3 "$APP_DIR/resources/sounds/"
+# The licence notices of the bundled third-party parts.
+cp "$REPO_ROOT/THIRD_PARTY_NOTICES.md" "$APP_DIR/resources/"
 
 COMPONENT_ROOT="${GHOSTEX_ON_DEMAND_COMPONENT_ROOT:-$REPO_ROOT/build/on-demand-components}"
 COMPONENT_ASSET_DIR="${GHOSTEX_ON_DEMAND_COMPONENT_ASSET_DIR:-$COMPONENT_ROOT/assets}"
@@ -505,7 +507,7 @@ if [[ "$ON_DEMAND_COMPONENTS" == "1" ]]; then
 	rm -rf "$CEF_STAGE"
 	node "$REPO_ROOT/tooling/release-gpui/publish-component.mjs" \
 		--metadata-only \
-		--reuse-published \
+		--require-published-match \
 		--component cef \
 		--version "$CEF_COMPONENT_VERSION" \
 		--platform "windows-$RELEASE_ARCH" \
@@ -652,7 +654,7 @@ if [[ "$ON_DEMAND_COMPONENTS" == "1" ]]; then
 	printf '%s  %s\n' "$CODE_SERVER_ASSET_SHA256" "$(basename "$CODE_SERVER_ASSET")" >"$CODE_SERVER_ASSET.sha256"
 	node "$REPO_ROOT/tooling/release-gpui/publish-component.mjs" \
 		--metadata-only \
-		--reuse-published \
+		--require-published-match \
 		--component code-server \
 		--version "$CODE_SERVER_VERSION" \
 		--platform "windows-$RELEASE_ARCH" \

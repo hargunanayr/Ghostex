@@ -196,6 +196,45 @@ fn detects_codex_fast_modifier() {
 }
 
 #[test]
+fn detects_codex_fast_modifier_regardless_of_case() {
+    for segment in [
+        "GPT-6.1-Sol xhigh Fast",
+        "GPT-6.1-Sol xhigh fast",
+        "GPT-6.1-Sol XHIGH FAST",
+        "GPT-6.1-Sol DEFAULT Fast",
+    ] {
+        let selection = agent_matchers::match_codex_segment(segment).expect(segment);
+        assert_eq!(
+            selection.model.as_ref().map(|choice| choice.value.as_str()),
+            Some("gpt-6.1-sol")
+        );
+        assert_eq!(
+            selection
+                .effort
+                .as_ref()
+                .map(|choice| choice.value.as_str()),
+            (!segment.contains("DEFAULT")).then_some("xhigh")
+        );
+        assert_eq!(selection.fast, Some(true));
+    }
+}
+
+/// The whole screen as Codex 0.165 paints it, with the capitalised modifier newer Codex prints.
+#[test]
+fn detects_a_capitalised_fast_on_a_whole_codex_screen() {
+    for (footer, plan) in [
+        ("GPT-6.1-Sol xhigh Fast \u{b7} 01a19974-8c6a-7b23-92bc-813feb1712aa \u{b7} Ghostex \u{b7} main \u{b7} Context 0% used \u{b7} weekly 5% left", false),
+        ("GPT-6.1-Sol xhigh Fast \u{b7} Ghostex \u{b7} main \u{b7} Context 0% used        Plan mode (\u{21e7}tab to cycle)", true),
+    ] {
+        let screen = format!("\u{203a} Ask Codex to do anything\n\n  {footer}\n  ? for shortcuts\n");
+        let selection = codex(&screen).expect(footer);
+        assert_eq!(pair(&selection), (Some("gpt-6.1-sol"), Some("xhigh")), "{footer}");
+        assert_eq!(selection.fast, Some(true), "{footer}");
+        assert_eq!(selection.mode.is_some(), plan, "{footer}");
+    }
+}
+
+#[test]
 fn detects_codex_xhigh_effort() {
     let selection = codex(CODEX_XHIGH).expect("codex footer detected");
     assert_eq!(pair(&selection), (Some("gpt-5.6-sol"), Some("xhigh")));
@@ -205,6 +244,17 @@ fn detects_codex_xhigh_effort() {
 fn detects_codex_footer_clipped_after_the_model_segment() {
     let selection = codex(CODEX_CLIPPED).expect("codex footer detected");
     assert_eq!(pair(&selection), (Some("gpt-5.6-sol"), Some("high")));
+}
+
+/// The name `--list-models` gives Grok 4.7 High Fast ends in two zero-width spaces, and Cursor's
+/// footer repeats it; read whole, it was pinned as `--model` (GitHub #422).
+#[test]
+fn reads_a_cursor_name_that_ends_in_zero_width_spaces() {
+    let selection =
+        cursor("  New Agent \u{b7} Grok 4.7  High Fast\u{200b}\u{200b} \u{b7} 0 used\n")
+            .expect("cursor footer detected");
+    assert_eq!(pair(&selection), (Some("grok-4.7"), Some("high")));
+    assert_eq!(selection.fast, Some(true));
 }
 
 #[test]
@@ -588,6 +638,54 @@ fn cursor_launch_model_survives_its_context_only_statusline() {
             .map(|model| (model.value.as_str(), model.source)),
         Some(("grok-4.7", SessionChatOptionEvidence::Launch))
     );
+}
+
+#[test]
+fn launch_flags_of_the_newer_agents_fill_the_pills() {
+    for (agent, command, model, effort) in [
+        (
+            SessionChatOptionAgent::Omp,
+            "omp --model openai/gpt-5.5 --thinking high",
+            "openai/gpt-5.5",
+            "high",
+        ),
+        (
+            SessionChatOptionAgent::Copilot,
+            "copilot --model claude-opus-5.5 --reasoning-effort xhigh",
+            "claude-opus-5.5",
+            "xhigh",
+        ),
+        (
+            SessionChatOptionAgent::Grok,
+            "grok -m grok-build --effort medium",
+            "grok-build",
+            "medium",
+        ),
+        (
+            SessionChatOptionAgent::Grok,
+            "grok --model grok-build --reasoning-effort low",
+            "grok-build",
+            "low",
+        ),
+        (
+            SessionChatOptionAgent::Hermes,
+            "hermes -m anthropic/claude-sonnet-4.6 --reasoning high",
+            "anthropic/claude-sonnet-4.6",
+            "high",
+        ),
+    ] {
+        let launch = launch_command_selection(agent, command).expect(command);
+        assert_eq!(
+            launch.model.as_ref().map(|choice| choice.value.as_str()),
+            Some(model),
+            "{command}"
+        );
+        assert_eq!(
+            launch.effort.as_ref().map(|choice| choice.value.as_str()),
+            Some(effort),
+            "{command}"
+        );
+    }
 }
 
 /// Verbatim from a Codex 0.164 session started with `--yolo` whose mode was then changed with

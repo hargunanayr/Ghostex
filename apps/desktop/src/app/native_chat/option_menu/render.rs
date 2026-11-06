@@ -250,6 +250,23 @@ impl ChatOptionMenuPanel {
                     self.scroll.scroll_to_item(enabled[position]);
                 }
             }
+            // A row with a number key (the new chat bar's where menu: 1 to 4) picks it.
+            digit
+                if digit.len() == 1
+                    && digit.as_bytes()[0].is_ascii_digit()
+                    && !event.keystroke.modifiers.control
+                    && !event.keystroke.modifiers.platform
+                    && !event.keystroke.modifiers.alt =>
+            {
+                let Some(index) = self
+                    .rows
+                    .iter()
+                    .position(|row| row["key"].as_str() == Some(digit) && row["disabled"] != true)
+                else {
+                    return;
+                };
+                self.activate(index, true, window, cx);
+            }
             _ => return,
         }
         window.prevent_default();
@@ -364,7 +381,12 @@ impl Render for ChatOptionMenuPanel {
                 .px(px(m.row_x * scale))
                 .py(px(m.row_y * scale))
                 .rounded(px(m.row_radius * scale))
-                .opacity(if disabled { 0.42 } else { 1.0 })
+                // A greyed mode's line says how to turn it on, so it stays readable.
+                .opacity(match (disabled, description.is_some()) {
+                    (false, _) => 1.0,
+                    (true, true) => 0.72,
+                    (true, false) => 0.42,
+                })
                 .when(selected, |item| item.bg(hover))
                 .on_mouse_move(cx.listener(move |this, _, window, cx| {
                     if !disabled {
@@ -441,7 +463,7 @@ impl Render for ChatOptionMenuPanel {
                                 .mt(px(2.0 * scale))
                                 .text_size(px(12.0 * scale))
                                 .line_height(px(16.0 * scale))
-                                .truncate()
+                                .when(!disabled, |line| line.truncate())
                                 .text_color(foreground.opacity(0.58))
                                 .child(description),
                         )
@@ -477,10 +499,8 @@ impl Render for ChatOptionMenuPanel {
             }
             body = body.child(item);
         }
-        // A menu the chat box's pill strip opened takes the Links list's surface and edge.
-        //
-        // CDXC:SessionChat 2026-10-29 DECISION:
-        // User, of the strip's menus: "make all those menus have same bg too please (i like the one we have in Links menu there)". Resources, Workers, Tasks, Subagents and Background draw on the Links list's fill (`popup_window_surface(titlebar_background())`) with its border colour (native_sidebar/links_list.rs); other chat menus keep the chat's menu tone.
+        // A menu the chat box's pill strip opened takes the sidebar menus' surface and edge
+        // (`popup_menu_surface` has the user's words).
         let strip_menu = self
             .menu
             .read(cx)
@@ -488,15 +508,13 @@ impl Render for ChatOptionMenuPanel {
             .is_some_and(|pill| pill.starts_with("chat-pill-"));
         let (surface, edge) = if strip_menu {
             (
-                crate::app::helpers::popup_window_surface(
-                    crate::app::helpers::titlebar_background(),
-                ),
+                crate::app::helpers::popup_menu_surface(),
                 crate::app::helpers::titlebar_popup_menu_border_color(),
             )
         } else {
             (appearance.menu_surface(), border)
         };
-        div()
+        let card = div()
             .id("chat-option-menu")
             .role(gpui::Role::Menu)
             .track_focus(&self.focus)
@@ -511,9 +529,25 @@ impl Render for ChatOptionMenuPanel {
             .text_color(foreground)
             .text_size(px(m.text * scale))
             .line_height(px(m.line * scale))
-            .on_key_down(cx.listener(Self::key))
-            .child(body)
-            .into_any_element()
+            .on_key_down(cx.listener(Self::key));
+        if self
+            .rows
+            .first()
+            .is_some_and(|row| row["accounts"].is_object())
+        {
+            let at_once = !self
+                .rows
+                .first()
+                .is_some_and(super::window::accounts_row_opens_animated);
+            crate::app::window::popup_frame::popup_open_frame(
+                card,
+                body,
+                at_once,
+                cx.reduce_motion(),
+            )
+        } else {
+            card.child(body).into_any_element()
+        }
     }
 }
 

@@ -58,6 +58,9 @@ pub(crate) struct GpuiRemoteGxserverCapabilities {
     /// The daemon says it cannot resolve its session host, so no session can start there. An older
     /// answer without the tool list reads as not missing.
     pub(crate) zmx_missing: bool,
+    /// The daemon keeps a handed-off orchestrator's staged draft for its Chat box instead of typing
+    /// it into the terminal while `/ghostex-orchestrator` starts (`coordinatorHandoffDraft`).
+    pub(crate) coordinator_handoff_draft: bool,
 }
 
 pub(crate) struct GpuiRemoteGxserverConnection {
@@ -75,6 +78,9 @@ pub(crate) struct GpuiRemoteGxserverConnection {
     /// The machine's gxserver is this computer's own (`gpui_remote_is_this_computer`), so it is
     /// never installed or updated from here.
     pub(crate) this_computer: bool,
+    /// The way back for the machine's agents to reach this computer (helpers/remote/reverse_tunnel.rs),
+    /// opened after connecting (remote_conn/connected_computers.rs).
+    pub(crate) reverse_tunnel: Option<crate::app::helpers::GpuiRemoteReverseTunnel>,
 }
 
 impl GpuiRemoteGxserverConnection {
@@ -94,6 +100,9 @@ impl GpuiRemoteGxserverConnection {
         }
         gpui_forget_remote_tunnel(self.child.id());
         let _ = self.child.kill();
+        if let Some(mut reverse) = self.reverse_tunnel.take() {
+            reverse.terminate();
+        }
     }
 }
 
@@ -106,6 +115,13 @@ pub(crate) struct GpuiRemoteGxserverRequestTarget {
     pub(crate) execution_target: GpuiRemoteExecutionTarget,
     pub(crate) local_port: u16,
     pub(crate) token: String,
+}
+
+impl GpuiRemoteGxserverRequestTarget {
+    /// The daemon can take a handed-off orchestrator's draft (`coordinatorHandoffDraft`).
+    pub(crate) fn stages_coordinator_handoff_draft(&self) -> bool {
+        self.capabilities.coordinator_handoff_draft
+    }
 }
 
 /// CDXC:RemoteMachines 2026-09-25 WHY:
@@ -432,9 +448,12 @@ impl ProjectScopedWorkareaAvailability {
                         _ => false,
                     }
             }
-            TitlebarMode::Manage | TitlebarMode::Terminal | TitlebarMode::Changes => {
-                self.project_context.has_project_scoped_workareas()
-            }
+            // A side chat tab's own condition (the project has one open) is the app's:
+            // `titlebar_mode_available` in app/workarea/view_visibility.rs.
+            TitlebarMode::Manage
+            | TitlebarMode::Terminal
+            | TitlebarMode::Changes
+            | TitlebarMode::SideChat => self.project_context.has_project_scoped_workareas(),
         }
     }
 
@@ -552,7 +571,8 @@ impl ProjectWorkareaCefSurfaceSlotKey {
             | TitlebarMode::Terminal
             | TitlebarMode::BotFeed
             | TitlebarMode::GhostOverview
-            | TitlebarMode::Changes => {
+            | TitlebarMode::Changes
+            | TitlebarMode::SideChat => {
                 return None;
             }
         })
@@ -578,13 +598,26 @@ impl ProjectWorkareaCefSurfaceSlotKey {
     }
 
     /// Code windows share the Code view's profile, as VS Code's windows share one install.
+    ///
+    /// CDXC:CodeEditor 2026-11-05 WHY:
+    /// The editor's launch key rides in a cookie for 127.0.0.1 (`ghostex-code-key-<port>`,
+    /// .dependencies/code-server/src/node/ghostexKey.ts), and cookies are not kept apart by port. On
+    /// the shared app-UI context every Browser tab sent that cookie to any local server it opened
+    /// (`http://127.0.0.1:5173`), so a server another account runs could collect the key (security
+    /// review 2026-11-05). The Code view therefore has a disk-backed profile of its own, prepared
+    /// like a workspace Browser profile before its page opens (`prepare_workspace_browser_context`
+    /// in runtime_surfaces.rs); its browser storage moves there once.
     pub(crate) fn cef_profile_id(self) -> String {
         match self {
-            Self::CodeWindow(_) => Self::Source.cef_profile_id(),
+            Self::Source | Self::CodeWindow(_) => CODE_VIEW_CEF_PROFILE.to_string(),
             _ => format!("project-workarea-{}", self.privacy_label()),
         }
     }
 }
+
+/// The Code view's own browser profile: a `workspace-` id, so it gets a disk-backed context of its
+/// own (cef/shell/workspace_browser.rs) instead of the app-UI context the Browser shares.
+pub(crate) const CODE_VIEW_CEF_PROFILE: &str = "workspace-code-view";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ProjectWorkareaRealRuntimeUrl {
@@ -933,6 +966,7 @@ pub(crate) struct SharedSourceCodeServerRuntime {
     child: SharedSourceCodeServerChild,
     started_at: Option<Instant>,
     runtime_origin: String,
+    runtime_key: Option<String>,
     prompt_editor_ipc_ready: bool,
 }
 
@@ -950,6 +984,8 @@ pub(crate) struct SourceCodeServerRuntimeOwner {
     pub(crate) target: Option<SourceCodeServerRuntimeTarget>,
     pub(crate) settings: Option<SourceCodeServerRuntimeSettings>,
     pub(crate) runtime_origin: Option<String>,
+    /// The running editor's launch key (CDXC:CodeEditor 2026-10-25 in helpers/source_server/code_server.rs).
+    pub(crate) runtime_key: Option<String>,
     pub(crate) prompt_editor_ipc_ready: bool,
     pub(crate) pending_remote_prompt_editor_request: Option<PendingRemotePromptEditorRequest>,
 }
@@ -968,6 +1004,7 @@ impl SourceCodeServerRuntimeOwner {
             target: None,
             settings: None,
             runtime_origin: None,
+            runtime_key: None,
             prompt_editor_ipc_ready: false,
             pending_remote_prompt_editor_request: None,
         }
@@ -1038,6 +1075,7 @@ impl SourceCodeServerRuntimeOwner {
             .then(|| {
                 source_code_server_runtime_url(
                     self.runtime_origin.as_deref()?,
+                    self.runtime_key.as_deref(),
                     target.project_path.as_path(),
                 )
             })
@@ -1106,6 +1144,7 @@ impl SourceCodeServerRuntimeOwner {
         self.settings = Some(settings);
         self.started_at = Some(started_at);
         self.runtime_origin = None;
+        self.runtime_key = None;
         self.prompt_editor_ipc_ready = false;
     }
 
@@ -1132,11 +1171,13 @@ impl SourceCodeServerRuntimeOwner {
         child: Child,
         started_at: Instant,
         runtime_origin: String,
+        runtime_key: Option<String>,
         prompt_editor_ipc_ready: bool,
     ) {
         self.replace_child(child);
         self.started_at = Some(started_at);
         self.runtime_origin = Some(runtime_origin);
+        self.runtime_key = runtime_key;
         self.prompt_editor_ipc_ready = prompt_editor_ipc_ready;
         self.set_ready_target(target, settings);
     }
@@ -1162,6 +1203,7 @@ impl SourceCodeServerRuntimeOwner {
         self.target = Some(target);
         self.settings = Some(settings);
         self.runtime_origin = None;
+        self.runtime_key = None;
         self.prompt_editor_ipc_ready = false;
     }
 
@@ -1179,6 +1221,7 @@ impl SourceCodeServerRuntimeOwner {
         self.target = Some(target);
         self.settings = Some(settings);
         self.runtime_origin = None;
+        self.runtime_key = None;
         self.prompt_editor_ipc_ready = false;
     }
 
@@ -1196,6 +1239,7 @@ impl SourceCodeServerRuntimeOwner {
         self.target = target;
         self.settings = settings;
         self.runtime_origin = None;
+        self.runtime_key = None;
         self.prompt_editor_ipc_ready = false;
     }
 
@@ -1214,6 +1258,7 @@ impl SourceCodeServerRuntimeOwner {
         self.target = target;
         self.settings = settings;
         self.runtime_origin = None;
+        self.runtime_key = None;
         self.prompt_editor_ipc_ready = false;
     }
 
@@ -1227,6 +1272,7 @@ impl SourceCodeServerRuntimeOwner {
         self.target = None;
         self.settings = None;
         self.runtime_origin = None;
+        self.runtime_key = None;
         self.prompt_editor_ipc_ready = false;
     }
 
@@ -1248,6 +1294,7 @@ impl SourceCodeServerRuntimeOwner {
             child: self.child.clone()?,
             started_at: self.started_at,
             runtime_origin: self.runtime_origin.clone()?,
+            runtime_key: self.runtime_key.clone(),
             prompt_editor_ipc_ready: self.prompt_editor_ipc_ready,
         })
     }
@@ -1269,6 +1316,7 @@ impl SourceCodeServerRuntimeOwner {
         self.child = Some(shared.child);
         self.started_at = shared.started_at;
         self.runtime_origin = Some(shared.runtime_origin);
+        self.runtime_key = shared.runtime_key;
         self.prompt_editor_ipc_ready = shared.prompt_editor_ipc_ready;
         self.set_ready_target(target, settings);
     }
@@ -1308,6 +1356,7 @@ impl SourceCodeServerRuntimeOwner {
                 self.failure = Some(SourceCodeServerRuntimeFailure::Launch);
                 self.install_progress = None;
                 self.runtime_origin = None;
+                self.runtime_key = None;
                 self.prompt_editor_ipc_ready = false;
                 true
             }
@@ -1332,6 +1381,7 @@ impl SourceCodeServerRuntimeOwner {
         self.target = None;
         self.settings = None;
         self.runtime_origin = None;
+        self.runtime_key = None;
         self.prompt_editor_ipc_ready = false;
         had_state
     }
@@ -1340,6 +1390,8 @@ impl SourceCodeServerRuntimeOwner {
 pub(crate) struct SourceCodeServerRuntimeStartOutput {
     pub(crate) child: Child,
     pub(crate) runtime_origin: String,
+    /// The key this launch gave the editor; the Code view's first load carries it.
+    pub(crate) runtime_key: Option<String>,
     pub(crate) prompt_editor_ipc_ready: bool,
     pub(crate) started_at: Instant,
     pub(crate) http_runtime_ready: bool,

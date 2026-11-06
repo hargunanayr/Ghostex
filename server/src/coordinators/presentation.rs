@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use super::records::{
     list_coordinators, list_threads, read_coordinator, read_thread, SessionKey, ThreadRecord,
 };
-use super::state::{classify_thread_session, ThreadProgress};
+use super::state::ThreadProgress;
 use crate::domain::DomainRepository;
 use crate::presentation::now_iso;
 
@@ -41,11 +41,10 @@ fn insert_fields(
         );
         object.insert(
             "coordinatorThreadState".to_string(),
-            json!(classify_thread_session(
+            json!(super::live::classify_thread_live(
                 raw_session,
                 ThreadProgress::of(thread),
                 generated_at,
-                false
             )
             .as_str()),
         );
@@ -104,6 +103,9 @@ pub fn insert_coordinator_presentation_payload(
             thread.map(|thread| (thread, raw.as_ref())),
             &generated_at,
         );
+        if is_coordinator {
+            super::remote_threads::insert_coordinator_remote_threads(session, db, &key);
+        }
     }
 }
 
@@ -128,4 +130,11 @@ pub fn insert_coordinator_session_projection(
         thread.as_ref().map(|thread| (thread, Some(raw_session))),
         &now_iso(),
     );
+    if is_coordinator {
+        super::remote_threads::insert_coordinator_remote_threads(
+            presentation_session,
+            db,
+            &(project_id, session_id),
+        );
+    }
 }

@@ -38,6 +38,16 @@ export const TOOLCHAIN = Object.freeze({
    */
   tailcatBridgeGo: '1.27.1',
   tailcatBridgeGomobile: 'v0.0.0-20260821190718-4776eadac327',
+  /*
+   * CDXC:CloudBoxes 2026-11-02 SEE-ALSO: the tailcat every gxserver Linux package
+   * carries in bin/ (and so every Linux desktop package, at
+   * /opt/ghostex/gxserver/bin/tailcat), built by server/package-remote-linux.mjs
+   * with `go install` of this module version (Go's checksum database verifies the
+   * module) using the Go that release-gpui-gxserver.yml installs. Asserted against
+   * that script, server/src/tailcat/install.rs and the workflows.
+   */
+  tailcat: 'v0.6.0',
+  tailcatGo: '1.27.1',
   vpk: '1.2.0',
   /*
    * One Zig toolchain for the whole repo. Ghostty and the zmx fork moved from
@@ -75,10 +85,6 @@ export const IGNORED_FOR_RELEASE = Object.freeze([
   { path: 'LICENSE', why: 'Metadata only.' },
   { path: 'README.md', why: 'Metadata only.' },
   { path: 'TERMS.md', why: 'Project glossary for agents and contributors; metadata only.' },
-  {
-    path: 'THIRD_PARTY_NOTICES.md',
-    why: 'Third-party licence notices kept at the repo root; metadata only, like LICENSE.',
-  },
   { path: 'appcast.xml', why: 'Sparkle feed output written by the publisher, not a build input.' },
   { path: 'claude-code-codex-keybindings.json', why: 'Developer keybindings; not packaged.' },
   { path: 'favicon.png', why: 'Web asset for local tooling; not packaged by any release job.' },
@@ -149,6 +155,11 @@ const DESKTOP_APP_PATHSPECS = Object.freeze([
    * raw.githubusercontent.com does not remove it as a build input.
    */
   { pathspec: 'agent-model-catalog.json' },
+  /*
+   * The licence notices every desktop package ships beside the app. Purely additive and desktop-only, so
+   * FINGERPRINT_ALGORITHM_REVISION is not bumped (same reasoning as the android product's note below).
+   */
+  { pathspec: 'THIRD_PARTY_NOTICES.md' },
   { pathspec: '.dependencies/ghostty/**' },
   { pathspec: ':(exclude).dependencies/ghostty/.zig-cache' },
   { pathspec: ':(exclude).dependencies/ghostty/zig-out' },
@@ -218,6 +229,8 @@ function gxserverProduct(arch) {
     signing: { mode: 'unsigned' },
     values: {
       arch,
+      tailcat: TOOLCHAIN.tailcat,
+      tailcatGo: TOOLCHAIN.tailcatGo,
       zig: TOOLCHAIN.zig,
     },
     versionStamped: false,
@@ -229,8 +242,9 @@ function gxserverProduct(arch) {
  * four wrappers over the same staged package root (§7): .deb, .rpm, the
  * prefix-preserving `.tar.zst` that Arch, ubi, and mise install straight from
  * the release page, and the AppImage (GitHub issue #320). ARM64 builds natively
- * on ubuntu-24.04-arm with the same scripts; its names use each format's own
- * spelling of the architecture.
+ * on ubuntu-22.04-arm with the same scripts; its names use each format's own
+ * spelling of the architecture. Both build on Ubuntu 22.04 for its glibc 2.35
+ * floor (CDXC:Release 2026-10-31 in release-gpui-linux.yml).
  */
 const LINUX_DESKTOP_ARTIFACT_NAMES = Object.freeze({
   x64: Object.freeze({
@@ -281,11 +295,13 @@ function linuxDesktopProduct(format, arch = 'x64') {
             { pathspec: 'tooling/packaging/appimage/**' },
             { pathspec: 'tooling/release-gpui/appimage-update-info.mjs' },
             { pathspec: 'tooling/release-gpui/appimage-signature.mjs' },
+            { pathspec: 'tooling/release-gpui/appimage-bundle-libraries.mjs' },
+            { pathspec: 'tooling/release-gpui/linux-appimage-smoke.sh' },
           ]
         : []),
       { pathspec: '.github/workflows/release-gpui-linux.yml' },
     ],
-    platform: { arch, os: 'linux', runnerLabel: arch === 'arm64' ? 'ubuntu-24.04-arm' : 'ubuntu-24.04' },
+    platform: { arch, os: 'linux', runnerLabel: arch === 'arm64' ? 'ubuntu-22.04-arm' : 'ubuntu-22.04' },
     scopeFlag: LINUX_DESKTOP_SCOPE_FLAGS[arch][format],
     sideFiles: [],
     signing: { mode: 'unsigned' },
@@ -293,6 +309,8 @@ function linuxDesktopProduct(format, arch = 'x64') {
     values: {
       ...(arch === 'arm64' ? { arch } : {}),
       packageFormat: format,
+      /* The package ships the gxserver package's tailcat, and the release job checks its version. */
+      tailcat: TOOLCHAIN.tailcat,
       zig: TOOLCHAIN.zig,
     },
     versionStamped: true,

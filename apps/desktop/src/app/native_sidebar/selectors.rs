@@ -55,9 +55,16 @@ impl GhostexGpuiApp {
         &self,
         snapshot: &NativeSidebarSnapshot,
         appearance: &SidebarAppearance,
+        window: &gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
-        self.render_native_sidebar_selectors_at(snapshot, SelectorsPlacement::Top, appearance, cx)
+        self.render_native_sidebar_selectors_at(
+            snapshot,
+            SelectorsPlacement::Top,
+            appearance,
+            window,
+            cx,
+        )
     }
 
     pub(crate) fn render_native_sidebar_selectors_at(
@@ -65,8 +72,54 @@ impl GhostexGpuiApp {
         snapshot: &NativeSidebarSnapshot,
         placement: SelectorsPlacement,
         appearance: &SidebarAppearance,
+        window: &gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
+        let scale = appearance.scale;
+        v_flex()
+            .w_full()
+            .flex_shrink_0()
+            .children(self.render_native_machine_tabs(snapshot, appearance, window, cx))
+            .when(placement == SelectorsPlacement::Top, |column| {
+                column.child(div().h(px(13.0 * scale)).flex_shrink_0())
+            })
+            .children(
+                self.render_native_sidebar_space_row_at(snapshot, placement, appearance, true, cx),
+            )
+            .into_any_element()
+    }
+
+    /// The Spaces row of the selected machine, or `None` while that machine has Spaces off. The
+    /// Unified header draws it too, without the Bots slot (`with_bots`): that list has no Bots mode.
+    pub(crate) fn render_native_sidebar_space_row(
+        &self,
+        snapshot: &NativeSidebarSnapshot,
+        appearance: &SidebarAppearance,
+        with_bots: bool,
+        cx: &mut gpui::Context<Self>,
+    ) -> Option<AnyElement> {
+        self.render_native_sidebar_space_row_at(
+            snapshot,
+            SelectorsPlacement::Top,
+            appearance,
+            with_bots,
+            cx,
+        )
+    }
+
+    /// The Spaces row at `placement`: across the sidebar, or at the foot of the two-column
+    /// layout's project column (stacked while that column is its icon rail).
+    fn render_native_sidebar_space_row_at(
+        &self,
+        snapshot: &NativeSidebarSnapshot,
+        placement: SelectorsPlacement,
+        appearance: &SidebarAppearance,
+        with_bots: bool,
+        cx: &mut gpui::Context<Self>,
+    ) -> Option<AnyElement> {
+        if !snapshot.spaces_enabled {
+            return None;
+        }
         let scale = appearance.scale;
         let (row_width, vertical) = match placement {
             SelectorsPlacement::Top => (self.sidebar_width, false),
@@ -74,7 +127,7 @@ impl GhostexGpuiApp {
         };
         // Space buttons have a fixed 28px face and 4px gap in both renderers. The Hermes slot and
         // its hairline take one Space's room plus the hairline's at the end of the row.
-        let bots_room = if snapshot.bots_enabled {
+        let bots_room = if with_bots && snapshot.bots_enabled {
             32.0 + super::bots::BOTS_SPACE_SLOT_DIVIDER_WIDTH
         } else {
             0.0
@@ -117,11 +170,9 @@ impl GhostexGpuiApp {
             .map(|space| (*space).clone())
             .collect();
         let more_owner = super::menus::MenuOwner::default();
-        v_flex().w_full().flex_shrink_0()
-            .children(self.render_native_machine_tabs(snapshot, appearance, cx))
-            .when(placement == SelectorsPlacement::Top, |column| column.child(div().h(px(13.0 * scale)).flex_shrink_0()))
-            // CDXC:Spaces 2026-10-11 DECISION: User: Create a space fits its content, and the Spaces row stays centred with no background behind it (a left-aligned row in a rounded track was tried and removed the same day). The workspace tile left the row for the sidebar's bottom bar (workspace_tile.rs).
-            .when(snapshot.spaces_enabled, |column| column.child(h_flex().id("native-sidebar-space-track").sidebar_drop_target("space-row", String::new(), None, cx).w_full().gap(px(4.0 * scale))
+        // CDXC:Spaces 2026-10-11 DECISION: User: Create a space fits its content, and the Spaces row stays centred with no background behind it (a left-aligned row in a rounded track was tried and removed the same day). The workspace tile left the row for the sidebar's bottom bar (workspace_tile.rs).
+        Some(
+            h_flex().id("native-sidebar-space-track").sidebar_drop_target("space-row", String::new(), None, cx).w_full().gap(px(4.0 * scale))
                 .map(|row| match placement {
                     SelectorsPlacement::Top => row.h(px(40.0 * scale)).pb(px(12.0 * scale)).px(px(6.5 * scale)).justify_center(),
                     SelectorsPlacement::ProjectColumn { vertical: false, .. } => row.h(px(44.0 * scale)).px(px(6.5 * scale)).justify_center(),
@@ -140,8 +191,9 @@ impl GhostexGpuiApp {
                         items.push(json!({"label": "New Space", "icon": "plus", "command": {"type": "editSpace"}}));
                         Self::show_native_sidebar_menu_hung(&json!(items), more_owner.get(), None, Some(("more-spaces".to_owned(), super::menus::press_position(event))), event.position(), scale, window, cx);
                     }))))
-                .when(snapshot.bots_enabled, |row| row.child(self.render_native_sidebar_bots_space_slot(snapshot.bots_mode, appearance, cx)))))
-            .into_any_element()
+                .when(with_bots && snapshot.bots_enabled, |row| row.child(self.render_native_sidebar_bots_space_slot(snapshot.bots_mode, appearance, cx)))
+            .into_any_element(),
+        )
     }
 
     fn render_native_sidebar_space(
@@ -230,33 +282,119 @@ impl GhostexGpuiApp {
         */
         let owner = super::menus::MenuOwner::default();
         let space_owner = owner.clone();
-        v_flex().id(format!("native-sidebar-space-{id}")).group(dot_group).on_prepaint(super::menus::record_menu_owner(&owner)).role(gpui::Role::Button).aria_label(format!("Space {name}")).aria_selected(space.selected).relative().size(px(28.0 * scale)).flex_shrink_0().items_center().justify_center().rounded(px(6.0 * scale)).border_1().border_color(appearance.foreground.opacity(0.08)).cursor_pointer()
-            .when(self.native_sidebar.is_dragging("space", &id), |row| row.opacity(0.3))
-            .when(space.contains_active_session && !space.selected, |row| row.bg(appearance.selected).border_color(appearance.selected_outline))
-            .when(space.selected, |row| row.bg(selected_background).border_color(selected_outline).when(appearance.light && !appearance.glass, |row| row.shadow_sm()))
+        v_flex()
+            .id(format!("native-sidebar-space-{id}"))
+            .group(dot_group)
+            .on_prepaint(super::menus::record_menu_owner(&owner))
+            .role(gpui::Role::Button)
+            .aria_label(format!("Space {name}"))
+            .aria_selected(space.selected)
+            .relative()
+            .size(px(28.0 * scale))
+            .flex_shrink_0()
+            .items_center()
+            .justify_center()
+            .rounded(px(6.0 * scale))
+            .border_1()
+            .border_color(appearance.foreground.opacity(0.08))
+            .cursor_pointer()
+            .when(self.native_sidebar.is_dragging("space", &id), |row| {
+                row.opacity(0.3)
+            })
+            .when(space.contains_active_session && !space.selected, |row| {
+                row.bg(appearance.selected)
+                    .border_color(appearance.selected_outline)
+            })
+            .when(space.selected, |row| {
+                row.bg(selected_background)
+                    .border_color(selected_outline)
+                    .when(appearance.light && !appearance.glass, |row| row.shadow_sm())
+            })
             .hover(|row| row.bg(appearance.hover))
             .child(icon)
-            .children(drop_position.map(|position| super::space_drag::insertion_line(position, scale)))
+            .children(
+                drop_position.map(|position| super::space_drag::insertion_line(position, scale)),
+            )
             // CDXC:Spaces 2026-09-22 DECISION: User: remove the numbers for now and match the dots exactly to the session card status dots. The 2026-09-25 overlap layout lives on `status_dot_stack`.
-            .when(has_status, |row| row.child(h_flex().absolute().top(px(20.5 * scale)).left_0().w_full().justify_center().h(px(11.0 * scale))
-                .child(super::status::status_dot_stack(space.working_count, space.attention_count, space.background_work_count, space.question_count, space.approval_count, scale, dot_backdrop))))
-            .when(self.native_sidebar.pointer_inside && self.native_sidebar.menu.is_none() && !cx.has_active_drag(), |row| row.managed_discrete_tooltip_with_placement(tooltip_span.placement(), appearance.tooltip_delay, move |window, cx| super::tooltips::sidebar_free_width_tooltip(name.to_string(), tooltip_span, scale, window, cx)))
+            .when(has_status, |row| {
+                row.child(
+                    h_flex()
+                        .absolute()
+                        .top(px(20.5 * scale))
+                        .left_0()
+                        .w_full()
+                        .justify_center()
+                        .h(px(11.0 * scale))
+                        .child(super::status::status_dot_stack(
+                            space.working_count,
+                            space.attention_count,
+                            space.background_work_count,
+                            space.question_count,
+                            space.approval_count,
+                            scale,
+                            dot_backdrop,
+                        )),
+                )
+            })
+            .when(
+                self.native_sidebar.pointer_inside
+                    && self.native_sidebar.menu.is_none()
+                    && !cx.has_active_drag(),
+                |row| {
+                    row.managed_discrete_tooltip_with_placement(
+                        tooltip_span.placement(),
+                        appearance.tooltip_delay,
+                        move |window, cx| {
+                            super::tooltips::sidebar_free_width_tooltip(
+                                name.to_string(),
+                                tooltip_span,
+                                scale,
+                                window,
+                                cx,
+                            )
+                        },
+                    )
+                },
+            )
             .when(id != "other", |row| row.sidebar_drag_source(dragged, cx))
             .sidebar_drop_target("space", drag_id, None, cx)
-            .on_click(cx.listener(move |app, _, _, cx| { cx.stop_propagation(); app.select_native_space(&id, cx); }))
-            .on_mouse_down(MouseButton::Right, cx.listener(move |app, event: &gpui::MouseDownEvent, window, cx| {
+            .on_click(cx.listener(move |app, _, _, cx| {
                 cx.stop_propagation();
-                let mut items = Vec::new();
-                // CDXC:Spaces 2026-09-22 DECISION: User: a Space icon's menu is two labelled groups: "Manage" at the top (Edit Space, New Space) and "Sleep" at the bottom, and the Sleep group shows only Sleep Inactive. This supersedes the same-day request for Sleep Space and Sleep Others on this menu. Sleep Inactive is the Space's idle sessions only. The Other button offers the same rows for the projects no Space claims.
-                items.push(json!({"label": "Manage", "heading": true}));
-                if menu_id != "other" { items.push(json!({"label": "Edit Space", "icon": "pencil", "command": {"type": "editSpace", "spaceId": menu_id}})); }
-                items.push(json!({"label": "New Space", "icon": "plus", "command": {"type": "editSpace"}}));
-                items.push(json!({"separator": true}));
-                items.push(json!({"label": "Sleep", "heading": true}));
-                let plans = app.gx_store_space_sleep_plans(&menu_id);
-                items.push(json!({"label": "Sleep Inactive", "icon": "moon", "disabled": !app.gx_store_space_sleep_has_work(plans.as_ref(), SpaceSleepScope::Inactive), "command": {"type": "sleepSpace", "spaceId": menu_id, "scope": SpaceSleepScope::Inactive.as_str()}}));
-                Self::show_native_sidebar_context_menu(&json!(items), space_owner.get(), event.position, scale, window, cx);
+                app.select_native_space(&id, cx);
             }))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |app, event: &gpui::MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    let items = app.native_space_menu(&menu_id);
+                    Self::show_native_sidebar_context_menu(
+                        &items,
+                        space_owner.get(),
+                        event.position,
+                        scale,
+                        window,
+                        cx,
+                    );
+                }),
+            )
             .into_any_element()
+    }
+}
+
+impl GhostexGpuiApp {
+    /// A Space's right-click menu, which the Unified filter dropdown's Space rows open too.
+    pub(crate) fn native_space_menu(&self, space_id: &str) -> serde_json::Value {
+        let mut items = Vec::new();
+        // CDXC:Spaces 2026-09-22 DECISION: User: a Space icon's menu is two labelled groups: "Manage" at the top (Edit Space, New Space) and "Sleep" at the bottom, and the Sleep group shows only Sleep Inactive. This supersedes the same-day request for Sleep Space and Sleep Others on this menu. Sleep Inactive is the Space's idle sessions only. The Other button offers the same rows for the projects no Space claims.
+        items.push(json!({"label": "Manage", "heading": true}));
+        if space_id != "other" {
+            items.push(json!({"label": "Edit Space", "icon": "pencil", "command": {"type": "editSpace", "spaceId": space_id}}));
+        }
+        items.push(json!({"label": "New Space", "icon": "plus", "command": {"type": "editSpace"}}));
+        items.push(json!({"separator": true}));
+        items.push(json!({"label": "Sleep", "heading": true}));
+        let plans = self.gx_store_space_sleep_plans(space_id);
+        items.push(json!({"label": "Sleep Inactive", "icon": "moon", "disabled": !self.gx_store_space_sleep_has_work(plans.as_ref(), SpaceSleepScope::Inactive), "command": {"type": "sleepSpace", "spaceId": space_id, "scope": SpaceSleepScope::Inactive.as_str()}}));
+        serde_json::Value::Array(items)
     }
 }

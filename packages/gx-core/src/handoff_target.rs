@@ -1,4 +1,4 @@
-//! Advanced Handoff: which of another computer's projects a handed-off session should land in,
+//! A handoff to another project: which of another computer's projects a handed-off session should land in,
 //! and what the dialog says when the two checkouts are on different branches.
 //!
 //! CDXC:TranscriptExport 2026-10-25 DECISION:
@@ -25,6 +25,8 @@ pub struct HandoffProjectChoice {
     pub title: String,
     pub path: Option<String>,
     pub same_repo: bool,
+    /// The project the session is in: this project, here.
+    pub is_own: bool,
 }
 
 /// The ranked rows and the one to preselect.
@@ -34,7 +36,7 @@ pub struct HandoffProjectRanking {
     pub preferred_project_id: Option<String>,
 }
 
-/// One computer's rows for Advanced Handoff, and the repository it lacks.
+/// One computer's rows for a handoff's destination, and the repository it lacks.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HandoffComputerRanking {
     pub ranking: HandoffProjectRanking,
@@ -44,27 +46,33 @@ pub struct HandoffComputerRanking {
 }
 
 /// Ranks a computer's projects for a session. `own_project` is the session's project when this is
-/// the session's own computer: a handoff there goes to ANOTHER project, so it is not a choice, and
-/// that computer never lacks the repository, whatever its other projects hold.
+/// the session's own computer: it comes first and is what the row starts on, and that computer
+/// never lacks the repository, whatever its other projects hold.
 ///
 /// CDXC:TranscriptExport 2026-10-31 DECISION:
-/// User (Q865): "we should just be able to handoff to another project in the same machine using the 'handoff to remote' option". See `ExportTranscriptMode::HandoffAdvanced`.
+/// User: Handoff to an agent "needs to get all the options" of the other card, "allow either handing off in the current project and current machine and all that (default) or handing off to another machine/another project". So this project is a choice like any other, the first one here.
 pub fn rank_handoff_computer(
     origin_url: Option<&str>,
     source_path: Option<&str>,
     candidates: &[HandoffProjectCandidate],
     own_project: Option<&str>,
 ) -> HandoffComputerRanking {
-    let offered: Vec<HandoffProjectCandidate> = candidates
-        .iter()
-        .filter(|candidate| own_project != Some(candidate.project_id.as_str()))
-        .cloned()
-        .collect();
-    let ranking = rank_handoff_projects(origin_url, source_path, &offered);
+    let mut ranking = rank_handoff_projects(origin_url, source_path, candidates);
     let missing_repository = match (&ranking.preferred_project_id, own_project) {
         (None, None) => origin_url.and_then(repository_display_name),
         _ => None,
     };
+    if let Some(index) = own_project.and_then(|own| {
+        ranking
+            .choices
+            .iter()
+            .position(|choice| choice.project_id == own)
+    }) {
+        let mut own = ranking.choices.remove(index);
+        own.is_own = true;
+        ranking.preferred_project_id = Some(own.project_id.clone());
+        ranking.choices.insert(0, own);
+    }
     HandoffComputerRanking {
         ranking,
         missing_repository,
@@ -160,6 +168,7 @@ pub fn rank_handoff_projects(
                     title: candidate.title.clone(),
                     path: candidate.path.clone(),
                     same_repo: matched,
+                    is_own: false,
                 },
             )
         })
@@ -174,6 +183,40 @@ pub fn rank_handoff_projects(
         choices,
         preferred_project_id,
     }
+}
+
+/// The button of a handoff going somewhere else: it names where the session goes (Q862), with the
+/// computer when it leaves the session's own.
+pub fn handoff_destination_label(
+    project_title: &str,
+    computer_label: &str,
+    is_source: bool,
+) -> String {
+    if is_source {
+        format!("Handoff to {project_title}")
+    } else {
+        format!("Handoff to {project_title} on {computer_label}")
+    }
+}
+
+/// A Project select row: the title, its mark, and the folder.
+pub fn handoff_project_label(
+    title: &str,
+    is_own: bool,
+    same_repo: bool,
+    path: Option<&str>,
+) -> String {
+    let mut label = title.to_string();
+    if is_own {
+        label.push_str(" (this project)");
+    } else if same_repo {
+        label.push_str(" (same repo)");
+    }
+    if let Some(path) = path.filter(|path| !path.is_empty()) {
+        label.push_str(" · ");
+        label.push_str(path);
+    }
+    label
 }
 
 /// The first line of the branch notice, or `None` when there is nothing to warn about (same
@@ -313,10 +356,9 @@ mod tests {
     }
 
     #[test]
-    fn the_sessions_own_computer_offers_its_other_projects() {
+    fn the_sessions_own_computer_starts_on_this_project() {
         let origin = Some("git@github.com:o/ghostex.git");
         let candidates = [
-            candidate("own", "/dev/ghostex", origin, false),
             candidate(
                 "acme",
                 "/dev/acme",
@@ -324,6 +366,7 @@ mod tests {
                 false,
             ),
             candidate("docs", "/dev/docs", None, false),
+            candidate("own", "/dev/ghostex", origin, false),
         ];
         let own = rank_handoff_computer(origin, Some("/dev/ghostex"), &candidates, Some("own"));
         let ids: Vec<&str> = own
@@ -332,21 +375,24 @@ mod tests {
             .iter()
             .map(|choice| choice.project_id.as_str())
             .collect();
-        assert_eq!(ids, ["acme", "docs"]);
-        // Nothing to preselect, and no offer to clone a repository this computer already has.
-        assert_eq!(own.ranking.preferred_project_id, None);
+        assert_eq!(ids, ["own", "acme", "docs"]);
+        assert!(own.ranking.choices[0].is_own);
+        assert_eq!(own.ranking.preferred_project_id.as_deref(), Some("own"));
+        // No offer to clone a repository this computer already has.
         assert_eq!(own.missing_repository, None);
     }
 
     #[test]
-    fn a_second_checkout_on_the_sessions_own_computer_is_preselected() {
+    fn a_second_checkout_on_the_sessions_own_computer_comes_after_this_project() {
         let origin = Some("git@github.com:o/ghostex.git");
         let candidates = [
             candidate("own", "/dev/ghostex", origin, false),
             candidate("other", "/dev/other-ghostex", origin, false),
         ];
         let own = rank_handoff_computer(origin, Some("/dev/ghostex"), &candidates, Some("own"));
-        assert_eq!(own.ranking.preferred_project_id.as_deref(), Some("other"));
+        assert_eq!(own.ranking.preferred_project_id.as_deref(), Some("own"));
+        assert_eq!(own.ranking.choices[1].project_id, "other");
+        assert!(own.ranking.choices[1].same_repo);
     }
 
     #[test]

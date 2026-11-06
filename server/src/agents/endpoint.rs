@@ -56,6 +56,8 @@ pub fn dispatch_agent_endpoint(
     params: &Map<String, Value>,
     zmx_context: Option<&ZmxServerContext>,
 ) -> Result<AgentEndpointOutput, AgentEndpointError> {
+    let _identity_source =
+        crate::session_identity_log::identity_write_source(format!("endpoint:{endpoint_path}"));
     // CDXC:SessionTitles 2026-09-10 WHY:
     // Hooks and terminal observations replace runtime settings as a whole. Their reads must share a write transaction with their updates, or they can resurrect a title worker's completed running flag. Provider lifecycle operations keep their separate process-owning path.
     let updates_session_metadata = matches!(
@@ -100,6 +102,20 @@ pub fn dispatch_agent_endpoint(
             })?;
             let lifecycle = read_lifecycle(params)?;
             fork_session(repository, &lifecycle, db, context)?
+        }
+        // A side chat (server/src/side_chats/): the fork above, marked, with its question sent by
+        // server/src/server/side_chat_http.rs once it has started.
+        "/api/startSideChat" => {
+            let context = zmx_context.ok_or_else(|| {
+                AgentEndpointError::DependencyUnavailable(
+                    "Cannot start a side chat without gxserver zmx context.".to_string(),
+                )
+            })?;
+            let lifecycle = read_lifecycle(params)?;
+            let question = read_text(params, "question").ok_or_else(|| {
+                DomainStateError::bad_request("A side chat starts with a question.")
+            })?;
+            fork_session_as(repository, &lifecycle, db, context, Some(&question))?
         }
         /*
         CDXC:Drafts 2026-08-28:

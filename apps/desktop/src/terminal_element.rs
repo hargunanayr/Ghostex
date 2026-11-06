@@ -611,6 +611,14 @@ pub struct TerminalView {
     /// CDXC:Terminal 2026-09-27 WHY:
     /// Windows dead keys need both the accent and the following text key to reach TranslateMessage; encoding the following key directly would leave Windows' dead-key state pending even after sending the composed character.
     pending_character_input: bool,
+    /// CDXC:Terminal 2026-11-04 WHY:
+    /// Dead keys (U.S. International: ' then e types é, maddada/Ghostex#416) are fixed in this view rather than in the Zed fork, since the fork's key path is right and this view is what kept AppKit from seeing them.
+    /// GPUI gives a key to the view before AppKit's text input, and encoding every text key in key down meant AppKit never saw a dead key.
+    /// On macOS the first press of a text key without Control, Command, Function or Option now goes to AppKit first, as Ghostty's macOS view does with `interpretKeyEvents`; this field holds that key and its Caps Lock state until AppKit commits text or starts composing.
+    /// Option keys keep their own path below: as Alt they are encoded, otherwise their text (ß, ∑, Option dead keys) is written literally as before, because the key encoder would turn ∑ into Alt+W for a kitty report-all program.
+    /// Text committed for the key is encoded with it, so kitty-protocol programs get the same key event as before; a dead key becomes marked text, and the composed character it produces with the next key is written as plain text, like other IME commits here and Ghostty's committed preedit.
+    /// A held key keeps repeating through the encoder, so the press-and-hold accent picker never opens in a terminal, as in Ghostty, which turns press-and-hold off for itself so held keys repeat.
+    awaiting_text_key: Option<(Keystroke, bool)>,
     /// Cmd+A ran Select All on press, so its release must not reach a program
     /// in kitty report-events mode either, as in Ghostty.
     select_all_release_pending: bool,
@@ -672,6 +680,9 @@ pub struct TerminalView {
     /// The grid of the latest prepaint: what a displayed slot last showed. Only a
     /// frame taken at this grid may stand in during a reflow hold.
     displayed_grid: Option<(u16, u16)>,
+    /// The grid this view last settled on while displayed (not the chat or parked grid it may rest
+    /// at afterwards). A replacement viewer for the same slot spawns its PTY at it (`shown_grid`).
+    shown_grid: Option<(u16, u16)>,
     /// Diagnostic Terminal-focus scenario: sequence number of logged frames.
     diagnostic_frame_seq: u64,
     /// CDXC:Terminal 2026-09-25 WHY:
@@ -769,6 +780,7 @@ impl TerminalView {
             marked_selection_utf16: None,
             last_reported_ime_cursor: None,
             pending_character_input: false,
+            awaiting_text_key: None,
             select_all_release_pending: false,
             focus_handle: cx.focus_handle(),
             focused: false,
@@ -798,6 +810,7 @@ impl TerminalView {
             zmx_reflow_hold: None,
             zmx_reflow_hold_seq: 0,
             displayed_grid: None,
+            shown_grid: None,
             diagnostic_frame_seq: 0,
             synchronized_output_since: None,
             parked_viewport: None,
@@ -837,6 +850,11 @@ impl TerminalView {
         self.drag = None;
         self.scrollbar_reveal.reset();
         self.model.release_viewer_emulator();
+    }
+
+    /// The grid this view last settled on while displayed, for spawning its replacement viewer.
+    pub fn shown_grid(&self) -> Option<(u16, u16)> {
+        self.shown_grid
     }
 
     /// Enable ordered size claims for this live zmx attachment, including
@@ -1031,8 +1049,10 @@ impl TerminalView {
                             if let Some(combining) = &cell.combining {
                                 text.push_str(combining);
                             }
+                            let cell_width = if cell.width == VtCellWide::Wide { 2 } else { 1 };
                             crate::terminal_model::TerminalTextCell {
                                 column: column as u16,
+                                width: cell_width,
                                 text,
                             }
                         })
@@ -1519,12 +1539,14 @@ impl TerminalView {
         cx.notify();
     }
 
-    fn handle_key_down(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+    fn handle_key_down(&mut self, event: &KeyDownEvent, caps_lock: bool, cx: &mut Context<Self>) {
         let keystroke = &event.keystroke;
         let modifiers = &keystroke.modifiers;
         self.last_modifiers = *modifiers;
         // A Cmd-A release lost to a focus change must not swallow a later one.
         self.select_all_release_pending = false;
+        // A text key AppKit never committed must not pair with later text.
+        self.awaiting_text_key = None;
         /*
         CDXC:SessionTitles 2026-07-26:
         While a first-prompt title is generating the pane is input-suppressed
@@ -1705,6 +1727,21 @@ impl TerminalView {
             return;
         }
 
+        // macOS: a text key's first press goes to AppKit, so dead keys can
+        // compose (see `awaiting_text_key`).
+        if cfg!(target_os = "macos")
+            && !event.is_held
+            && self.marked_text.is_none()
+            && !modifiers.control
+            && !modifiers.platform
+            && !modifiers.function
+            && !modifiers.alt
+            && keystroke_text(keystroke).is_some()
+        {
+            self.awaiting_text_key = Some((keystroke.clone(), caps_lock));
+            return;
+        }
+
         // Plain option-modified text keys belong to the IME/insertText path
         // while option is not acting as alt: dead keys compose there
         // (option-e + e -> é) and option-symbols (ß, ∫) arrive as committed
@@ -1725,40 +1762,23 @@ impl TerminalView {
             && !modifiers.platform
             && !modifiers.function
             && self.model.option_sends_alt();
-        let (key, unshifted_codepoint) = keystroke_vt_key(keystroke);
-        let utf8 = if option_as_alt_translation {
-            keystroke_option_as_alt_text(keystroke)
-        } else {
-            keystroke_text(keystroke)
-        };
-        let mods = vt_mods(modifiers);
         // While IME composition is active every key belongs to the marked
         // text (the platform routes it to the IME first; a key can only get
         // here when the IME declined it). The encoder drops everything but
         // plain modifiers for composing events, so e.g. Backspace can never
         // delete committed text behind an active pinyin preedit.
         let composing = self.marked_text.is_some();
-        let input = VtKeyInput {
-            action: if event.is_held {
+        let input = terminal_key_press_input(
+            keystroke,
+            caps_lock,
+            option_as_alt_translation,
+            if event.is_held {
                 VtKeyAction::Repeat
             } else {
                 VtKeyAction::Press
             },
-            key,
-            mods,
-            // GPUI's key_char has already folded shift/option into produced
-            // text. When Option acts as Alt, use GPUI's documented physical
-            // layout key instead and leave every modifier unconsumed so
-            // libghostty performs the configured Alt/Shift encoding itself.
-            consumed_mods: if utf8.is_some() && !option_as_alt_translation {
-                mods & (ffi::GHOSTTY_MODS_SHIFT | ffi::GHOSTTY_MODS_ALT)
-            } else {
-                0
-            },
-            utf8,
-            unshifted_codepoint,
             composing,
-        };
+        );
         let kitty_keyboard_flags = self.model.kitty_keyboard_flags();
         let accepted = self.model.send_key(&input);
         /*
@@ -1811,9 +1831,10 @@ impl TerminalView {
 
     /// Key releases only produce output under kitty report-events mode;
     /// they never consume the event.
-    fn handle_key_up(&mut self, event: &KeyUpEvent) {
+    fn handle_key_up(&mut self, event: &KeyUpEvent, caps_lock: bool) {
         let keystroke = &event.keystroke;
         self.last_modifiers = keystroke.modifiers;
+        self.awaiting_text_key = None;
         // Shift+Insert's press went to the browser paste event, so its release
         // must not reach the PTY either.
         #[cfg(target_arch = "wasm32")]
@@ -1839,7 +1860,7 @@ impl TerminalView {
         let _ = self.model.send_key(&VtKeyInput {
             action: VtKeyAction::Release,
             key,
-            mods: vt_mods(&keystroke.modifiers),
+            mods: vt_key_mods(&keystroke.modifiers, caps_lock),
             consumed_mods: 0,
             utf8: None,
             unshifted_codepoint,
@@ -1885,6 +1906,7 @@ impl TerminalView {
     /// (AppKit reuses IME insert buffers; gpui also copies before this).
     fn commit_ime_text(&mut self, text: &str, cx: &mut Context<Self>) {
         self.pending_character_input = false;
+        let awaiting_text_key = self.awaiting_text_key.take();
         if self.input_suppressed {
             self.marked_text = None;
             self.marked_selection_utf16 = None;
@@ -1895,6 +1917,13 @@ impl TerminalView {
         self.marked_selection_utf16 = None;
         if text.is_empty() {
             cx.notify();
+            return;
+        }
+        if let Some((keystroke, caps_lock)) = awaiting_text_key {
+            let input = terminal_key_text_input(&keystroke, caps_lock, text);
+            if self.model.send_key(&input) {
+                self.after_send_input(cx);
+            }
             return;
         }
         let _ = self.model.write_input(text.as_bytes());
@@ -2263,6 +2292,14 @@ impl TerminalView {
             return;
         }
         let viewport_cell = self.grid_cell(event.position, origin);
+        // Rectangle (Alt+drag) corners keep the raw column: snapping one to a
+        // wide character's head would shift the column range on every row.
+        // Highlighting and copying already take the whole wide character.
+        let viewport_cell = if event.click_count == 1 && event.modifiers.alt {
+            viewport_cell
+        } else {
+            self.snap_cell_to_wide_head(viewport_cell)
+        };
         let cell = self.absolute_cell(viewport_cell);
 
         match event.click_count {
@@ -2759,12 +2796,32 @@ impl TerminalView {
         }
     }
 
+    fn snap_cell_to_wide_head(&self, (row, col): (u16, u16)) -> (u16, u16) {
+        if let Some(frame) = self.frame.as_ref()
+            && let Some(row_data) = frame.rows.get(usize::from(row))
+            && col > 0
+            && (col as usize) < row_data.cells.len()
+            && matches!(
+                row_data.cells[usize::from(col)].width,
+                VtCellWide::SpacerTail
+            )
+        {
+            return (row, col - 1);
+        }
+        (row, col)
+    }
+
     fn extend_selection(&mut self, viewport_cell: (u16, u16)) {
         let Some(drag) = self.drag else {
             return;
         };
         let Some(frame) = self.frame.as_ref() else {
             return;
+        };
+        let viewport_cell = if matches!(drag.mode, SelectMode::Block) {
+            viewport_cell
+        } else {
+            self.snap_cell_to_wide_head(viewport_cell)
         };
         let cell = (
             frame
@@ -2920,7 +2977,13 @@ impl TerminalView {
         // (`zmx_reflow_hold`): the local reflow below is overwritten by the
         // daemon's post-claim refresh and the TUI's redraw moments later, and
         // painting all three is the flicker.
-        let hold_reflow = grid_changed && self.zmx_visibility_claims_enabled;
+        //
+        // CDXC:Zmx 2026-11-06 WHY:
+        // A new viewer now spawns at the grid it will be shown at (`shown_grid`), so its first
+        // prepaint usually changes nothing; it still holds a blank frame while the attach dump and
+        // the TUI's redraw land, as it did when every viewer started at 80x24 and resized here.
+        let fresh_zmx_attach = self.frame.is_none() && self.zmx_visibility_claims_enabled;
+        let hold_reflow = self.zmx_visibility_claims_enabled && (grid_changed || fresh_zmx_attach);
         let hold_blank = match &self.zmx_reflow_hold {
             Some(hold) => hold.blank,
             None => self.frame.as_ref().is_none_or(|frame| {
@@ -2945,6 +3008,9 @@ impl TerminalView {
             }
         }
         self.displayed_grid = Some(self.model.size());
+        if self.displayed && !held && !self.zmx_grid_claim_held {
+            self.shown_grid = Some(self.model.size());
+        }
         if (self.pending_zmx_visible_announce && !held)
             || (self.zmx_visibility_claims_enabled && grid_changed)
         {
@@ -2956,9 +3022,9 @@ impl TerminalView {
             let _ = self.model.write_input(
                 crate::terminal_model::zmx_client_visible_sequence(rows, cols).as_bytes(),
             );
-            if hold_reflow {
-                self.arm_zmx_reflow_hold(hold_blank, cx);
-            }
+        }
+        if hold_reflow {
+            self.arm_zmx_reflow_hold(hold_blank, cx);
         }
 
         if self.update_scroll_button_visibility() {
@@ -3499,6 +3565,8 @@ impl EntityInputHandler for TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // The key AppKit is composing with is not sent; the composed text is.
+        self.awaiting_text_key = None;
         if self.input_suppressed {
             self.marked_selection_utf16 = None;
             if self.marked_text.take().is_some() {
@@ -3729,11 +3797,12 @@ impl TerminalElement {
 
         window.on_key_event({
             let entity = entity.clone();
-            move |event: &KeyDownEvent, phase, _window, cx| {
+            move |event: &KeyDownEvent, phase, window, cx| {
                 if phase != DispatchPhase::Bubble {
                     return;
                 }
-                entity.update(cx, |view, cx| view.handle_key_down(event, cx));
+                let caps_lock = window.capslock().on;
+                entity.update(cx, |view, cx| view.handle_key_down(event, caps_lock, cx));
             }
         });
         window.on_modifiers_changed({
@@ -3744,11 +3813,12 @@ impl TerminalElement {
         });
         window.on_key_event({
             let entity = entity.clone();
-            move |event: &KeyUpEvent, phase, _window, cx| {
+            move |event: &KeyUpEvent, phase, window, cx| {
                 if phase != DispatchPhase::Bubble {
                     return;
                 }
-                entity.update(cx, |view, _cx| view.handle_key_up(event));
+                let caps_lock = window.capslock().on;
+                entity.update(cx, |view, _cx| view.handle_key_up(event, caps_lock));
             }
         });
 
@@ -4717,6 +4787,95 @@ fn vt_mods(modifiers: &Modifiers) -> VtMods {
     mods
 }
 
+/*
+CDXC DECISION:Terminal 2026-11-02:
+The user: "I should be able to do caps lock, type, and see everything all
+caps on macOS, Linux, and Windows in terminals." The typed text is the
+platform's own `key_char`, which carries Caps Lock on every desktop platform
+(GPUI's macOS key parsing now passes alphaLock to UCKeyTranslate; Windows'
+ToUnicode and Linux's xkb state already did). So Caps Lock+letter types the
+capital, Shift+letter with Caps Lock follows the OS (lowercase on Windows and
+Linux, still uppercase on macOS, like Terminal.app and Ghostty), and digits
+and symbols are unchanged. Caps Lock also reaches libghostty as a lock
+modifier, as Ghostty's own macOS surface sends it: the encoder strips lock
+modifiers before matching Ctrl/Alt sequences, so Ctrl-C and the app's
+shortcuts behave the same with Caps Lock on, and kitty's report-all mode can
+tell `A` from Caps Lock apart from Shift+`a`.
+*/
+/// The key press libghostty encodes for a keystroke the terminal did not
+/// handle itself: the physical key, the platform's typed text, and the
+/// modifiers with Caps Lock.
+fn terminal_key_press_input(
+    keystroke: &Keystroke,
+    caps_lock: bool,
+    option_as_alt_translation: bool,
+    action: VtKeyAction,
+    composing: bool,
+) -> VtKeyInput<'_> {
+    let (key, unshifted_codepoint) = keystroke_vt_key(keystroke);
+    let utf8 = if option_as_alt_translation {
+        keystroke_option_as_alt_text(keystroke)
+    } else {
+        keystroke_text(keystroke)
+    };
+    let mods = vt_key_mods(&keystroke.modifiers, caps_lock);
+    VtKeyInput {
+        action,
+        key,
+        mods,
+        // GPUI's key_char has already folded shift/option/caps lock into
+        // produced text. When Option acts as Alt, use GPUI's documented
+        // physical layout key instead and leave every modifier unconsumed
+        // so libghostty performs the configured Alt/Shift encoding itself.
+        consumed_mods: vt_consumed_mods(mods, utf8.is_some(), option_as_alt_translation),
+        utf8,
+        unshifted_codepoint,
+        composing,
+    }
+}
+
+/// The press of a text key whose text AppKit committed (macOS): the key's
+/// own physical key and modifiers, with the committed text as its `utf8`, as
+/// Ghostty's macOS view encodes `interpretKeyEvents` text with its key.
+fn terminal_key_text_input<'a>(
+    keystroke: &Keystroke,
+    caps_lock: bool,
+    text: &'a str,
+) -> VtKeyInput<'a> {
+    let (key, unshifted_codepoint) = keystroke_vt_key(keystroke);
+    let mods = vt_key_mods(&keystroke.modifiers, caps_lock);
+    VtKeyInput {
+        action: VtKeyAction::Press,
+        key,
+        mods,
+        consumed_mods: vt_consumed_mods(mods, true, false),
+        utf8: Some(text),
+        unshifted_codepoint,
+        composing: false,
+    }
+}
+
+/// Modifiers for a key event, including the Caps Lock state that GPUI keeps
+/// on the window rather than on `Modifiers`.
+fn vt_key_mods(modifiers: &Modifiers, caps_lock: bool) -> VtMods {
+    let mut mods = vt_mods(modifiers);
+    if caps_lock {
+        mods |= ffi::GHOSTTY_MODS_CAPS_LOCK;
+    }
+    mods
+}
+
+/// Modifiers the platform already applied to produce `utf8` (Shift in `A`,
+/// Option in `ß`, Caps Lock in `A`), mirroring Ghostty's macOS
+/// `translationMods - [ctrl, super]`. Control and Command never are.
+fn vt_consumed_mods(mods: VtMods, has_text: bool, option_as_alt_translation: bool) -> VtMods {
+    if has_text && !option_as_alt_translation {
+        mods & (ffi::GHOSTTY_MODS_SHIFT | ffi::GHOSTTY_MODS_ALT | ffi::GHOSTTY_MODS_CAPS_LOCK)
+    } else {
+        0
+    }
+}
+
 fn vt_mouse_button(button: MouseButton) -> Option<VtMouseButton> {
     match button {
         MouseButton::Left => Some(VtMouseButton::Left),
@@ -5225,11 +5384,39 @@ fn layout_selection(
             continue;
         }
         let cols = selection_row_cols(selection, start, end, row, frame.cols);
-        let col_start = cols.start;
-        let col_end = cols.end.min(frame.cols);
+        let mut col_start = cols.start;
+        let mut col_end = cols.end.min(frame.cols);
         if col_start >= col_end {
             continue;
         }
+
+        if let Some(row_data) = frame.rows.get(viewport_row as usize) {
+            // Expand col_start left if it falls on a wide character's spacer tail
+            if col_start > 0
+                && (col_start as usize) < row_data.cells.len()
+                && matches!(
+                    row_data.cells[col_start as usize].width,
+                    VtCellWide::SpacerTail
+                )
+            {
+                col_start = col_start.saturating_sub(1);
+            }
+            // Expand col_end right if the wide character's head was included but its spacer tail was excluded
+            if col_end > 0
+                && (col_end as usize) < row_data.cells.len()
+                && matches!(
+                    row_data.cells[(col_end - 1) as usize].width,
+                    VtCellWide::Wide
+                )
+                && matches!(
+                    row_data.cells[col_end as usize].width,
+                    VtCellWide::SpacerTail
+                )
+            {
+                col_end = (col_end + 1).min(frame.cols);
+            }
+        }
+
         spans.push((
             viewport_row,
             CellSpan {
@@ -5497,4 +5684,155 @@ pub fn set_grid_resize_held(held: bool) {
 /// the one the layout will settle at.
 pub(crate) fn grid_resize_held() -> bool {
     GRID_RESIZE_HELD.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+#[cfg(test)]
+mod caps_lock_key_tests {
+    use super::*;
+    use crate::ghostty_vt::{VtKeyEncoder, VtOptionAsAlt, VtTerminal};
+
+    /// A keystroke as GPUI's platform code delivers it: `key` is the layout
+    /// key (letters always lowercase) and `key_char` the text the OS layout
+    /// typed, which carries Shift, Option and Caps Lock.
+    fn keystroke(key: &str, key_char: Option<&str>, modifiers: Modifiers) -> Keystroke {
+        Keystroke {
+            modifiers,
+            key: key.to_string(),
+            key_char: key_char.map(str::to_string),
+        }
+    }
+
+    fn shift() -> Modifiers {
+        Modifiers {
+            shift: true,
+            ..Modifiers::default()
+        }
+    }
+
+    fn control() -> Modifiers {
+        Modifiers {
+            control: true,
+            ..Modifiers::default()
+        }
+    }
+
+    fn alt() -> Modifiers {
+        Modifiers {
+            alt: true,
+            ..Modifiers::default()
+        }
+    }
+
+    /// Bytes the terminal sends for a key press, through the real
+    /// libghostty-vt encoder. `kitty_flags` is what the running program
+    /// pushed (`CSI > flags u`); Claude Code and Codex push 5.
+    fn encode(
+        keystroke: &Keystroke,
+        caps_lock: bool,
+        option_as_alt: bool,
+        kitty_flags: u8,
+    ) -> Vec<u8> {
+        let mut terminal = VtTerminal::new(80, 24, 0).expect("terminal");
+        if kitty_flags != 0 {
+            terminal.feed(format!("\x1b[>{kitty_flags}u").as_bytes());
+        }
+        let mut encoder = VtKeyEncoder::new().expect("encoder");
+        encoder.sync_from_terminal(
+            &mut terminal,
+            if option_as_alt {
+                VtOptionAsAlt::True
+            } else {
+                VtOptionAsAlt::False
+            },
+        );
+        let input = terminal_key_press_input(
+            keystroke,
+            caps_lock,
+            option_as_alt && keystroke.modifiers.alt,
+            VtKeyAction::Press,
+            false,
+        );
+        let mut out = Vec::new();
+        encoder.encode(&input, &mut out).expect("encode");
+        out
+    }
+
+    #[test]
+    fn caps_lock_types_capital_letters() {
+        let off = keystroke("a", Some("a"), Modifiers::default());
+        let on = keystroke("a", Some("A"), Modifiers::default());
+        for flags in [0, 5] {
+            assert_eq!(encode(&off, false, false, flags), b"a");
+            assert_eq!(encode(&on, true, false, flags), b"A");
+        }
+    }
+
+    #[test]
+    fn shift_with_caps_lock_types_what_the_os_produced() {
+        // Windows and Linux invert Caps Lock with Shift; macOS keeps capitals.
+        let windows_linux = keystroke("a", Some("a"), shift());
+        let macos = keystroke("a", Some("A"), shift());
+        for flags in [0, 5] {
+            assert_eq!(encode(&windows_linux, true, false, flags), b"a");
+            assert_eq!(encode(&macos, true, false, flags), b"A");
+            assert_eq!(encode(&macos, false, false, flags), b"A");
+        }
+    }
+
+    #[test]
+    fn caps_lock_leaves_digits_and_symbols_alone() {
+        for flags in [0, 5] {
+            for (key, text) in [("1", "1"), ("[", "["), (";", ";"), ("space", " ")] {
+                let k = keystroke(key, Some(text), Modifiers::default());
+                assert_eq!(encode(&k, true, false, flags), text.as_bytes(), "{key}");
+            }
+            assert_eq!(
+                encode(&keystroke("1", Some("!"), shift()), true, false, flags),
+                b"!"
+            );
+        }
+    }
+
+    #[test]
+    fn caps_lock_keeps_control_and_alt_combos() {
+        // GPUI gives Control combos no key_char on every platform.
+        let ctrl_c = keystroke("c", None, control());
+        assert_eq!(
+            encode(&ctrl_c, true, false, 0),
+            encode(&ctrl_c, false, false, 0)
+        );
+        assert_eq!(encode(&ctrl_c, true, false, 0), b"\x03");
+        // Kitty programs see Ctrl-C plus the lock bit (5 + 64), as Ghostty
+        // sends it; they decode modifiers bitwise, so it is still Ctrl-C.
+        assert_eq!(encode(&ctrl_c, false, false, 5), b"\x1b[99;5u");
+        assert_eq!(encode(&ctrl_c, true, false, 5), b"\x1b[99;69u");
+
+        let enter = keystroke("enter", Some("\n"), Modifiers::default());
+        assert_eq!(encode(&enter, true, false, 0), b"\r");
+        assert_eq!(encode(&enter, true, false, 5), b"\r");
+
+        // Option as Alt encodes the layout key, so Caps Lock changes nothing.
+        let option_a = keystroke("a", Some("\u{c5}"), alt());
+        assert_eq!(encode(&option_a, true, true, 0), b"\x1ba");
+        assert_eq!(
+            encode(&option_a, true, true, 0),
+            encode(&option_a, false, true, 0)
+        );
+    }
+
+    #[test]
+    fn caps_lock_is_a_lock_modifier_not_shift() {
+        let mods = vt_key_mods(&Modifiers::default(), true);
+        assert_eq!(mods, ffi::GHOSTTY_MODS_CAPS_LOCK);
+        assert_eq!(
+            vt_consumed_mods(mods, true, false),
+            ffi::GHOSTTY_MODS_CAPS_LOCK
+        );
+        assert_eq!(vt_consumed_mods(mods, false, false), 0);
+        assert_eq!(vt_consumed_mods(mods, true, true), 0);
+        assert_eq!(
+            vt_key_mods(&control(), true),
+            ffi::GHOSTTY_MODS_CTRL | ffi::GHOSTTY_MODS_CAPS_LOCK
+        );
+    }
 }

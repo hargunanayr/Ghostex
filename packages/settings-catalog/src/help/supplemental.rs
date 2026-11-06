@@ -8,8 +8,9 @@ use crate::json::{opt, Opt};
 /// A Settings page as the Help files name it: its id and title.
 pub(crate) type Tab = (&'static str, &'static str);
 
-/// The Theme page renders the `appearance` group's sections (Theme, App Icon) on its own tab.
-pub(crate) const THEME: Tab = ("theme", "Theme");
+/// The Interface page renders the `appearance` group's sections (Interface, App Icon) on its own
+/// tab. Its id stays `theme`.
+pub(crate) const THEME: Tab = ("theme", "Interface");
 /// The Terminal page, one of the pages General split into (layout.rs).
 const TERMINAL: Tab = ("terminal", "Terminal");
 const CHAT: Tab = ("chat", "Chat");
@@ -37,29 +38,6 @@ pub(crate) struct Supplemental {
 }
 
 pub(crate) const SUPPLEMENTAL_ROWS: &[Supplemental] = &[
-    // CDXC:Settings 2026-10-29 (cleanup Q11, general/chat.rs): no Settings row; the chat's View menu picks the level per chat.
-    Supplemental {
-        key: "sessionChatSimpleMode",
-        tab: CHAT,
-        group: None,
-        section: "chat",
-        section_title: "Chat",
-        title: "Simple mode by default",
-        subtitle: "New chats open in Simple mode (on by default). More actions > View in a chat picks Simple, Detailed or Verbose for that chat.",
-        options: &[],
-        user_only: false,
-    },
-    Supplemental {
-        key: "sessionChatVerboseMode",
-        tab: CHAT,
-        group: None,
-        section: "chat",
-        section_title: "Chat",
-        title: "Verbose mode by default",
-        subtitle: "New chats open in Verbose mode when Simple mode by default is off. More actions > View in a chat picks the level for that chat.",
-        options: &[],
-        user_only: false,
-    },
     Supplemental {
         key: "agentAcceptAllEnabled",
         tab: AGENTS,
@@ -468,13 +446,13 @@ pub(crate) const SUPPLEMENTAL_ROWS: &[Supplemental] = &[
         user_only: false,
     },
     Supplemental {
-        key: "cloudBoxesHidden",
+        key: "cloudBoxesEnabled",
         tab: EXTENSIONS,
         group: None,
         section: "official",
         section_title: "Built-in",
-        title: "Turn off Cloud Boxes",
-        subtitle: "Turn off Cloud Boxes everywhere: the Cloud Boxes page in Settings, the Run on choice of a new thread, Run in a Box in the Select Agent menu and the agentbox commands. Off by default; your boxes and box settings are kept.",
+        title: "Cloud Boxes",
+        subtitle: "Turn Cloud Boxes on or off everywhere: the Cloud Boxes page in Settings, the Cloud Box choice of a new chat, the Run on choice of a new thread, Run in a Box in the Select Agent menu and the cloud and agentbox commands. On by default; your boxes and box settings are kept while it is off.",
         options: &[],
         user_only: false,
     },
@@ -573,7 +551,7 @@ pub(crate) const SUPPLEMENTAL_ROWS: &[Supplemental] = &[
         section: "official",
         section_title: "Built-in",
         title: "Turn off the voice agent",
-        subtitle: "Turn off the voice agent everywhere: the headset at the top of the window and its arrow menu, voice calls about one session, the call rows on Settings > Extensions > Voice agent and the voice agent hotkeys, on this computer and in the phone app connected to it. A call that is running ends. Dictate keeps working, and the xAI and OpenAI keys stay on Settings > Extensions > Voice agent. On by default; your voice settings are kept.",
+        subtitle: "Turn off the voice agent everywhere: the headset at the top of the window and its arrow menu, voice calls about one session, the call rows on Settings > Voice and the voice agent hotkeys, on this computer and in the phone app connected to it. A call that is running ends. Dictate keeps working, and the xAI and OpenAI keys stay on Settings > Voice. On by default; your voice settings are kept.",
         options: &[],
         user_only: false,
     },
@@ -695,7 +673,7 @@ pub(crate) const SUPPLEMENTAL_ROWS: &[Supplemental] = &[
         tab: THEME,
         group: Some("appearance"),
         section: "theming",
-        section_title: "Theme",
+        section_title: "Interface",
         title: "Pane gap",
         subtitle: "Gap in pixels between split panes in the Agents view.",
         options: &[],
@@ -706,7 +684,7 @@ pub(crate) const SUPPLEMENTAL_ROWS: &[Supplemental] = &[
         tab: THEME,
         group: Some("appearance"),
         section: "theming",
-        section_title: "Theme",
+        section_title: "Interface",
         title: "Custom dark mode depth (set by Colourfulness)",
         subtitle: "How deep the custom dark mode colour is. Colourfulness sets it whenever it moves; it has no control of its own.",
         options: &[],
@@ -717,7 +695,7 @@ pub(crate) const SUPPLEMENTAL_ROWS: &[Supplemental] = &[
         tab: THEME,
         group: Some("appearance"),
         section: "theming",
-        section_title: "Theme",
+        section_title: "Interface",
         title: "Custom light mode depth (set by Colourfulness)",
         subtitle: "How deep the custom light mode colour is. Colourfulness sets it whenever it moves; it has no control of its own.",
         options: &[],
@@ -728,7 +706,7 @@ pub(crate) const SUPPLEMENTAL_ROWS: &[Supplemental] = &[
         tab: THEME,
         group: Some("appearance"),
         section: "theming",
-        section_title: "Theme",
+        section_title: "Interface",
         title: "Sidebar foreground color (derived)",
         subtitle: "Derived from Background Contrast and Background Tint; change those instead.",
         options: &[],
@@ -739,11 +717,22 @@ pub(crate) const SUPPLEMENTAL_ROWS: &[Supplemental] = &[
         tab: THEME,
         group: Some("appearance"),
         section: "theming",
-        section_title: "Theme",
+        section_title: "Interface",
         title: "Sidebar background color (derived)",
         subtitle: "Derived from Background Contrast and Background Tint; change those instead.",
         options: &[],
         user_only: true,
+    },
+    Supplemental {
+        key: "localMachineShortName",
+        tab: REMOTE,
+        group: None,
+        section: "remoteMachines",
+        section_title: "Remote machines",
+        title: "This computer's short name",
+        subtitle: "Up to 2 characters on the sidebar's computer pills; empty uses one made from the computer's name.",
+        options: &[],
+        user_only: false,
     },
     Supplemental {
         key: "remoteTailscaleEnabled",

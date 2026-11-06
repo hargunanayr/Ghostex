@@ -28,8 +28,26 @@ use super::prompt_agent::PromptAgentLaunch;
 use super::scope::GitScope;
 use super::toasts::ToastOptions;
 use crate::GhostexGpuiApp;
+use crate::app::window::{ExportTranscriptIncludeOptions, ExportTranscriptTurnCount};
 
 const EXPORT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// `countSessionTranscriptTurns`'s answer.
+fn turn_count(answer: &Value) -> ExportTranscriptTurnCount {
+    let number = |value: &Value| value.as_u64().map(|number| number as usize);
+    match (
+        answer.get("turns").and_then(number),
+        answer.get("bytes").and_then(number),
+        answer.get("lastTurnsBytes").and_then(Value::as_array),
+    ) {
+        (Some(turns), Some(whole_bytes), Some(sizes)) => ExportTranscriptTurnCount::Counted {
+            turns,
+            whole_bytes,
+            last_turns_bytes: sizes.iter().filter_map(number).collect(),
+        },
+        _ => ExportTranscriptTurnCount::Failed,
+    }
+}
 
 /// The chat model picker's pick of another agent's model.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -39,6 +57,91 @@ pub(crate) struct HandoffTarget {
     pub(crate) effort: Option<String>,
 }
 
+/// The coordinator role and standing context carried across a coordinator handoff.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct HandoffCoordinator {
+    pub(crate) goal: String,
+    pub(crate) instructions: String,
+    /// The source computer's gxserver gave neither the export's `coordinator` nor a
+    /// `/api/readCoordinator` answer, so the new orchestrator starts without its Goal and Standing
+    /// instructions and the user is told so.
+    pub(crate) context_lost: bool,
+    /// Sent with the orchestrator's first message (`coordinator.firstRequest`) instead of staged as
+    /// a draft: the handoff's lead-in, for a destination gxserver that would type a staged draft
+    /// into the terminal while the skill starts (`coordinatorHandoffDraft`).
+    pub(crate) first_request: Option<String>,
+}
+
+impl HandoffCoordinator {
+    fn from_object(coordinator: &serde_json::Map<String, Value>) -> Self {
+        let text = |key: &str| {
+            coordinator
+                .get(key)
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        };
+        Self {
+            goal: text("goal"),
+            instructions: text("instructions"),
+            ..Self::default()
+        }
+    }
+
+    /// The export's own `coordinator` (gxserver 10.43 and later).
+    pub(crate) fn from_export_answer(answer: &Value) -> Option<Self> {
+        answer
+            .get("coordinator")
+            .and_then(Value::as_object)
+            .map(Self::from_object)
+    }
+
+    /// `/api/readCoordinator`'s answer, only when it is this session's own record: the endpoint
+    /// answers a thread with its orchestrator's.
+    pub(crate) fn from_read_answer(answer: &Value, session_id: &str) -> Option<Self> {
+        answer
+            .get("coordinator")
+            .and_then(Value::as_object)
+            .filter(|coordinator| {
+                coordinator.get("sessionId").and_then(Value::as_str) == Some(session_id)
+            })
+            .map(Self::from_object)
+    }
+}
+
+/// The orchestrator a handoff of `session` carries, read from its export's answer. An older
+/// gxserver's export has no `coordinator`, so an orchestrator row's Goal and Standing instructions
+/// are read with `/api/readCoordinator` on the same computer; when that fails too, the handoff
+/// still starts an orchestrator, marked [`HandoffCoordinator::context_lost`].
+pub(super) async fn handoff_coordinator(
+    remote: calls::Remote,
+    answer: &Value,
+    is_coordinator: bool,
+    session: &SessionKey,
+) -> Option<HandoffCoordinator> {
+    if let Some(coordinator) = HandoffCoordinator::from_export_answer(answer) {
+        return Some(coordinator);
+    }
+    if !is_coordinator {
+        return None;
+    }
+    let read = calls::call(
+        remote,
+        "/api/readCoordinator",
+        json!({ "projectId": session.project_id, "sessionId": session.session_id }),
+        None,
+    )
+    .await;
+    Some(
+        read.ok()
+            .and_then(|answer| HandoffCoordinator::from_read_answer(&answer, &session.session_id))
+            .unwrap_or(HandoffCoordinator {
+                context_lost: true,
+                ..HandoffCoordinator::default()
+            }),
+    )
+}
+
 /// The session the open dialog is about.
 #[derive(Clone, Debug)]
 pub(super) struct ExportRequest {
@@ -46,6 +149,7 @@ pub(super) struct ExportRequest {
     pub(super) session: SessionKey,
     agent_id: Option<String>,
     session_title: String,
+    is_coordinator: bool,
     handoff_target: Option<HandoffTarget>,
     /// The `open` message, sent again when the dialog reopens after Add Project.
     pub(super) open_message: Value,
@@ -59,9 +163,35 @@ pub(super) struct ExportedTranscript {
     agent_id: Option<String>,
     pub(super) path: String,
     pub(super) session_title: String,
+    pub(super) coordinator: Option<HandoffCoordinator>,
     pub(super) handoff_target: Option<HandoffTarget>,
-    /// The file's text, when the dialog asked for it (Advanced Handoff).
+    /// The file's text, when the dialog asked for it (a handoff to another computer).
     pub(super) markdown: Option<String>,
+    /// The files the transcript links to, copied next to it, with their bytes when the text came
+    /// too (gxserver's `carry_files.rs`), for a handoff to carry to another computer.
+    pub(super) files: Vec<HandoffFile>,
+}
+
+/// One file a handoff carries: the path the transcript's links use, and its bytes.
+#[derive(Clone, Debug)]
+pub(super) struct HandoffFile {
+    pub(super) path: String,
+    pub(super) base64: String,
+}
+
+fn handoff_files(answer: &Value) -> Vec<HandoffFile> {
+    answer
+        .get("files")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|file| {
+            Some(HandoffFile {
+                path: file.get("path")?.as_str()?.to_string(),
+                base64: file.get("base64Data")?.as_str()?.to_string(),
+            })
+        })
+        .collect()
 }
 
 #[derive(Default)]
@@ -71,7 +201,7 @@ pub(crate) struct ExportTranscriptHost {
     sequence: u64,
     /// The dialog's picks while it is closed for Add Project, given back when it reopens.
     pub(super) restore: Option<crate::app::window::ExportTranscriptPicks>,
-    /// Add Project opened from Advanced Handoff (export_handoff_remote.rs).
+    /// Add Project opened from a handoff's destination (export_handoff_remote.rs).
     pub(super) add_project: Option<super::export_handoff_remote::HandoffAddProject>,
 }
 
@@ -113,6 +243,9 @@ impl GhostexGpuiApp {
             .and_then(|loaded| loaded.server_session(&session.project_id, &session.session_id))
             .cloned();
         let remote = !session.machine.is_local();
+        let is_coordinator = row
+            .as_ref()
+            .is_some_and(|row| row.coordinator_role.as_deref() == Some("coordinator"));
         let (agent_id, session_title) = match (&row, remote) {
             (Some(row), _) => (
                 row.agent_id.clone().filter(|id| !id.trim().is_empty()),
@@ -166,6 +299,7 @@ impl GhostexGpuiApp {
             session,
             agent_id,
             session_title,
+            is_coordinator,
             handoff_target,
             open_message: message.clone(),
         });
@@ -209,6 +343,21 @@ impl GhostexGpuiApp {
                         toggle("includePatches") != Some(false),
                         toggle("includeReasoning") == Some(true),
                         toggle("includeMarkdown") == Some(true),
+                        command.get("lastTurns").and_then(Value::as_u64),
+                        cx,
+                    );
+                }
+            }
+            Some("countExportSessionTranscriptTurns") => {
+                if let Some(request_id) = request_id {
+                    let toggle = |key: &str| command.get(key).and_then(Value::as_bool);
+                    self.git_count_export_turns(
+                        &request_id,
+                        ExportTranscriptIncludeOptions {
+                            commands: toggle("includeCommands") == Some(true),
+                            patches: toggle("includePatches") == Some(true),
+                            reasoning: toggle("includeReasoning") == Some(true),
+                        },
                         cx,
                     );
                 }
@@ -255,6 +404,7 @@ impl GhostexGpuiApp {
         include_patches: bool,
         include_reasoning: bool,
         include_markdown: bool,
+        last_turns: Option<u64>,
         cx: &mut gpui::Context<Self>,
     ) {
         let Some(request) = self
@@ -281,7 +431,7 @@ impl GhostexGpuiApp {
             },
             None => None,
         };
-        let params = json!({
+        let mut params = json!({
             "includeCommands": include_commands,
             "includeMarkdown": include_markdown,
             "includePatches": include_patches,
@@ -289,14 +439,24 @@ impl GhostexGpuiApp {
             "projectId": request.session.project_id,
             "sessionId": request.session.session_id,
         });
+        if let Some(last_turns) = last_turns {
+            params["lastTurns"] = json!(last_turns);
+        }
         cx.spawn(async move |this, cx| {
             let result = calls::call(
-                target,
+                target.clone(),
                 "/api/exportSessionTranscript",
                 params,
                 remote.then_some(EXPORT_TIMEOUT),
             )
             .await;
+            let coordinator = match &result {
+                Ok(answer) => {
+                    handoff_coordinator(target, answer, request.is_coordinator, &request.session)
+                        .await
+                }
+                Err(_) => None,
+            };
             let _ = this.update(cx, |this, cx| {
                 let still_open = this
                     .gx_store
@@ -332,11 +492,13 @@ impl GhostexGpuiApp {
                             .get("agent")
                             .and_then(Value::as_str)
                             .map(str::to_string),
+                        coordinator,
                         markdown,
+                        handoff_files(&answer),
                     ))
                 });
                 match answer {
-                    Ok((path, agent, markdown)) => {
+                    Ok((path, agent, coordinator, markdown, files)) => {
                         let agent_id = request
                             .agent_id
                             .clone()
@@ -350,8 +512,10 @@ impl GhostexGpuiApp {
                             agent_id: agent_id.clone(),
                             path: path.clone(),
                             session_title: request.session_title.clone(),
+                            coordinator,
                             handoff_target: request.handoff_target.clone(),
                             markdown,
+                            files,
                         });
                         this.git_post_export_result(
                             &request.request_id,
@@ -361,6 +525,70 @@ impl GhostexGpuiApp {
                     }
                     Err(error) => this.git_post_export_result(&request.request_id, Err(error), cx),
                 }
+            });
+        })
+        .detach();
+    }
+
+    /// History's count for the open dialog (`/api/countSessionTranscriptTurns` on the computer that
+    /// runs the session). A computer that doesn't know the endpoint is from before the slider.
+    fn git_count_export_turns(
+        &mut self,
+        request_id: &str,
+        include: ExportTranscriptIncludeOptions,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let Some(request) = self
+            .gx_store
+            .git
+            .export
+            .request
+            .clone()
+            .filter(|request| request.request_id == request_id)
+        else {
+            return;
+        };
+        let remote = !request.session.machine.is_local();
+        let target = match request.session.machine.remote_id() {
+            Some(machine_id) => match self.gpui_remote_gxserver_request_target(machine_id) {
+                Some(target) => Some(target),
+                None => {
+                    return self.push_gpui_export_transcript_turn_count(
+                        include,
+                        ExportTranscriptTurnCount::Failed,
+                        cx,
+                    );
+                }
+            },
+            None => None,
+        };
+        let params = json!({
+            "includeCommands": include.commands,
+            "includePatches": include.patches,
+            "includeReasoning": include.reasoning,
+            "projectId": request.session.project_id,
+            "sessionId": request.session.session_id,
+        });
+        cx.spawn(async move |this, cx| {
+            let result = calls::call(
+                target,
+                "/api/countSessionTranscriptTurns",
+                params,
+                remote.then_some(EXPORT_TIMEOUT),
+            )
+            .await;
+            let count = match result {
+                Ok(answer) => turn_count(&answer),
+                Err(error)
+                    if error.code.as_deref() == Some("notFound")
+                        && error.message.starts_with("No gxserver endpoint") =>
+                {
+                    ExportTranscriptTurnCount::Unsupported
+                }
+                Err(_) => ExportTranscriptTurnCount::Failed,
+            };
+            let _ = this.update(cx, |this, cx| {
+                this.push_gpui_export_transcript_turn_count(include, count, cx);
             });
         })
         .detach();
@@ -521,6 +749,7 @@ impl GhostexGpuiApp {
                 &exported.session_title,
                 &source_title,
             ),
+            exported.coordinator.clone(),
             exported.handoff_target.as_ref(),
             cx,
         );
@@ -560,13 +789,49 @@ impl GhostexGpuiApp {
         scope: &GitScope,
         agent: super::prompt_agent::HudAgent,
         draft: String,
+        coordinator: Option<HandoffCoordinator>,
         handoff_target: Option<&HandoffTarget>,
         cx: &mut gpui::Context<Self>,
     ) -> gpui::Task<Result<SessionKey, String>> {
         let settings = crate::shared_settings::shared_sidebar_settings_snapshot();
         let object = settings.object();
-        let open_in_chat =
-            crate::app::helpers::gpui_preferred_agent_interface_override_from_settings(
+        let mut coordinator_launch = coordinator.and_then(|coordinator| {
+            agent
+                .coordinator_family()
+                .map(|family| (family, coordinator))
+        });
+        let mut draft = Some(draft);
+        if let Some((_, coordinator)) = coordinator_launch.as_mut() {
+            if coordinator.context_lost {
+                self.git_toast(
+                    GitToastLevel::Warning,
+                    "Goal and Standing instructions not kept",
+                    ToastOptions::described(
+                        "The orchestrator's computer did not say what they were, so the new orchestrator starts without them. Add them again in its details.",
+                    ),
+                    cx,
+                );
+            }
+            // An older gxserver there would type a staged draft into the terminal while
+            // `/ghostex-orchestrator` starts (CDXC:Coordinators `coordinatorHandoffDraft`).
+            if scope
+                .remote
+                .as_ref()
+                .is_some_and(|target| !target.stages_coordinator_handoff_draft())
+            {
+                coordinator.first_request = draft.take();
+                self.git_toast(
+                    GitToastLevel::Info,
+                    "Handoff sent with the orchestrator's first message",
+                    ToastOptions::described(
+                        "That computer's Ghostex is older, so the conversation link goes with the orchestrator's first message instead of waiting in its message box. Update Ghostex there to keep it as a draft.",
+                    ),
+                    cx,
+                );
+            }
+        }
+        let open_in_chat = coordinator_launch.is_some()
+            || crate::app::helpers::gpui_preferred_agent_interface_override_from_settings(
                 object,
                 &agent.agent_id,
             )
@@ -579,18 +844,100 @@ impl GhostexGpuiApp {
             matches!(target.provider.as_str(), "claude" | "codex" | "antigravity")
                 && model_picker_provider(agent.icon.as_deref()) == Some(target.provider.as_str())
         });
+        let agent_model = launch_model.map(|target| target.model.clone()).or_else(|| {
+            coordinator_launch
+                .as_ref()
+                .filter(|(family, _)| *family == "claude")
+                .map(|_| crate::app::window::DEFAULT_CLAUDE_COORDINATOR_MODEL.to_string())
+        });
+        let agent_effort = launch_model
+            .and_then(|target| target.effort.clone())
+            .or_else(|| {
+                coordinator_launch.as_ref().and_then(|(family, _)| {
+                    matches!(*family, "claude" | "codex" | "antigravity")
+                        .then(|| "high".to_string())
+                })
+            });
         self.git_start_prompt_agent(
             scope,
             agent,
             PromptAgentLaunch {
-                first_user_input_draft: Some(draft),
-                agent_model: launch_model.map(|target| target.model.clone()),
-                agent_effort: launch_model.and_then(|target| target.effort.clone()),
+                first_user_input_draft: draft,
+                agent_model,
+                agent_effort,
                 open_in_chat,
+                coordinator: coordinator_launch.map(|(_, coordinator)| coordinator),
                 missing_session_message: Some("Could not create the new agent session."),
                 ..PromptAgentLaunch::default()
             },
             cx,
         )
+    }
+}
+
+#[cfg(test)]
+mod handoff_coordinator_tests {
+    use super::HandoffCoordinator;
+    use serde_json::json;
+
+    #[test]
+    fn an_export_carries_the_orchestrators_goal_and_instructions() {
+        let answer = json!({
+            "path": "/x.md",
+            "coordinator": { "goal": "Ship it", "instructions": "One module per thread." },
+        });
+        assert_eq!(
+            HandoffCoordinator::from_export_answer(&answer),
+            Some(HandoffCoordinator {
+                goal: "Ship it".to_string(),
+                instructions: "One module per thread.".to_string(),
+                ..HandoffCoordinator::default()
+            })
+        );
+        assert_eq!(
+            HandoffCoordinator::from_export_answer(&json!({ "path": "/x.md" })),
+            None
+        );
+    }
+
+    #[test]
+    fn a_read_coordinator_answer_counts_only_for_the_session_itself() {
+        let answer = json!({
+            "coordinator": {
+                "sessionId": "S1",
+                "goal": "Ship it",
+                "instructions": "Keep it small.",
+            },
+        });
+        assert_eq!(
+            HandoffCoordinator::from_read_answer(&answer, "S1").map(|c| c.goal),
+            Some("Ship it".to_string())
+        );
+        // `/api/readCoordinator` answers a thread with its orchestrator's record.
+        assert_eq!(HandoffCoordinator::from_read_answer(&answer, "T9"), None);
+    }
+}
+
+#[cfg(test)]
+mod turn_count_tests {
+    use super::turn_count;
+    use crate::app::window::ExportTranscriptTurnCount;
+    use serde_json::json;
+
+    #[test]
+    fn a_count_answer_reads_as_turns_and_sizes_and_anything_else_as_failed() {
+        assert_eq!(
+            turn_count(&json!({"turns": 2, "bytes": 90, "lastTurnsBytes": [40, 90]})),
+            ExportTranscriptTurnCount::Counted {
+                turns: 2,
+                whole_bytes: 90,
+                last_turns_bytes: vec![40, 90],
+            }
+        );
+        // An export's answer (a computer that wrote a file instead) is no count.
+        assert_eq!(
+            turn_count(&json!({"path": "/x.md", "bytes": 90})),
+            ExportTranscriptTurnCount::Failed
+        );
     }
 }

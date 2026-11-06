@@ -60,6 +60,17 @@ pub enum ChatRpcMethod {
     ReadCoordinatorThreads,
     /// Resumes a coordinator's closed thread before one of its Threads panel rows opens it.
     OpenCoordinatorThread,
+    /// Moves a row of a coordinator's board to Removed, or restores it
+    /// (server/src/coordinators/board.rs).
+    CoordinatorBoard,
+    /// Forks the session into a side chat that starts with a question (server/src/side_chats/).
+    StartSideChat,
+    /// Sends what a side chat said to its main session.
+    BringBackSideChat,
+    /// Stops a side chat and removes it.
+    DeleteSideChat,
+    /// The user's answer to an agent's secret request (server/src/secret_requests/).
+    AnswerSecretRequest,
     /// Takes a message the agent CLI queued back out of its queue, for the composer.
     TakeBackSessionChatQueuedMessage,
     /// A short summary of where the session stands (`composer/catch_up.rs`).
@@ -113,6 +124,11 @@ impl ChatRpcMethod {
             Self::RunProjectDocsAction => "runProjectDocsAction",
             Self::ReadCoordinatorThreads => "readCoordinatorThreads",
             Self::OpenCoordinatorThread => "openCoordinatorThread",
+            Self::CoordinatorBoard => "coordinatorBoard",
+            Self::StartSideChat => "startSideChat",
+            Self::BringBackSideChat => "bringBackSideChat",
+            Self::DeleteSideChat => "deleteSideChat",
+            Self::AnswerSecretRequest => "answerSecretRequest",
             Self::TakeBackSessionChatQueuedMessage => "takeBackSessionChatQueuedMessage",
             Self::CatchUpSession => "catchUpSession",
             Self::ReadSessionFilesLinks => "readSessionFilesLinks",
@@ -159,6 +175,11 @@ impl ChatRpcMethod {
             "runProjectDocsAction" => Self::RunProjectDocsAction,
             "readCoordinatorThreads" => Self::ReadCoordinatorThreads,
             "openCoordinatorThread" => Self::OpenCoordinatorThread,
+            "coordinatorBoard" => Self::CoordinatorBoard,
+            "startSideChat" => Self::StartSideChat,
+            "bringBackSideChat" => Self::BringBackSideChat,
+            "deleteSideChat" => Self::DeleteSideChat,
+            "answerSecretRequest" => Self::AnswerSecretRequest,
             "takeBackSessionChatQueuedMessage" => Self::TakeBackSessionChatQueuedMessage,
             "catchUpSession" => Self::CatchUpSession,
             "readSessionFilesLinks" => Self::ReadSessionFilesLinks,

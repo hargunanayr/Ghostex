@@ -59,6 +59,8 @@ export interface SessionChatClaudeStatus {
   exceeds200kTokens?: boolean;
   thinkingEnabled?: boolean;
   outputStyle?: string;
+  /** The agent Claude Code runs as (`--agent`), from the status line's `agent.name`. */
+  agentName?: string;
   sessionName?: string;
   /** Claude's own session id, the one `claude --resume` takes. */
   sessionId?: string;
@@ -237,8 +239,10 @@ export interface SessionChatTerminalNotice {
   severity: 'error' | 'warning' | 'info';
   /** Short human line, e.g. "Codex login expired". */
   title: string;
-  /** One or two sentences of guidance, including quoted terminal evidence. */
+  /** One or two plain sentences: what happened, what to do. */
   detail?: string;
+  /** The terminal's own line the card is about, drawn behind the card's Details toggle. */
+  details?: string;
   /** SGR-stripped last visible lines (trimmed, capped ~2000 chars). */
   screenTail?: string;
   source: 'screen' | 'watchdog';

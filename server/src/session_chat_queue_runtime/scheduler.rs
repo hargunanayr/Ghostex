@@ -188,6 +188,25 @@ pub(crate) struct SessionChatTranscriptGate {
     /// Cache resolution by agent and conversation identity; resolving can scan agent homes.
     identity: String,
     path: Option<PathBuf>,
+    /// The last `tail` read, kept while the transcript file is unchanged.
+    tail: Option<CachedTranscriptTail>,
+}
+
+/// The newest rows of a transcript as `SessionChatTranscriptGate::tail` read them.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct TranscriptTail {
+    /// The newest turn's lifecycle, `None` without one.
+    pub lifecycle: Option<crate::session_chat::SessionChatTurnLifecycle>,
+    /// The newest messages, oldest first.
+    pub messages: Vec<crate::session_chat::SessionChatMessage>,
+}
+
+struct CachedTranscriptTail {
+    path: PathBuf,
+    /// The file's length and modification time when it was read.
+    stamp: (u64, Option<std::time::SystemTime>),
+    limit: usize,
+    tail: TranscriptTail,
 }
 
 impl SessionChatTranscriptGate {
@@ -201,6 +220,57 @@ impl SessionChatTranscriptGate {
         &mut self,
         session: &Value,
     ) -> Option<crate::session_chat::SessionChatTurnLifecycle> {
+        let (transcript_agent, path) = self.resolve(session)?;
+        // No transcript on disk yet: agent hooks are the only signal, and they already said idle.
+        match read_session_chat_tail_page(
+            transcript_agent,
+            &path,
+            SESSION_CHAT_QUEUE_LIFECYCLE_TAIL_LIMIT,
+            None,
+        ) {
+            Ok(SessionChatTailPage::Page { lifecycle, .. }) => lifecycle,
+            _ => None,
+        }
+    }
+
+    /// The newest `limit` messages and the newest turn's lifecycle, read again only when the
+    /// transcript file changed (its length or modification time) since the last read. For a
+    /// watcher that looks at many idle sessions every tick: an unchanged file costs one `stat`.
+    pub(crate) fn tail(&mut self, session: &Value, limit: usize) -> Option<&TranscriptTail> {
+        let (transcript_agent, path) = self.resolve(session)?;
+        let stamp = std::fs::metadata(&path)
+            .map(|metadata| (metadata.len(), metadata.modified().ok()))
+            .ok()?;
+        let fresh = self.tail.as_ref().is_some_and(|cached| {
+            cached.path == path && cached.stamp == stamp && cached.limit == limit
+        });
+        if !fresh {
+            let tail = match read_session_chat_tail_page(transcript_agent, &path, limit, None) {
+                Ok(SessionChatTailPage::Page {
+                    lifecycle,
+                    messages,
+                    ..
+                }) => TranscriptTail {
+                    lifecycle,
+                    messages,
+                },
+                _ => return None,
+            };
+            self.tail = Some(CachedTranscriptTail {
+                path,
+                stamp,
+                limit,
+                tail,
+            });
+        }
+        self.tail.as_ref().map(|cached| &cached.tail)
+    }
+
+    /// The session's transcript agent and file, resolved once per conversation identity.
+    fn resolve(
+        &mut self,
+        session: &Value,
+    ) -> Option<(crate::session_chat::SessionChatTranscriptAgent, PathBuf)> {
         let agent = session_text(session, "agentId").or_else(|| runtime_text(session, "agentName"));
         let agent_icon = session
             .get("launchSettings")
@@ -242,16 +312,7 @@ impl SessionChatTranscriptGate {
         };
         self.identity = identity;
         self.path = path.clone();
-        // No transcript on disk yet: agent hooks are the only signal, and they already said idle.
-        match read_session_chat_tail_page(
-            transcript_agent,
-            &path?,
-            SESSION_CHAT_QUEUE_LIFECYCLE_TAIL_LIMIT,
-            None,
-        ) {
-            Ok(SessionChatTailPage::Page { lifecycle, .. }) => lifecycle,
-            _ => None,
-        }
+        Some((transcript_agent, path?))
     }
 }
 
@@ -326,7 +387,7 @@ impl SessionChatQueueRuntime {
         let runtime = self.clone();
         tokio::spawn(async move {
             let mut interval =
-                tokio::time::interval(Duration::from_secs(SESSION_CHAT_QUEUE_TICK_SECONDS));
+                crate::ticks::steady_interval(Duration::from_secs(SESSION_CHAT_QUEUE_TICK_SECONDS));
             loop {
                 tokio::select! {
                     _ = shutdown_rx.recv() => break,
@@ -560,9 +621,12 @@ impl SessionChatQueueRuntime {
                     head.map_or(Assessment::Skip, |head| hold(head, WaitReason::Asleep))
                 }
                 NotRunningHead::HoldAndWake(id) => Assessment::HoldAndWake(id.to_string()),
-                NotRunningHead::Wait => {
-                    head.map_or(Assessment::Skip, |head| hold(head, WaitReason::Closed))
-                }
+                NotRunningHead::Wait => head.map_or(Assessment::Skip, |head| {
+                    crate::session_chat_send_failure::note_held_on_closed_session(
+                        project_id, session_id, &head.id,
+                    );
+                    hold(head, WaitReason::Closed)
+                }),
             };
         }
         // CDXC:SessionChat 2026-09-05 DECISION:
@@ -606,8 +670,36 @@ impl SessionChatQueueRuntime {
         // first queued prompt starts the box (agents/draft_run_location.rs).
         let pending_box = crate::agentbox::pending_session_agentbox(&session).is_some();
         let awaiting_startup = (draft || head.startup_send) && !pending_box;
-        let composer_ready =
-            composer.state == crate::session_chat_composer::SessionChatComposerState::Ready;
+        // A Pi or OMP whose chat channel is open takes the message through its own API, so its
+        // input box need not be read off the screen (CDXC:PiChatChannel 2026-11-05).
+        let channel_ready = matches!(composer_agent.as_deref(), Some("pi" | "omp"))
+            && crate::pi_chat_channel::live(project_id, session_id)
+                .is_some_and(|channel| channel.supports("send"));
+        // DeepSeek Harness's plugin takes a message while a turn runs too (dsh-tui queues it).
+        let channel_ready = channel_ready
+            || (composer_agent.as_deref() == Some("dsh")
+                && crate::dsh_chat_channel::live(project_id, session_id, "send").is_some());
+        // Hermes 0.22's gateway says whether a typed message would start a turn, instead of its
+        // input box on screen; Hermes 0.21 keeps the screen (CDXC:HermesGateway 2026-11-05 in
+        // hermes_gateway.rs).
+        let hermes_gate = (composer_agent.as_deref() == Some("hermes-agent"))
+            .then(|| crate::hermes_gateway::typed_message_gate(&session))
+            .flatten();
+        match hermes_gate {
+            Some(crate::hermes_gateway::TypedMessageGate::Busy) => {
+                self.reset_gate(key);
+                return hold(head, WaitReason::Working);
+            }
+            Some(crate::hermes_gateway::TypedMessageGate::WaitingOnUser) => {
+                self.reset_gate(key);
+                return hold(head, WaitReason::Answer);
+            }
+            _ => {}
+        }
+        let channel_ready =
+            channel_ready || hermes_gate == Some(crate::hermes_gateway::TypedMessageGate::Ready);
+        let composer_ready = channel_ready
+            || composer.state == crate::session_chat_composer::SessionChatComposerState::Ready;
         // A "running" row whose daemon died before its agent took the message is woken too.
         if awaiting_startup
             && !composer_ready
@@ -690,7 +782,10 @@ impl SessionChatQueueRuntime {
             self.reset_gate(key);
             return hold(head, WaitReason::AccountRecovery);
         }
-        if !session_chat_queue_activity_is_deliverable(&session, generated_at) {
+        // Hermes's gateway already said it is idle with nothing waiting on the user, which is what
+        // this hook-fed activity stands for (CDXC:HermesGateway 2026-11-05 in hermes_gateway.rs).
+        let gateway_idle = hermes_gate == Some(crate::hermes_gateway::TypedMessageGate::Ready);
+        if !gateway_idle && !session_chat_queue_activity_is_deliverable(&session, generated_at) {
             self.reset_gate(key);
             let reason = if presentation_activity(&session, generated_at) == "working" {
                 WaitReason::Working
@@ -751,7 +846,12 @@ impl SessionChatQueueRuntime {
             if notice.kind == crate::session_chat_notice::SESSION_CHAT_NOTICE_AGENT_EXITED {
                 return deliver(head);
             }
-            if notice.blocks_queued_delivery() && !escape_closes_claude_panel(&composer, &notice) {
+            // CDXC:SessionChat 2026-10-31 WHY: a delivery verdict is about an earlier message, not this
+            // one. "Your message might not have reached the agent" (a guess from a quiet transcript)
+            // failed the next rows under its own title, without trying them, so they said nothing of
+            // what happened to them; reproduced on 2026-10-31 with a frozen Claude. The row goes to
+            // the send path, whose fresh read and recovery decide.
+            if notice_fails_a_row(&notice) && !escape_closes_claude_panel(&composer, &notice) {
                 // CDXC:SessionChat 2026-10-29 WHY: a cached notice never fails a row on its own. In the isolated repro, Claude's "Read outside the working directories" dialog was closed with Escape, the hooks said idle at once, and the cached screen still named the dialog, so the queued message was failed with the closed dialog's title. The screen is read fresh first and the row fails only if the notice is still there after that read.
                 if !self.notice_confirmed(key, &head.id, &notice.title, now) {
                     (self.compacting_refresher)(project_id, session_id, composer_agent.as_deref());
@@ -759,7 +859,7 @@ impl SessionChatQueueRuntime {
                 }
                 return Assessment::Fail {
                     prompt_id: head.id.clone(),
-                    reason: notice.title.clone(),
+                    reason: notice_failure_reason(&notice),
                 };
             }
         }
@@ -782,6 +882,7 @@ impl SessionChatQueueRuntime {
         Asked "Should a queued message show in the chat why it is still waiting?" (Q752), the user answered "show reason" and added "and please self heal better...... this should never happen again". So a row this gate holds climbs a ladder, every step logged in session-chat-send-failures.jsonl (thresholds and reasons in wait_reason.rs): a cached verdict never holds a row on its own (the first tick it would, the screen is read fresh, then every 2 s easing to 15 s); at 20 s Claude gets a Ctrl+L (`sessionChatQueueRedrewClaude`, once a minute); at 45 s any agent gets a one-row resize and back, which is what the terminal view did (`sessionChatQueueResizedForRepaint`, every two minutes, repaint_nudge.rs); at a minute the row says why it waits and is logged (`sessionChatQueueHeldForInputBox`); at three minutes it goes to the send path anyway (`sessionChatQueueLastResort`), whose own fresh capture, repaint and dialog and question guards decide, and which marks it Not sent with the reason and Retry after two more minutes of finding no box. A startup send keeps waiting instead of Not sent (the 2026-10-11 DECISION in session_chat_send_wake.rs). Every reason a row waits for is shown on it after a minute, and a watchdog hands a row held five minutes by a gate that should have let it go, on a session idle by every signal, to the same last resort (`sessionChatQueueWatchdog`).
         */
         if !pending_box
+            && !channel_ready
             && composer.blocks_message_for(composer_agent.as_deref())
             && !composer.should_dismiss()
         {
@@ -1192,6 +1293,13 @@ fn session_queue_key(project_id: &str, session_id: &str) -> String {
     format!("{project_id}\u{1f}{session_id}")
 }
 
+/// Whether a notice makes the next row fail untried. A delivery verdict never does: see
+/// CDXC:SessionChat 2026-10-31 where this is asked.
+fn notice_fails_a_row(notice: &crate::session_chat_notice::SessionChatTerminalNotice) -> bool {
+    notice.blocks_queued_delivery()
+        && notice.kind != crate::session_chat_notice::SESSION_CHAT_NOTICE_DELIVERY_FAILED
+}
+
 /// An account switch or recovery is under way, which owns the session's next input.
 fn account_recovery_waiting(session: &Value) -> bool {
     matches!(
@@ -1270,6 +1378,23 @@ pub(super) fn escape_closes_claude_panel(
         && notice.kind == crate::session_chat_notice::SESSION_CHAT_NOTICE_CLAUDE_INPUT_BLOCKED
 }
 
+/// A row a blocking notice failed says why in the card's own words: its title ("Trust this folder?",
+/// "Claude Code stopped") and the sentence under it, since 2026-11-03 short titles read as a reason
+/// only with that sentence.
+fn notice_failure_reason(notice: &crate::session_chat_notice::SessionChatTerminalNotice) -> String {
+    let title = notice.title.trim();
+    match notice
+        .detail
+        .as_deref()
+        .map(str::trim)
+        .filter(|detail| !detail.is_empty())
+    {
+        Some(detail) if title.ends_with(['.', '?', '!']) => format!("{title} {detail}"),
+        Some(detail) => format!("{title}. {detail}"),
+        None => title.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1318,6 +1443,27 @@ mod tests {
             input_box_hold_log_due(&mut hold, "Q2", after(8 * 3600 + 60)),
             (60_000, true)
         );
+    }
+
+    #[test]
+    fn a_delivery_verdict_about_an_earlier_message_fails_no_row() {
+        use crate::session_chat_notice::{
+            SessionChatTerminalNotice, SessionChatTerminalNoticeSeverity,
+            SessionChatTerminalNoticeSource, SESSION_CHAT_NOTICE_DELIVERY_FAILED,
+            SESSION_CHAT_NOTICE_USAGE_LIMIT,
+        };
+        let notice = |kind| {
+            SessionChatTerminalNotice::new(
+                kind,
+                SessionChatTerminalNoticeSeverity::Warning,
+                SessionChatTerminalNoticeSource::Watchdog,
+                "Your message might not have reached the agent",
+            )
+        };
+        assert!(!notice_fails_a_row(&notice(
+            SESSION_CHAT_NOTICE_DELIVERY_FAILED
+        )));
+        assert!(notice_fails_a_row(&notice(SESSION_CHAT_NOTICE_USAGE_LIMIT)));
     }
 
     #[test]

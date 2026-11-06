@@ -27,19 +27,6 @@ struct ScrollBottom {
     pill_gap: f32,
     question_flash_ms: u64,
     question_jump_margin: f32,
-    question_ping: QuestionPingSpec,
-}
-
-/// The "Previous question" pill's attention dot and ping (question_ping.rs).
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct QuestionPingSpec {
-    duration_ms: u64,
-    every_ms: u64,
-    dot_size: f32,
-    scale: f32,
-    alpha: f32,
-    count_swap_ms: u64,
 }
 
 #[derive(Deserialize)]
@@ -80,33 +67,6 @@ pub(super) fn question_flash_ms() -> u64 {
 /// How far below the transcript's top a jump puts the question it lands on.
 pub(super) fn question_jump_margin() -> f32 {
     SPEC.question_jump_margin
-}
-
-/// How long one ping of the question pill's dot lasts, and how often it repeats.
-pub(super) fn question_ping_ms() -> u64 {
-    SPEC.question_ping.duration_ms
-}
-
-pub(super) fn question_ping_every_ms() -> u64 {
-    SPEC.question_ping.every_ms
-}
-
-/// The dot's size, how many times its size the ring spreads to, and the ring's starting opacity.
-pub(super) fn question_ping_dot() -> f32 {
-    SPEC.question_ping.dot_size
-}
-
-pub(super) fn question_ping_scale() -> f32 {
-    SPEC.question_ping.scale
-}
-
-pub(super) fn question_ping_alpha() -> f32 {
-    SPEC.question_ping.alpha
-}
-
-/// How long the ? pill shows the ? and then the count, each, while two or more questions wait.
-pub(super) fn question_count_swap_ms() -> u64 {
-    SPEC.question_ping.count_swap_ms
 }
 
 /// CDXC:SessionChat 2026-09-29 DECISION:
@@ -175,7 +135,89 @@ pub(super) fn register(cx: &mut App) {
 }
 
 impl NativeChatView {
+    /// Keep a focused question form field at its screen position while transcript rows stream.
+    /// The form inputs are the text fields inside the transcript; the session note and docked
+    /// question fields live beside the composer and do not move with this list.
+    ///
+    /// CDXC:SessionChat 2026-11-02 DECISION: User: "while focus is inside a transcript element (a questions form's fields, a note field, an inline page question), streaming content must not move that element on screen; when focus leaves, normal following resumes." Tail following pins the bottom and slides a focused form under its caret as new rows arrive, so focus pauses following at the current list position. Leaving the field resumes following when the list was following at focus; a reader who was scrolled up, or who scrolled while typing, keeps their position until they return to the bottom.
+    pub(super) fn sync_transcript_focus_anchor(&mut self, window: &Window, cx: &App) {
+        let focused = self
+            .form_inputs
+            .values()
+            .any(|field| field.input.read(cx).focus_handle(cx).is_focused(window));
+        if focused {
+            let following = self.list.is_following_tail();
+            // A reader already scrolled up is still in GPUI's Tail mode, which can re-engage when a
+            // layout reaches the end. Focus holds Normal mode either way.
+            if self.transcript_focus_follow.get().is_none() {
+                self.transcript_focus_follow.set(Some(following));
+                self.list.set_follow_mode(gpui::FollowMode::Normal);
+            } else if following {
+                self.list.set_follow_mode(gpui::FollowMode::Normal);
+            }
+        } else if let Some(resume) = self.transcript_focus_follow.take() {
+            self.transcript_focus_field_top.set(None);
+            // A disclosure that is still moving owns the handoff back to Tail mode.
+            if self.disclosure_motion.borrow().follow_paused {
+                return;
+            }
+            // An answer clicked meanwhile keeps the list still (answer_anchor.rs).
+            if self.answer_hold_takes_focus_resume(resume) {
+                return;
+            }
+            let top = self.list.logical_scroll_top();
+            self.list.set_follow_mode(gpui::FollowMode::Tail);
+            if !resume {
+                self.list.scroll_to(top);
+            }
+        }
+    }
+
+    /// Paints nothing; placed after the transcript list so its paint reads where the focused form
+    /// field was just painted. Normal mode keeps the anchored row still, but rows can still move
+    /// the field: OpenCode regroups the finished turn into a summary row when the next one starts,
+    /// and that row keeps changing above the form while the turn streams. So the field's own top is
+    /// held: a frame that painted it elsewhere scrolls the list back by the difference. A wheel
+    /// scroll re-records it (`follow_tail_if_wheel_reaches_end`), and so does the reveal that
+    /// scrolls a growing box into view (`form_input_reveal_sync`).
+    pub(super) fn focused_field_hold_sync(&self) -> AnyElement {
+        let list = self.list.clone();
+        let held = self.transcript_focus_field_top.clone();
+        let inputs: Vec<_> = self
+            .form_inputs
+            .values()
+            .map(|entry| entry.input.clone())
+            .collect();
+        gpui::canvas(
+            |_, _, _| {},
+            move |_, _, window, cx| {
+                let Some(top) = inputs.iter().find_map(|input| {
+                    let state = input.read(cx);
+                    state
+                        .focus_handle(cx)
+                        .is_focused(window)
+                        .then(|| state.input_bounds().top())
+                }) else {
+                    held.set(None);
+                    return;
+                };
+                match held.get() {
+                    Some(want) if (top - want).abs() > px(0.5) => {
+                        list.scroll_by(top - want);
+                        window.request_animation_frame();
+                    }
+                    Some(_) => {}
+                    None => held.set(Some(top)),
+                }
+            },
+        )
+        .absolute()
+        .size_0()
+        .into_any_element()
+    }
+
     pub(super) fn jump_to_bottom(&mut self, cx: &mut Context<Self>) {
+        self.release_answer_hold();
         self.list.set_follow_mode(gpui::FollowMode::Tail);
         self.invoke(serde_json::json!({"type":"composerExpand"}), cx);
         cx.notify();
@@ -233,6 +275,13 @@ impl NativeChatView {
     /// wheel listener, before the list applies the same event, which keeps following on a downward
     /// scroll.
     pub(super) fn follow_tail_if_wheel_reaches_end(&self, event: &gpui::ScrollEvent, scale: f32) {
+        // The reader moved the list on purpose: hold the focused field where it lands, and keep
+        // the position they chose when the field loses focus.
+        self.transcript_focus_field_top.set(None);
+        if self.transcript_focus_follow.get().is_some() {
+            self.transcript_focus_follow.set(Some(false));
+        }
+        self.release_answer_hold();
         if self.list.is_following_tail() || self.disclosure_motion.borrow().follow_paused {
             return;
         }

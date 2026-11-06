@@ -10,6 +10,8 @@
 //!
 //! CDXC:SessionStatus 2026-10-20 DECISION:
 //! User: "when a session has open questions we must show an indicator in the sidebar and as notification ... i didn't know this session needed answers from me which is bad", then: "the pink dot ... should also appear when a session has open questions listed in its status text ... Please fix that so the pink dot shows whenever there are any open questions on a session, including inline HTML ones." gxserver records the session's open questions (`sessionChatOpenQuestions`) and the presentation adds them to `pendingQuestionCount`, so every client draws the pink question dot ("Answer requested") that Codex's own questions already use, also while the agent works. It never clears by looking at the session or by sending something else: only an answer (from the form, the page, or answers waiting in the session's queue), a withdrawal, or the same tags asked again clear a question. Supersedes the same day's rule that counted only the last turn and cleared on any message. Orchestrator threads are left out: their questions go to their orchestrator in its thread report.
+//! CDXC:SessionStatus 2026-11-05 DECISION:
+//! User (Q1285, "Yes, typed answers count"): a question the user answers in plain words in the chat ("Q12: yes", "Q13 = B", "Q14 skip"), after it was asked, on a line that is not a quote, in a message that is not a thread's report, is answered: it leaves the count, the pink dot and `answer requested (n)`, the chat's ? pill and the coordinator board's Needs you. Supersedes, in part, the 2026-10-20 rule above that only a form's, a page's or queued answers, a withdrawal or the same tags asked again clear a question; a message that only names a tag ("Q12 what does it mean?") still clears nothing. The reading is gx-chat-core's (`transcript/open_questions.rs` `said_in`, `Found::Said`), so every client agrees.
 //! CDXC:Notifications 2026-10-20 DECISION:
 //! Same request: one notification per turn that asked. When a turn ends with new open questions from that turn, its Finished feed row turns into Needs input, saying how many it asked; a turn that ended without attention (agents whose finished turn is idle) is raised to attention once, which sounds, shows the system notification and writes the feed row like any other wait for input. Questions from earlier turns never notify again.
 //! SEE-ALSO: packages/gx-chat-core/src/transcript/open_questions.rs (what counts as asked, answered and withdrawn), server/src/presentation/session_projection.rs (`pendingQuestionCount`), server/src/voice_agent/question_forms.rs (the voice agent lists and answers these), server/src/visual_pages/questions.rs.
@@ -22,7 +24,8 @@ use std::time::Duration;
 use ghostex_gx_chat_core::protocol::ChatMessage;
 use ghostex_gx_chat_core::questions::resource_index::{self, ResourceEntry};
 use ghostex_gx_chat_core::transcript::open_questions::{
-    asker_entries, askers, mark_inherited, settle_askers, AskerKind, Found,
+    asker_entries, askers, linkable_tags, mark_inherited, settle_askers, tags_answered_in_words,
+    AskerKind, Found, TagState,
 };
 use ghostex_gx_chat_core::transcript::page_answers::answers_page_id;
 use ghostex_gx_chat_core::transcript::question_forms::{question_forms, QuestionForm};
@@ -358,16 +361,32 @@ impl Ledger {
                             self.answers_at.entry(id.clone()).or_insert(at);
                         }
                         self.answered.push(id);
+                    } else if !tags_answered_in_words(&text).is_empty() {
+                        // Answers in the user's own words ("Q12: yes") settle questions asked
+                        // before them; gx-chat-core's `said_in` leaves out a thread's report.
+                        let converted = serde_json::to_value(&message)
+                            .ok()
+                            .and_then(|value| serde_json::from_value::<ChatMessage>(value).ok());
+                        if let Some(converted) = converted {
+                            let found =
+                                asker_entries(std::slice::from_ref(&converted), &self.found);
+                            if !found.is_empty() {
+                                self.found.extend(found);
+                                self.asking.push((converted, self.turns));
+                            }
+                        }
                     }
                 }
                 SessionChatRole::Assistant => {
                     let text = text_of(&message);
-                    if !(text.contains("```") || text.contains("~~~")) {
+                    // One-click answer links ask too (gx-chat-core's transcript/inline_answers.rs).
+                    let inline = text.contains("ghostex-answer:");
+                    if !(inline || text.contains("```") || text.contains("~~~")) {
                         continue;
                     }
                     // Only a fenced block naming questions can ask or withdraw any; one naming
                     // a drawing or a page is a resource too (the index lists them all).
-                    let asks = text.contains("questions");
+                    let asks = inline || text.contains("questions");
                     if !asks && !text.contains("visual") && !text.contains("vega") {
                         continue;
                     }
@@ -428,6 +447,33 @@ impl Ledger {
                     kind: asker.kind,
                 }
             })
+            .collect()
+    }
+}
+
+impl Ledger {
+    /// Every tag the replies asked, uppercased, and whether its question is settled: answered (in
+    /// the form, by a one-click link, from a page, by answers waiting in the queue, or in the
+    /// user's own words after it was asked, gx-chat-core's `Found::Said`), skipped, withdrawn, or
+    /// asked again and settled there.
+    /// The board's Needs you items that name a tag read it (coordinators/board.rs
+    /// `settle_answered_items`).
+    pub(crate) fn tag_states(
+        &self,
+        also_answered: &[String],
+        page_answered: impl Fn(&str) -> bool,
+    ) -> HashMap<String, bool> {
+        let mut answered = self.answered.clone();
+        answered.extend(also_answered.iter().cloned());
+        let mut settled = settle_askers(&self.found, &answered);
+        for asker in &mut settled {
+            if asker.kind == AskerKind::Page && !asker.answered && page_answered(&asker.id) {
+                asker.answered = true;
+            }
+        }
+        linkable_tags(&settled)
+            .into_iter()
+            .map(|tag| (tag.tag, tag.state != TagState::Open))
             .collect()
     }
 }
@@ -517,14 +563,7 @@ fn read_open(
         ledger.observe(messages);
     }
     ledger.incremental = incremental;
-    let queued: Vec<String> = crate::session_chat_queue::read_session_chat_queue_snapshot_with(
-        db, project_id, session_id,
-    )
-    .queue
-    .iter()
-    .filter(|prompt| prompt.state != "failed")
-    .filter_map(|prompt| answers_page_id(&prompt.text))
-    .collect();
+    let queued = queued_answers(db, project_id, session_id);
     let forked_at = read_forked_at(db, project_id, session_id);
     let open = ledger.open(&queued, forked_at, |id| {
         crate::visual_pages::page_answered(&state.paths.root_dir, id)
@@ -551,6 +590,47 @@ fn read_open(
         Vec::new()
     };
     Some((open, newly))
+}
+
+/// The forms and pages whose answers wait in the session's queue (failed ones left out).
+fn queued_answers(db: &rusqlite::Connection, project_id: &str, session_id: &str) -> Vec<String> {
+    crate::session_chat_queue::read_session_chat_queue_snapshot_with(db, project_id, session_id)
+        .queue
+        .iter()
+        .filter(|prompt| prompt.state != "failed")
+        .filter_map(|prompt| answers_page_id(&prompt.text))
+        .collect()
+}
+
+/// Marks done the coordinator's Needs you items whose questions its chat has settled, from the
+/// ledger `read_open` just brought up to date (coordinators/board.rs `settle_answered_items`). The
+/// supervisor's next tick shows the change on the board.
+fn settle_board_items(
+    state: &AppState,
+    db: &rusqlite::Connection,
+    project_id: &str,
+    session_id: &str,
+) {
+    let key = (project_id.to_string(), session_id.to_string());
+    if !crate::coordinators::has_question_items(db, &key) {
+        return;
+    }
+    let ledger_key = crate::server::session_observer_key(project_id, session_id);
+    let Some(entry) = ledgers()
+        .lock()
+        .ok()
+        .and_then(|ledgers| ledgers.get(&ledger_key).cloned())
+    else {
+        return;
+    };
+    let queued = queued_answers(db, project_id, session_id);
+    let states = match entry.lock() {
+        Ok(ledger) => ledger.tag_states(&queued, |id| {
+            crate::visual_pages::page_answered(&state.paths.root_dir, id)
+        }),
+        Err(_) => return,
+    };
+    let _ = crate::coordinators::settle_answered_items(db, &key, |tag| states.get(tag).copied());
 }
 
 /// The forms and pages waiting on the user in this session, brought up to date first. Blocking.
@@ -613,11 +693,11 @@ pub(crate) fn refresh(
         .is_some_and(|thread| !thread.is_resolved());
     // A coordinator's stopped threads have no sweep of their own: build the index of any that has
     // none yet, so their pages are listed (`session_chat_resources::backfill_threads`).
-    if crate::coordinators::read_coordinator(&db, project_id, session_id)
+    let is_coordinator = crate::coordinators::read_coordinator(&db, project_id, session_id)
         .ok()
         .flatten()
-        .is_some()
-    {
+        .is_some();
+    if is_coordinator {
         crate::session_chat_resources::backfill_threads(state, &db, project_id, session_id);
     }
     let (open, newly) = if is_thread {
@@ -630,6 +710,9 @@ pub(crate) fn refresh(
             None => return,
         }
     };
+    if is_coordinator {
+        settle_board_items(state, &db, project_id, session_id);
+    }
     // For later questions still wait, but they are not counted and never notify. A mark whose
     // question was answered, withdrawn or asked again is forgotten.
     let (open, newly) = leave_out_removed(open, newly, &removed_ids(&session));
@@ -1029,5 +1112,80 @@ mod tests {
         assert!(forked
             .iter()
             .all(|e| e.kind != "form" || e.at_ms >= Some(100)));
+    }
+
+    /// A tag reads settled once its question is answered by a one-click link, a form, a page or the
+    /// user's own words after it was asked, or withdrawn; a thread's report naming it, or words
+    /// sent before it was asked, settle nothing. The board's Needs you items read this.
+    #[test]
+    fn questions_settle_by_link_form_withdrawal_and_plain_words() {
+        use ghostex_gx_chat_core::transcript::inline_answers::inline_questions;
+        use ghostex_gx_chat_core::transcript::question_forms::{answers_message, parse_form};
+        let inline = "- Reformat the drive? [Yes](ghostex-answer:Q1) [No](ghostex-answer:Q1)";
+        let fenced = form("Q2", "Collect audios");
+        let mut ledger = Ledger::default();
+        ledger.observe(vec![
+            message("u0", "user", 0, "Q5: yes, before it was asked"),
+            message("a1", "assistant", 1, inline),
+            message("a2", "assistant", 2, &fenced),
+            message("a3", "assistant", 3, &form("Q3", "Export prompts")),
+            message("a4", "assistant", 4, &form("Q4", "Rename")),
+            message("a5", "assistant", 5, &form("Q5", "Push")),
+        ]);
+        let states = ledger.tag_states(&[], |_| false);
+        for tag in ["Q1", "Q2", "Q3", "Q4", "Q5"] {
+            assert_eq!(states.get(tag), Some(&false), "{tag} waits");
+        }
+        assert_eq!(states.get("Q9"), None, "never asked");
+        let link_form = inline_questions(inline)[0].form();
+        let body = fenced
+            .trim_start_matches("```questions\n")
+            .trim_end_matches("\n```");
+        let fenced_form = parse_form(body);
+        ledger.observe(vec![
+            // One click on an inline answer link.
+            message("u1", "user", 6, &answers_message(&link_form, &json!({"Q1": "Yes"}))),
+            // The form's Send.
+            message("u2", "user", 7, &answers_message(&fenced_form, &json!({"Q2": "A"}))),
+            // The agent withdraws Q3.
+            message("a6", "assistant", 8, "```questions\n{\"withdraw\":[\"Q3\"]}\n```"),
+            // A thread's report quoting Q5 is not the user's answer.
+            message(
+                "u3",
+                "user",
+                9,
+                "Q5: B\n\nMessage from another agent\nAgent: Claude\nSession: Thread\nSession ID: G1\nAgent ID: claude\nAgent Session ID: x\nReply to: S1:P1:G1",
+            ),
+        ]);
+        let states = ledger.tag_states(&[], |_| false);
+        assert_eq!(states.get("Q1"), Some(&true), "inline link");
+        assert_eq!(states.get("Q2"), Some(&true), "form");
+        assert_eq!(states.get("Q3"), Some(&true), "withdrawn");
+        assert_eq!(states.get("Q4"), Some(&false));
+        assert_eq!(
+            states.get("Q5"),
+            Some(&false),
+            "words before it was asked, a report"
+        );
+        // Q4 and Q5 still count toward the sidebar's question dot.
+        let open = |ledger: &Ledger| -> usize {
+            ledger
+                .open(&[], None, |_| false)
+                .iter()
+                .map(OpenAsker::count)
+                .sum()
+        };
+        assert_eq!(open(&ledger), 2);
+        // The user answers in plain words.
+        ledger.observe(vec![message("u4", "user", 10, "Q4: B\nQ5 yes")]);
+        let states = ledger.tag_states(&[], |_| false);
+        assert_eq!(states.get("Q4"), Some(&true), "plain chat");
+        assert_eq!(states.get("Q5"), Some(&true), "plain chat");
+        assert_eq!(open(&ledger), 0, "the dot clears too");
+        let index = ledger.index(&[], None, |_| false);
+        assert!(
+            index.iter().all(|entry| entry.status != "waiting"),
+            "Resources lists them answered"
+        );
     }
 }

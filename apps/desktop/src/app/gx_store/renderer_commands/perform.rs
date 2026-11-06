@@ -65,18 +65,12 @@ impl GhostexGpuiApp {
                         "shown": false,
                     }));
                 }
+                // The status item's focus switches the sidebar to the session's computer and
+                // reveals its row the way a notification click does, so a session on another
+                // computer, in another Space, or hidden by a filter or a closed group is shown.
                 if !self.dispatch_gpui_status_activation(&session.sidebar_session_id, cx) {
                     return Err(RendererCommandError::BridgeUnavailable);
                 }
-                // A session in another Space, or hidden by a filter or a closed group, has no
-                // drawn row: reveal it the way a notification click does, or the focus changes
-                // nothing the user can see.
-                let request_id = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_or(0, |elapsed| elapsed.as_micros() as u64);
-                self.gx_store_note_local_sidebar_reveal(&session.sidebar_session_id, request_id);
-                self.gx_store_note_sidebar_reveal(&session.sidebar_session_id, request_id, cx);
-                self.gx_store_sidebar_state_changed(cx);
                 Ok(json!({ "ok": true, "session": session_json(&session), "shown": true }))
             }
             RendererVerb::RenameCommand {
@@ -116,18 +110,33 @@ impl GhostexGpuiApp {
                 Ok(self.gpui_native_resources_snapshot_export(cx))
             }
             RendererVerb::ReadFocusedSession => {
-                // This computer's sessions only: a remote machine's row means nothing to the
-                // gxserver that asks.
+                // This computer's sessions in `focused`/`onScreen`; a connected machine's go in
+                // `focusedElsewhere`/`onScreenElsewhere` with its gxserver's server id, which the
+                // voice agent names it by (server/src/voice_agent/screen.rs). A machine whose id
+                // is not known yet is left out.
                 let focus = self.gx_store.core.focus();
                 let local = |key: &ghostex_gx_core::SessionKey| {
                     key.machine.is_local().then(
                         || json!({ "projectId": key.project_id, "sessionId": key.session_id }),
                     )
                 };
+                let elsewhere = |key: &ghostex_gx_core::SessionKey| {
+                    let server_id =
+                        crate::app::remote_conn::connected_computers::gpui_remote_machine_server_id(
+                            key.machine.remote_id()?,
+                        )?;
+                    Some(json!({
+                        "serverId": server_id,
+                        "projectId": key.project_id,
+                        "sessionId": key.session_id,
+                    }))
+                };
                 Ok(json!({
                     "focused": focus.focused_session.as_ref().and_then(local),
+                    "focusedElsewhere": focus.focused_session.as_ref().and_then(elsewhere),
                     "ok": true,
                     "onScreen": focus.displayed_sessions.iter().filter_map(local).collect::<Vec<_>>(),
+                    "onScreenElsewhere": focus.displayed_sessions.iter().filter_map(elsewhere).collect::<Vec<_>>(),
                 }))
             }
             RendererVerb::UpdateSettingsPatch { patch, keys } => {

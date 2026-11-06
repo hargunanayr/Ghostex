@@ -180,11 +180,7 @@ pub(crate) fn gpui_upload_terminal_attachment_to_remote(
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    let mut remote_path = format!(
-        "/tmp/ghostex-gpui-attachments/{}-{unique_id}-{filename}",
-        std::process::id()
-    );
-    let quoted_remote_path = gpui_shell_single_quote(remote_path.as_str());
+    let quoted_filename = gpui_shell_single_quote(filename.as_str());
     let remote_command = if matches!(
         execution_target,
         GpuiRemoteExecutionTarget::WindowsPowerShell
@@ -194,12 +190,17 @@ pub(crate) fn gpui_upload_terminal_attachment_to_remote(
             kind == GpuiTerminalAttachmentKind::Folder,
         )
     } else {
+        /*
+        CDXC:RemoteMachines 2026-10-25 WHY:
+        Uploads used to go into a fixed /tmp/ghostex-gpui-attachments folder made with `mkdir -p`, whose owner, mode and symlinks were never checked, so another account on the remote host could create it first and read or swap what the user attached (security audit 2026-10-25). Each upload now gets its own folder from `mktemp -d` (created exclusively, mode 0700, owned by the uploader) and reports the path behind the same marker the Windows upload uses.
+        */
+        let make_private_dir = "umask 077; d=$(mktemp -d \"${TMPDIR:-/tmp}/ghostex-gpui-attachments.XXXXXXXX\") || exit 1; p=\"$d\"/";
         match kind {
             GpuiTerminalAttachmentKind::Folder => format!(
-                "umask 077; mkdir -p /tmp/ghostex-gpui-attachments; mkdir -- {quoted_remote_path} && tar -xzf - -C {quoted_remote_path} --strip-components=1"
+                "{make_private_dir}{quoted_filename}; mkdir -- \"$p\" && tar -xzf - -C \"$p\" --strip-components=1 && printf '__GHOSTEX_UPLOAD__%s\\n' \"$p\""
             ),
             GpuiTerminalAttachmentKind::Image | GpuiTerminalAttachmentKind::File => format!(
-                "umask 077; mkdir -p /tmp/ghostex-gpui-attachments; cat > {quoted_remote_path} && chmod 600 {quoted_remote_path}"
+                "{make_private_dir}{quoted_filename}; cat > \"$p\" && chmod 600 \"$p\" && printf '__GHOSTEX_UPLOAD__%s\\n' \"$p\""
             ),
         }
     };
@@ -246,18 +247,23 @@ pub(crate) fn gpui_upload_terminal_attachment_to_remote(
     if upload_result.exit_code != 0 {
         return Err("Could not upload the selected item to the remote machine.".to_string());
     }
-    if matches!(
+    let uploaded_path = upload_result
+        .stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("__GHOSTEX_UPLOAD__"));
+    let remote_path = if matches!(
         execution_target,
         GpuiRemoteExecutionTarget::WindowsPowerShell
     ) {
-        remote_path = upload_result
-            .stdout
-            .lines()
-            .find_map(|line| line.strip_prefix("__GHOSTEX_UPLOAD__"))
+        uploaded_path
             .filter(|path| gpui_is_windows_remote_path(path))
             .ok_or_else(|| "Windows did not return the uploaded path.".to_string())?
-            .to_string();
+    } else {
+        uploaded_path
+            .filter(|path| path.starts_with('/') && path.ends_with(&format!("/{filename}")))
+            .ok_or_else(|| "The remote machine did not return the uploaded path.".to_string())?
     }
+    .to_string();
     Ok(GpuiTerminalAttachmentReference {
         kind,
         path: remote_path,
@@ -283,29 +289,75 @@ pub(crate) fn gpui_upload_terminal_clipboard_image_to_remote(
         TerminalClipboardImagePayload::FilePaths(paths) => paths
             .iter()
             .map(|path| {
-                gpui_upload_terminal_attachment_to_remote(config, execution_target, path.as_path())
+                let format = match path
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("")
+                    .to_ascii_lowercase()
+                    .as_str()
+                {
+                    "bmp" => Some(gpui::ImageFormat::Bmp),
+                    "tif" | "tiff" => Some(gpui::ImageFormat::Tiff),
+                    "png" => Some(gpui::ImageFormat::Png),
+                    "jpg" | "jpeg" => Some(gpui::ImageFormat::Jpeg),
+                    "webp" => Some(gpui::ImageFormat::Webp),
+                    "gif" => Some(gpui::ImageFormat::Gif),
+                    _ => None,
+                };
+                if let Some(format) = format {
+                    let bytes = fs::read(path)
+                        .map_err(|_| "Could not read the pasted image.".to_string())?;
+                    let prepared = crate::app::helpers::clipboard_image::prepare_clipboard_image(
+                        &bytes, format,
+                    )?;
+                    gpui_upload_prepared_terminal_image_to_remote(
+                        config,
+                        execution_target,
+                        &prepared.bytes,
+                        prepared.extension,
+                    )
+                } else {
+                    gpui_upload_terminal_attachment_to_remote(
+                        config,
+                        execution_target,
+                        path.as_path(),
+                    )
+                }
             })
             .collect(),
         TerminalClipboardImagePayload::Bytes { bytes, extension } => {
-            let unique_id = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos();
-            let staged_image = env::temp_dir().join(format!(
-                "ghostex-gpui-clipboard-image-{}-{unique_id}.{extension}",
-                std::process::id()
-            ));
-            fs::write(staged_image.as_path(), &bytes)
-                .map_err(|_| "Could not stage the pasted image for upload.".to_string())?;
-            let result = gpui_upload_terminal_attachment_to_remote(
+            gpui_upload_prepared_terminal_image_to_remote(
                 config,
                 execution_target,
-                staged_image.as_path(),
-            );
-            let _ = fs::remove_file(staged_image.as_path());
-            result.map(|reference| vec![reference])
+                &bytes,
+                extension,
+            )
+            .map(|reference| vec![reference])
         }
     }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+fn gpui_upload_prepared_terminal_image_to_remote(
+    config: &GpuiRemoteMachineConfig,
+    execution_target: &GpuiRemoteExecutionTarget,
+    bytes: &[u8],
+    extension: &str,
+) -> Result<GpuiTerminalAttachmentReference, String> {
+    let unique_id = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let staged_image = env::temp_dir().join(format!(
+        "ghostex-gpui-clipboard-image-{}-{unique_id}.{extension}",
+        std::process::id()
+    ));
+    fs::write(staged_image.as_path(), bytes)
+        .map_err(|_| "Could not stage the pasted image for upload.".to_string())?;
+    let result =
+        gpui_upload_terminal_attachment_to_remote(config, execution_target, staged_image.as_path());
+    let _ = fs::remove_file(staged_image.as_path());
+    result
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
@@ -454,6 +506,22 @@ pub(crate) fn gpui_remote_ssh_dial_refusal(config: &GpuiRemoteMachineConfig) -> 
         } else {
             "The saved remote machine has no SSH host.".to_string()
         });
+    }
+    // CDXC:RemoteMachines 2026-10-25 WHY:
+    // The user and host become ssh's destination argument (`user@host`), and a value starting with `-` is read as an option there (`-oProxyCommand=…` runs a command), while whitespace or control characters split or corrupt it. Both can arrive from an Easy Connect code or a hand-edited machine, so they are refused before any argument list is built (security audit 2026-10-25).
+    // A user may hold spaces (Windows pairing takes `%USERNAME%`, which can be "John Smith"; the
+    // destination is one argument, never a shell word), so only a leading `-` and control
+    // characters are refused there (review 2026-11-05). A host never holds whitespace.
+    let user = config.ssh_user.as_deref().unwrap_or("");
+    let refused = |value: &str| value.starts_with('-') || value.chars().any(char::is_control);
+    if refused(&config.ssh_host)
+        || config.ssh_host.chars().any(char::is_whitespace)
+        || refused(user)
+    {
+        return Err(
+            "The saved remote machine's SSH user or host is not valid. Edit the machine in Settings > Remote."
+                .to_string(),
+        );
     }
     Ok(())
 }

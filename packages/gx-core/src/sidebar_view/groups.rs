@@ -13,15 +13,15 @@ use crate::keys::SessionKey;
 use super::inputs::{SectionId, SidebarSettings, SidebarUiState};
 use super::ordering::{held_out_of_working, order_rows_for_display, row_deadline_ms};
 use super::sections::{project_session_sections, SectionLayout};
-use super::tags::matches_tag_filters;
+use super::tags::matches_session_filters;
 use super::threads::nest_threads;
 use super::view::{
-    GroupCore, GroupSummary, NeedsYou, ProjectContextView, RemoteMachineView, SessionRow,
-    SessionView, ThreadTally, WorktreeView,
+    GroupActionTarget, GroupCore, GroupSummary, NeedsYou, ProjectContextView, RemoteMachineView,
+    SessionRow, SessionView, ThreadTally, WorktreeView,
 };
 
 /// Where a group's rows come from.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum GroupKind {
     Project,
     /// A user-made session group inside a project.
@@ -41,6 +41,7 @@ pub(crate) struct ProjectContextInput {
     /// How many worktree projects name this project as their parent.
     pub(crate) worktree_count: usize,
     pub(crate) git_remote_origin_url: Option<String>,
+    pub(crate) git_work_tree: bool,
     pub(crate) bot_profile: Option<String>,
     pub(crate) bot_gateway_running: bool,
     pub(crate) bot_runs_today: u64,
@@ -48,6 +49,7 @@ pub(crate) struct ProjectContextInput {
     pub(crate) ghost: Option<ghostex_gx_protocol::PresentationGhost>,
     pub(crate) work_mode: bool,
     pub(crate) work_linear: bool,
+    pub(crate) work_linear_create: bool,
     pub(crate) work_pull_requests: bool,
     pub(crate) work_github: bool,
     pub(crate) work_tracker_github: bool,
@@ -86,6 +88,18 @@ pub(crate) struct GroupPlan {
     pub(crate) remote_machine: Option<RemoteMachineView>,
     /// The machine's stream is down while its rows are still held.
     pub(crate) is_stale: bool,
+    /// [`GroupCore::machine_names`]: set by the one-list merge (`merged.rs`).
+    pub(crate) machine_names: Vec<super::view::MachineChip>,
+    /// [`GroupCore::action_target`]: set by the one-list merge (`merged.rs`).
+    pub(crate) action_target: Option<PlanActionTarget>,
+}
+
+/// The project a merged group's creating actions go to, before it is drawn.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PlanActionTarget {
+    pub(crate) group_id: String,
+    pub(crate) project: Arc<ProjectContextInput>,
+    pub(crate) remote_machine: Option<RemoteMachineView>,
 }
 
 /// A built group: what is drawn, plus what the top level needs from every group, drawn or not.
@@ -196,22 +210,7 @@ pub(crate) fn build_group(
             .as_ref()
             .map(|project| project_title_tooltip(plan, project, sessions.len())),
         is_active,
-        project_context: plan.project.as_ref().map(|project| ProjectContextView {
-            project_id: project.project_id.clone(),
-            path: project.path.clone(),
-            icon_data_url: project.icon_data_url.clone(),
-            discovered_icon_data_url: project.discovered_icon_data_url.clone(),
-            diff_stats: project.diff_stats,
-            worktree: project.worktree.clone(),
-            git_remote_origin_url: project.git_remote_origin_url.clone(),
-            bot_profile: project.bot_profile.clone(),
-            bot_gateway_running: project.bot_gateway_running,
-            work_mode: project.work_mode,
-            work_linear: project.work_linear,
-            work_pull_requests: project.work_pull_requests,
-            work_github: project.work_github,
-            work_tracker_github: project.work_tracker_github,
-        }),
+        project_context: plan.project.as_deref().map(project_context_view),
         summary,
         collapsed: ui.collapse.collapsed_groups.contains(&plan.group_id),
         hover_actions_expanded: ui
@@ -222,6 +221,12 @@ pub(crate) fn build_group(
         sessions,
         remote_machine: plan.remote_machine.clone(),
         is_stale: plan.is_stale,
+        machine_names: plan.machine_names.clone(),
+        action_target: plan.action_target.as_ref().map(|target| GroupActionTarget {
+            group_id: target.group_id.clone(),
+            project_context: project_context_view(&target.project),
+            remote_machine: target.remote_machine.clone(),
+        }),
     };
     GroupBuild {
         deadline_ms: rows
@@ -231,6 +236,28 @@ pub(crate) fn build_group(
         core: Arc::new(core),
         store_rows,
         tag_filtered_out,
+    }
+}
+
+/// What a project header draws of its project.
+fn project_context_view(project: &ProjectContextInput) -> ProjectContextView {
+    ProjectContextView {
+        project_id: project.project_id.clone(),
+        path: project.path.clone(),
+        icon_data_url: project.icon_data_url.clone(),
+        discovered_icon_data_url: project.discovered_icon_data_url.clone(),
+        diff_stats: project.diff_stats,
+        worktree: project.worktree.clone(),
+        git_remote_origin_url: project.git_remote_origin_url.clone(),
+        git_work_tree: project.git_work_tree,
+        bot_profile: project.bot_profile.clone(),
+        bot_gateway_running: project.bot_gateway_running,
+        work_mode: project.work_mode,
+        work_linear: project.work_linear,
+        work_linear_create: project.work_linear_create,
+        work_pull_requests: project.work_pull_requests,
+        work_github: project.work_github,
+        work_tracker_github: project.work_tracker_github,
     }
 }
 
@@ -282,8 +309,9 @@ pub(crate) fn lay_out_group_rows(
         .into_iter()
         .map(|index| store_rows[index].clone())
         .filter(|session| {
-            matches_tag_filters(
+            matches_session_filters(
                 session.row.effective_tag.as_deref(),
+                session.row.cloud_box.is_some(),
                 &ui.selected_tag_filters,
             )
         })

@@ -4,7 +4,10 @@
 //! so the message waits for it as a startup send.
 
 use std::{
-    sync::OnceLock,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        OnceLock,
+    },
     time::{Duration as StdDuration, Instant},
 };
 
@@ -24,8 +27,11 @@ pub(crate) enum SendHeal {
     Delivered,
     /// The agent is restarting on its own conversation; the message waits for its input box.
     Restarting,
-    /// Nothing safe was left to try (the reason is in the send-failure log); the caller shows the card.
-    GaveUp,
+    /// gxserver cannot reach its own session tools (zmx); the message waits until they are back.
+    ToolsMissing,
+    /// Nothing safe was left to try. The words say why (they also go to the send-failure log), and
+    /// the message becomes a failed row whose card names them (session_chat_send_failure.rs).
+    GaveUp(Option<String>),
 }
 
 /// CDXC:SessionChat 2026-10-09 DECISION:
@@ -41,6 +47,9 @@ pub(super) async fn heal_refused_send(
     agent_stalled: bool,
     kept_in_box: bool,
 ) -> SendHeal {
+    if gxserver_tools_missing(state, target).await {
+        return SendHeal::ToolsMissing;
+    }
     if paste_already_recorded(&target.session, text, send_started_ms).await {
         record(
             state,
@@ -58,9 +67,16 @@ pub(super) async fn heal_refused_send(
         notice.kind == crate::session_chat_notice::SESSION_CHAT_NOTICE_AGENT_EXITED
     });
     // A login screen, a usage limit or a dialog explains itself, and neither a retry nor a restart
-    // answers it; the card that names it is the useful outcome.
+    // answers it; the card that names it is the useful outcome. One an account switch is hiding is
+    // the previous login's repaint, not something to give up on.
     if notice.as_ref().is_some_and(|notice| {
-        !agent_exited_on_screen && (notice.is_answerable() || notice.blocks_queued_delivery())
+        !agent_exited_on_screen
+            && (notice.is_answerable() || notice.blocks_queued_delivery())
+            && !crate::session_chat_notice::session_chat_notice_hidden(
+                &target.project_id,
+                &target.session_id,
+                notice,
+            )
     }) {
         record(
             state,
@@ -68,7 +84,8 @@ pub(super) async fn heal_refused_send(
             "sessionChatSendHealGaveUp",
             "The terminal is showing something only the user can answer.",
         );
-        return SendHeal::GaveUp;
+        let title = notice.as_ref().map(|notice| notice.title.clone());
+        return SendHeal::GaveUp(title.map(|title| format!("The terminal is showing: {title}.")));
     }
     // The process tree decides, not the screen: an exit message can outlive the agent the user
     // already started again.
@@ -100,7 +117,7 @@ pub(super) async fn heal_refused_send(
                 record(state, target, "sessionChatSendHealedAfterRepaint", "Claude's screen was repainted and the message was typed once more; it went through.");
                 return SendHeal::Delivered;
             }
-            Err(error) if error.cancelled() => return SendHeal::GaveUp,
+            Err(error) if error.cancelled() => return SendHeal::GaveUp(None),
             Err(_) => {}
         }
         if paste_already_recorded(&target.session, text, send_started_ms).await {
@@ -116,13 +133,13 @@ pub(super) async fn heal_refused_send(
             "sessionChatSendHealGaveUp",
             "The agent took the message into its input box but kept it there; it was not restarted.",
         );
-        return SendHeal::GaveUp;
+        return SendHeal::GaveUp(None);
     }
     match restart_agent_for_send(state, target, running).await {
         Ok(()) => SendHeal::Restarting,
         Err(reason) => {
             record(state, target, "sessionChatSendHealGaveUp", reason);
-            SendHeal::GaveUp
+            SendHeal::GaveUp(Some(reason.to_string()))
         }
     }
 }
@@ -149,9 +166,13 @@ pub(super) async fn restart_exited_agent_before_send(
     {
         return None;
     }
+    // CDXC:SessionChat 2026-10-31 WHY: an agent's own exit words are not always known: Antigravity CLI's `/exit` prints a resume hint and the shell prompt, which read as no notice, and a chat message was then typed at the shell ("zsh: command not found: Reply", reproduced 2026-10-31). A screen ending in a shell prompt is no agent's input box, whichever agent it was; the process tree below still has the last word.
     let exit_on_screen = detection.notice.as_ref().is_some_and(|notice| {
         notice.kind == crate::session_chat_notice::SESSION_CHAT_NOTICE_AGENT_EXITED
-    });
+    })
+        || crate::session_chat_notice::session_chat_screen_ends_with_shell_prompt(
+            &detection.composer.screen_tail.join("\n"),
+        );
     // Claude and Codex are the agents whose process the snapshot is known to name on every
     // platform; any other agent needs its own exit screen before its absence is believed.
     let input_box_missing = detection.captured
@@ -174,9 +195,17 @@ pub(super) async fn restart_exited_agent_before_send(
     {
         return None;
     }
+    // The agent is gone and cannot be brought back, so the ordinary gates could only hold the
+    // message behind an input box that will never come, with its spinner turning for good.
     if let Err(reason) = restart_agent_for_send(state, target, false).await {
         record(state, target, "sessionChatSendHealGaveUp", reason);
-        return None;
+        return Some(Err(DomainStateError {
+            code: "dependencyUnavailable",
+            message: crate::session_chat_send_failure::send_failure_reason(
+                "The agent in this session is not running, so the message was not sent.",
+                Some(reason),
+            ),
+        }));
     }
     Some(hold_for_restarted_agent(
         state,
@@ -232,7 +261,7 @@ pub(crate) async fn restart_agent_for_send(
     let session = resolve_session_chat_send_target(state, &params, "sendHeal")
         .map(|current| current.session)
         .map_err(|_| "the session could not be read")?;
-    if !has_conversation_to_resume(&session).await {
+    if !can_start_on_its_conversation(state, &session).await {
         return Err("the agent has no conversation to resume");
     }
     if agent_running && agent_is_busy(&session).await {
@@ -331,6 +360,31 @@ pub(crate) async fn has_conversation_to_resume(session: &Value) -> bool {
     })
     .await
     .unwrap_or(false)
+}
+
+/// Whether a restart of this session is safe: it resumes a conversation, or the wake's own rule
+/// (`agent_conversation_written`, GitHub #366) says nobody ever prompted this agent, so it starts
+/// fresh with nothing to lose. A Codex that was never prompted has no rollout to find, and calling
+/// that "no conversation to resume" left its first message stuck.
+pub(crate) async fn can_start_on_its_conversation(state: &AppState, session: &Value) -> bool {
+    if has_conversation_to_resume(session).await {
+        return true;
+    }
+    let Some(project_id) = session.get("projectId").and_then(Value::as_str) else {
+        return false;
+    };
+    let Ok(db) = open_gxserver_database(&state.paths) else {
+        return false;
+    };
+    let settings = crate::agents::read_agent_settings(&db)
+        .unwrap_or_else(|_| crate::agents::normalize_agent_settings(None));
+    let project = DomainRepository::new(&db, state.metadata.server_id.as_str())
+        .get_project(project_id)
+        .ok()
+        .flatten();
+    project.is_some_and(|project| {
+        crate::agents::agent_conversation_written(&project, session, &settings) == Some(false)
+    })
 }
 
 /// CDXC:SessionChat 2026-10-10 WHY:
@@ -433,10 +487,118 @@ pub(super) fn hold_for_restarted_agent(
     text: &str,
     image_paths: &[String],
 ) -> std::result::Result<usize, DomainStateError> {
+    hold_as_startup_send(
+        state,
+        target,
+        source,
+        text,
+        image_paths,
+        "The agent is restarting; the message will be sent as soon as it is ready.",
+    )
+}
+
+/// CDXC:Zmx 2026-11-05 DECISION:
+/// User: "a send that fails because gxserver can't reach its own tools (zmx missing and similar)
+/// stays queued and retries by itself instead of offering an agent restart". On 2026-11-05 a
+/// gxserver that could not find its bundled zmx from 22:41 to 22:44 refused a coordinator's
+/// message as a terminal that did not answer, the heal then refused to restart the coordinator,
+/// and the message was Not sent for good. A restart cannot bring zmx back and every retry the user
+/// presses fails the same way, so the message is held as a startup send instead: the queue reads
+/// the screen again on its backoff and types it the moment the session answers (the 2026-10-11
+/// DECISION in session_chat_send_wake.rs). Each outage is logged once as
+/// `sessionChatSendHeldForGxserverTools` with the paths gxserver looked in, and its end once as
+/// `sessionChatSendGxserverToolsBack`. Box sessions run their own tools and are left to the
+/// ordinary send.
+pub(super) async fn hold_while_gxserver_tools_missing(
+    state: &AppState,
+    target: &crate::session_chat_send::SessionChatSendTarget,
+    source: SessionChatMessageSource,
+    text: &str,
+    image_paths: &[String],
+) -> Option<std::result::Result<usize, DomainStateError>> {
+    if !gxserver_tools_missing(state, target).await {
+        return None;
+    }
+    Some(hold_while_tools_missing(
+        state,
+        target,
+        source,
+        text,
+        image_paths,
+    ))
+}
+
+/// [`hold_as_startup_send`] with the words for a send held until gxserver's tools are back.
+pub(super) fn hold_while_tools_missing(
+    state: &AppState,
+    target: &crate::session_chat_send::SessionChatSendTarget,
+    source: SessionChatMessageSource,
+    text: &str,
+    image_paths: &[String],
+) -> std::result::Result<usize, DomainStateError> {
+    hold_as_startup_send(
+        state,
+        target,
+        source,
+        text,
+        image_paths,
+        "Ghostex cannot reach its session tools right now; the message will be sent as soon as they are back.",
+    )
+}
+
+/// Whether sends are being held because zmx is missing, so each outage is logged once when it
+/// starts and once when zmx is back, not on every check of every held send (about every 3 s).
+static GXSERVER_TOOLS_MISSING: AtomicBool = AtomicBool::new(false);
+
+/// Whether gxserver cannot resolve its bundled zmx (after the toolchain's own short wait, on a
+/// blocking thread); logs when sends start being held for it and when it is back.
+async fn gxserver_tools_missing(
+    state: &AppState,
+    target: &crate::session_chat_send::SessionChatSendTarget,
+) -> bool {
+    if crate::agentbox::is_agentbox_session(&target.session) {
+        return false;
+    }
+    let resolved = tokio::task::spawn_blocking(crate::toolchain::require_bundled_zmx)
+        .await
+        .unwrap_or_else(|error| Err(error.to_string()));
+    match resolved {
+        Ok(_) => {
+            if GXSERVER_TOOLS_MISSING.swap(false, Ordering::Relaxed) {
+                record(
+                    state,
+                    target,
+                    "sessionChatSendGxserverToolsBack",
+                    "Bundled zmx is back; held messages are being sent.",
+                );
+            }
+            false
+        }
+        Err(reason) => {
+            if !GXSERVER_TOOLS_MISSING.swap(true, Ordering::Relaxed) {
+                record(
+                    state,
+                    target,
+                    "sessionChatSendHeldForGxserverTools",
+                    &reason,
+                );
+            }
+            true
+        }
+    }
+}
+
+fn hold_as_startup_send(
+    state: &AppState,
+    target: &crate::session_chat_send::SessionChatSendTarget,
+    source: SessionChatMessageSource,
+    text: &str,
+    image_paths: &[String],
+    held_message: &str,
+) -> std::result::Result<usize, DomainStateError> {
     let restarting = || DomainStateError {
         code: crate::session_chat_send_wake::SESSION_CHAT_SESSION_STARTING,
-        message: "The agent is restarting; the message will be sent as soon as it is ready."
-            .to_string(),
+        message: held_message.to_string(),
     };
     if source == SessionChatMessageSource::Composer
         || crate::session_chat_queue::hold_sending_prompt_for_restart(
@@ -503,8 +665,18 @@ pub(super) fn exited_agent_healer(
         };
         let text = text.clone();
         Box::pin(async move {
-            restart_agent_for_send(&state, &target, false).await.is_ok()
-                && queue_restart_startup_send(&state, &target, &text, &[]).is_ok()
+            if let Err(reason) = restart_agent_for_send(&state, &target, false).await {
+                record(&state, &target, "sessionChatSendHealGaveUp", reason);
+                let reason = crate::session_chat_send_failure::send_failure_reason(
+                    "The agent in this session stopped before it took the message.",
+                    Some(reason),
+                );
+                return crate::session_chat_send_wake::queue_failed_send(
+                    &state, &target, &text, &reason,
+                )
+                .is_ok();
+            }
+            queue_restart_startup_send(&state, &target, &text, &[]).is_ok()
         })
     })
 }

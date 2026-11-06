@@ -31,7 +31,20 @@ pub(super) fn get_ghostex_cdp_client(args: &Value, state: &mut McpState) -> CliR
             .get("webSocketDebuggerUrl")
             .and_then(Value::as_str)
             .unwrap_or("");
-        let client = CdpClient::connect(ws_url, state.options.timeout_ms)?;
+        // A page served through gxserver needs its token; CEF's own port takes none. The token goes
+        // only to gxserver's own page socket on this computer, never to an address a page list
+        // names (a list from the CEF port scan comes from whatever holds those ports).
+        let gxserver_pages = format!(
+            "ws://{}:{}/api/cefDevtools/page/",
+            crate::ghostex_cli::rpc::GXSERVER_LOCAL_API_HOST,
+            crate::ghostex_cli::rpc::local_gxserver_api_port()
+        );
+        let bearer = if ws_url.starts_with(&gxserver_pages) {
+            Some(crate::ghostex_cli::rpc::read_local_gxserver_auth_token()?)
+        } else {
+            None
+        };
+        let client = CdpClient::connect(ws_url, state.options.timeout_ms, bearer.as_deref())?;
         state.clients.insert(page_id, client);
     }
     Ok(page)
@@ -206,9 +219,67 @@ fn pick_from_own_pages<'a>(args: &Value, own_pages: &[&'a Value]) -> Option<&'a 
     None
 }
 
+/// The pages among DevTools targets, without DevTools windows.
+fn page_targets(targets: &Value) -> Vec<Value> {
+    targets
+        .as_array()
+        .map(|targets| {
+            targets
+                .iter()
+                .filter(|target| {
+                    target.get("type").and_then(Value::as_str) == Some("page")
+                        && !js_string_of(Some(&defaulted(target, "url"))).starts_with("devtools://")
+                })
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/*
+CDXC:Browser 2026-10-25 DECISION:
+User (security audit, Q11 "also move the skill off the open port"): Ghostex's pages are reached through the local gxserver with its token (server/src/server/cef_devtools.rs), and CEF's own port is closed outside development. The CEF port scan stays as the fallback for a Ghostex from before this, for an app started with a debugging port, and for an explicit --port.
+The live check (2026-10-26) found the scan taking over when this Ghostex's window was closed: the skill, pointed at one Ghostex, attached to another Ghostex that had its port open. A gxserver that answers that no app is connected (503) has the relay, so its own app is simply not running; the skill says so instead of scanning. Only a gxserver without the route, or none at all, leads to the scan.
+*/
+fn discover_pages_through_gxserver() -> Result<(Vec<Value>, u64), GxserverPagesError> {
+    let token = crate::ghostex_cli::rpc::read_local_gxserver_auth_token()
+        .map_err(|error| GxserverPagesError::Unreachable(error.to_string()))?;
+    let port = crate::ghostex_cli::rpc::local_gxserver_api_port();
+    let targets = http_json_with_bearer(
+        &format!("http://127.0.0.1:{port}/api/cefDevtools/json"),
+        &token,
+        3000,
+    )
+    .map_err(|(status, message)| match status {
+        Some(503) => GxserverPagesError::NoApp(message),
+        _ => GxserverPagesError::Unreachable(message),
+    })?;
+    Ok((page_targets(&targets), u64::from(port)))
+}
+
+/// Why gxserver could not list the pages.
+enum GxserverPagesError {
+    /// This gxserver relays pages, but no Ghostex app is connected to it.
+    NoApp(String),
+    /// No gxserver with the relay answered: an older Ghostex, or none running.
+    Unreachable(String),
+}
+
 pub(super) fn discover_ghostex_cdp_pages(
     options: &McpServerOptions,
 ) -> CliResult<(Vec<Value>, u64)> {
+    let mut gxserver_error: Option<String> = None;
+    if options.port.is_none() {
+        match discover_pages_through_gxserver() {
+            Ok(found) => return Ok(found),
+            Err(GxserverPagesError::NoApp(message)) => {
+                return Err(CliError::Other(format!(
+                    "{message} Open Ghostex, or wait for it to finish starting, then try again."
+                )));
+            }
+            Err(GxserverPagesError::Unreachable(error)) => gxserver_error = Some(error),
+        }
+    }
     let ports: Vec<u64> = match options.port {
         Some(explicit_port) => vec![explicit_port],
         None => unique_numbers(&[
@@ -229,23 +300,7 @@ pub(super) fn discover_ghostex_cdp_pages(
     let mut last_error: Option<String> = None;
     for port in &ports {
         match http_json(&format!("http://127.0.0.1:{port}/json"), 450) {
-            Ok(targets) => {
-                let pages: Vec<Value> = targets
-                    .as_array()
-                    .map(|targets| {
-                        targets
-                            .iter()
-                            .filter(|target| {
-                                target.get("type").and_then(Value::as_str) == Some("page")
-                                    && !js_string_of(Some(&defaulted(target, "url")))
-                                        .starts_with("devtools://")
-                            })
-                            .cloned()
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                return Ok((pages, *port));
-            }
+            Ok(targets) => return Ok((page_targets(&targets), *port)),
             Err(error) => {
                 last_error = Some(error);
             }
@@ -259,8 +314,11 @@ pub(super) fn discover_ghostex_cdp_pages(
     let suffix = last_error
         .map(|message| format!(": {message}"))
         .unwrap_or_default();
+    let through_gxserver = gxserver_error
+        .map(|error| format!("Could not reach Ghostex's pages through gxserver ({error}). "))
+        .unwrap_or_default();
     Err(CliError::Other(format!(
-        "Could not reach Ghostex CEF DevTools on ports {ports_text}{suffix}"
+        "{through_gxserver}Could not reach Ghostex CEF DevTools on ports {ports_text}{suffix}"
     )))
 }
 

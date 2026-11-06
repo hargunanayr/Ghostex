@@ -116,6 +116,11 @@ pub(crate) fn popup_window_surface(color: gpui::Hsla) -> gpui::Hsla {
     color
 }
 
+/// The desktop's `popup_menu_surface` (chrome_colors.rs): the sidebar menus' fill, solid on a page.
+pub(crate) fn popup_menu_surface() -> gpui::Hsla {
+    crate::app::helpers::titlebar_popup_menu_background()
+}
+
 /// A page has no window glass, so a menu keeps its solid fill.
 pub(crate) fn frosted_menu_fill(color: gpui::Hsla) -> gpui::Hsla {
     color
@@ -244,4 +249,13 @@ pub(crate) fn apply_settings_theme_colours() {
         u64::from(work_area_background_for_variant(object, light)),
         Ordering::Relaxed,
     );
+}
+/// The browser has no remote machine settings to name in a hook-install toast.
+pub(crate) fn gpui_remote_machine_name_from_settings(_machine_id: &str) -> Option<String> {
+    None
+}
+/// The browser draws no work area frame, so the sidebar toggle keeps its reserve (the desktop's
+/// `sidebar_toggle_leading_x` in helpers/work_area_frame.rs adds the frame's gutter).
+pub(crate) fn sidebar_toggle_leading_x() -> f32 {
+    crate::app::consts::SIDEBAR_TOGGLE_LEADING_X
 }

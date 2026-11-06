@@ -1,5 +1,6 @@
 //! The switches of the Sort & Filter page that are settings: Group Working Sessions, Hide Projects
-//! Without Sessions and, while the Unified sidebar is on, Group by Project and Working Section.
+//! Without Sessions, the view switch and, while the Unified sidebar is on, Group by Project and
+//! Working Section.
 //!
 //! CDXC:Sidebar 2026-10-05 WHY:
 //! The rows write the setting, not the sidebar's own state like Show Hidden and the tag filters,
@@ -17,6 +18,9 @@ use serde_json::{json, Map, Value};
 use super::plan::{ActionEffect, SidebarActionPlan};
 use super::resolve::text_field;
 use crate::sidebar_view::GROUP_WORKING_SESSIONS_SETTING_KEY;
+
+/// The row that switches between the Project and Unified sidebars.
+pub const SWITCH_SIDEBAR_VIEW_ACTION: &str = "switchSidebarView";
 
 /// The `sidebarAction` the Group Working Sessions row carries.
 pub const GROUP_WORKING_SESSIONS_ACTION: &str = "groupWorkingSessions";
@@ -48,7 +52,11 @@ const SETTING_ROWS: [(&str, &str, bool); 4] = [
         "unifiedGroupByProject",
         false,
     ),
-    (UNIFIED_WORKING_SECTION_ACTION, "unifiedWorkingSection", true),
+    (
+        UNIFIED_WORKING_SECTION_ACTION,
+        "unifiedWorkingSection",
+        true,
+    ),
 ];
 
 fn setting_row(command: &Value) -> Option<&'static (&'static str, &'static str, bool)> {
@@ -59,9 +67,14 @@ fn setting_row(command: &Value) -> Option<&'static (&'static str, &'static str, 
     SETTING_ROWS.iter().find(|row| row.0 == action)
 }
 
+fn is_switch_sidebar_view(command: &Value) -> bool {
+    text_field(command, "type") == Some("sidebarAction")
+        && text_field(command, "action") == Some(SWITCH_SIDEBAR_VIEW_ACTION)
+}
+
 /// Whether this renderer command is one of the rows.
 pub fn owns_group_working_sessions_command(command: &Value) -> bool {
-    setting_row(command).is_some()
+    setting_row(command).is_some() || is_switch_sidebar_view(command)
 }
 
 /// The patch that flips the row's setting, given the settings as saved.
@@ -69,6 +82,17 @@ pub fn plan_group_working_sessions(
     command: &Value,
     saved_settings: &Map<String, Value>,
 ) -> Option<SidebarActionPlan> {
+    // The one row whose setting is a choice: `sidebarView`, which Settings > Sidebar picks too.
+    if is_switch_sidebar_view(command) {
+        let unified = saved_settings.get("sidebarView").and_then(Value::as_str) == Some("unified");
+        return Some(SidebarActionPlan::one(ActionEffect::UpdateSettingsPatch {
+            message: json!({
+                "type": "updateSettingsPatch",
+                "source": format!("sidebar:{SWITCH_SIDEBAR_VIEW_ACTION}"),
+                "patch": { "sidebarView": if unified { "project" } else { "unified" } },
+            }),
+        }));
+    }
     let (action, key, default) = setting_row(command)?;
     let on = saved_settings
         .get(*key)
@@ -121,6 +145,28 @@ mod tests {
                 json!({"unifiedWorkingSection": false})
             ),
             json!({"unifiedWorkingSection": true})
+        );
+    }
+
+    #[test]
+    fn the_view_switch_goes_to_the_other_view_from_either_one() {
+        assert_eq!(
+            patch(SWITCH_SIDEBAR_VIEW_ACTION, json!({})),
+            json!({"sidebarView": "unified"})
+        );
+        assert_eq!(
+            patch(
+                SWITCH_SIDEBAR_VIEW_ACTION,
+                json!({"sidebarView": "project"})
+            ),
+            json!({"sidebarView": "unified"})
+        );
+        assert_eq!(
+            patch(
+                SWITCH_SIDEBAR_VIEW_ACTION,
+                json!({"sidebarView": "unified"})
+            ),
+            json!({"sidebarView": "project"})
         );
     }
 

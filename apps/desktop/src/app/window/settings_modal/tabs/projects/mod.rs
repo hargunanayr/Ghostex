@@ -5,6 +5,8 @@
 //! view settings (views.rs).
 //!
 //! CDXC:Projects 2026-06-19-12:11 SEE-ALSO: the page edits selected-project metadata only and never offers project deletion.
+mod cloud_box;
+mod cloud_box_setup;
 mod picker;
 mod views;
 mod work_mode;
@@ -247,6 +249,8 @@ pub(crate) struct ProjectsTab {
     work: work_mode::ProjectWorkModeState,
     /// The projects' own orchestrator playbooks and their editor.
     orchestrator_playbook: super::orchestrator_playbook::OrchestratorPlaybookState,
+    /// The selected project's Cloud box section (cloud_box.rs).
+    cloud_box: cloud_box::ProjectCloudBoxState,
 }
 
 impl ProjectsTab {
@@ -289,6 +293,7 @@ impl ProjectsTab {
             preview_applied: false,
             work: work_mode::ProjectWorkModeState::default(),
             orchestrator_playbook: Default::default(),
+            cloud_box: Default::default(),
         };
         if open_instructions {
             let project_id = Some(page.selected_project_id.clone()).filter(|id| !id.is_empty());
@@ -678,6 +683,35 @@ impl Render for ProjectsTab {
                     store.update(cx, |store, cx| store.set_active_tab(tab, cx));
                 },
             )));
+        }
+
+        // SEE-ALSO: apps/desktop/src/app/remote_conn/clone_job_and_preview.rs hands this folder to the Add Project dialog as This machine's start folder.
+        if should_show_section(&search.section("newProjects"), None) {
+            let input = self.setting_input(
+                &p,
+                "defaultProjectsFolder",
+                &values.string("defaultProjectsFolder"),
+                "~/dev",
+                None,
+                None,
+                window,
+                cx,
+            );
+            let row = plain_row(
+                &p,
+                &SharedString::from("default-projects-folder"),
+                "Default projects folder",
+                Some(
+                    "Add Project's New project folder makes new projects here, and Local folder starts here. Left blank, Add Project suggests the folder that holds the selected project (else ~/dev) and saves the folder your first new project is made in.",
+                ),
+                None,
+                true,
+                input,
+                cx,
+            );
+            if let Some(section) = settings_section(&p, "New projects", None, None, vec![row]) {
+                blocks.push(PageBlock::section("newProjects", section));
+            }
         }
 
         // CDXC:Docs 2026-06-30-11:42 SEE-ALSO: the Docs folders list is a global Projects setting above the selector, comma-separated project-relative folders, in a card titled after the view it controls.
@@ -1171,6 +1205,7 @@ impl ProjectsTab {
         if let Some(section) = settings_section(p, "Project", None, None, rows) {
             blocks.push(PageBlock::section("projectSettings", section));
         }
+        blocks.extend(self.cloud_box_blocks(p, project, window, cx));
 
         // `ProjectViewSettings`, keyed by `${projectId}:${view.id}`: a new project starts fresh drafts.
         let views = source_views(custom_views);

@@ -155,6 +155,20 @@ pub(crate) fn ingest_agent_hook_event(
         }));
     }
     let hook_activity = normalize_agent_hook_event_activity(params);
+    // The agent's own hook, or the hook-free observer posting the same event for it.
+    let _identity_source = crate::session_identity_log::identity_write_source(format!(
+        "{}:{}",
+        if params
+            .get(crate::hookless_activity::OBSERVER_MARK)
+            .and_then(Value::as_bool)
+            == Some(true)
+        {
+            "hooklessObserver"
+        } else {
+            "hook"
+        },
+        read_text(params, "eventName").unwrap_or_else(|| "unknown".to_string())
+    ));
     let observed_identity = resolve_session_identity(&IdentityInput {
         agent_id: None,
         agent_name: read_text(params, "agentName"),
@@ -476,7 +490,8 @@ guide pointer rides the SessionStart hook: this endpoint answers the ingest with
 and the hook prints it for zcode to fold into context. Only a ZCode SessionStart on a session with
 a coordinators row, of a thread, or any ZCode SessionStart while Marked handovers is on (its note
 follows the pointer; agents/marked_handovers.rs), is answered, so every other hook response stays
-unchanged. Since 2026-10-17 a new coordinator takes its role from the `ghostex-orchestrator` skill
+unchanged. Every ZCode SessionStart also gets the Ghostex note while Tell agents about Ghostex is on
+(agents/ghostex_note.rs). Since 2026-10-17 a new coordinator takes its role from the `ghostex-orchestrator` skill
 (coordinators/role.rs), so only coordinators made before then get the pointer; every coordinator
 still gets the Marked handovers note unless coordinators answer without markers.
 */
@@ -516,8 +531,11 @@ fn coordinator_session_start_context(
     };
     let legacy_coordinator =
         coordinator && !crate::coordinators::coordinator_role_is_skill(session);
+    let note = super::ghostex_note_enabled(&paths)
+        .then(|| super::ghostex_note_text(super::agent_preview_browser(&paths)));
     let parts = [
         legacy_coordinator.then_some(crate::coordinators::GUIDE_POINTER_COORDINATOR_INSTRUCTIONS),
+        note.as_deref(),
         marked.then_some(super::MARKED_HANDOVERS_NOTE),
     ];
     let context = parts.into_iter().flatten().collect::<Vec<_>>().join("\n\n");

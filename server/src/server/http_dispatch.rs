@@ -28,6 +28,19 @@ pub(super) async fn handle_http_request(
     let mut routed = route_http(state.clone(), request, request_id).await;
     apply_cors_headers(&headers, &mut routed.response, &state.config);
     let status = routed.response.status().as_u16();
+    let mut details = json!({
+        "method": "http",
+        "route": routed.endpoint_path,
+        "statusCode": status,
+    });
+    if let Some(size) = routed.response.extensions().get::<BodySizeLimit>() {
+        details["requestBytes"] = json!(size.size_bytes);
+        details["limitBytes"] = json!(size.limit_bytes);
+    }
+    if let Some(size) = routed.response.extensions().get::<ImageSizeLimit>() {
+        details["imageBytes"] = json!(size.size_bytes);
+        details["imageLimitBytes"] = json!(size.limit_bytes);
+    }
     let _ = state.logger.log_routine(
         DiagnosticLogScenario::ApiRequests,
         GxserverLogInput {
@@ -45,11 +58,7 @@ pub(super) async fn handle_http_request(
                 .map(|reason| format!("{}: {}", reason.code, reason.message)),
             // The API route under `route`: the log sanitizer redacts every `path` field as a file path,
             // which hid which endpoint was failing.
-            details: Some(json!({
-                "method": "http",
-                "route": routed.endpoint_path,
-                "statusCode": status,
-            })),
+            details: Some(details),
         },
     );
     // CDXC:ServerApi 2026-10-23 DECISION:
@@ -105,7 +114,12 @@ where
     };
     let server_id = state.metadata.server_id.as_str();
     let repository = DomainRepository::new(&db, server_id);
-    match handler(&repository, &db, &params, server_id) {
+    // Names the endpoint in any `sessionIdentity.changed` line its handler causes.
+    let identity_source =
+        crate::session_identity_log::identity_write_source(format!("endpoint:{endpoint_path}"));
+    let outcome = handler(&repository, &db, &params, server_id);
+    drop(identity_source);
+    match outcome {
         Ok(result) => routed_json(
             Some(endpoint_path),
             StatusCode::OK,

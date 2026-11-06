@@ -112,6 +112,7 @@ impl GhostexGpuiApp {
                 | TitlebarMode::BotFeed
                 | TitlebarMode::GhostOverview
                 | TitlebarMode::Changes
+                | TitlebarMode::SideChat
                 | TitlebarMode::Work
                 | TitlebarMode::Extension(_) => ShellFocusTarget::ProjectEditorSurface(mode),
             };
@@ -178,6 +179,7 @@ impl GhostexGpuiApp {
             | TitlebarMode::BotFeed
             | TitlebarMode::GhostOverview
             | TitlebarMode::Changes
+            | TitlebarMode::SideChat
             | TitlebarMode::Work
             | TitlebarMode::Extension(_) => ShellFocusTarget::ProjectEditorSurface(mode),
             TitlebarMode::Agents | TitlebarMode::Terminal => return false,
@@ -352,7 +354,7 @@ impl GhostexGpuiApp {
                     .find_leaf(pane_id)
                     .and_then(|leaf| leaf.tab_group.active_session_id())
                 {
-                    self.close_agents_tab(pane_id, session_id, cx);
+                    self.close_agents_tab(pane_id, session_id, "tabShortcut", cx);
                 }
             }
             FocusedSurfaceCloseDecision::CloseViewTab(mode) => {

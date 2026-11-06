@@ -128,6 +128,7 @@ impl ProjectEditorSleepingPlaceholderSignature {
             | TitlebarMode::BotFeed
             | TitlebarMode::GhostOverview
             | TitlebarMode::Changes
+            | TitlebarMode::SideChat
             | TitlebarMode::Work => return None,
         };
 

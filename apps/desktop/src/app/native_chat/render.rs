@@ -28,6 +28,7 @@ impl NativeChatView {
         };
         if crate::terminal_element::grid_resize_held()
             || self.session_details.motion.frame().animating
+            || self.board.motion.frame().animating
         {
             self.held_text_width = self
                 .settled_text_width
@@ -82,6 +83,7 @@ impl NativeChatView {
 impl Render for NativeChatView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         super::scroll_bottom::register(cx);
+        super::tray_hotkeys::register(cx);
         super::search::register(cx);
         super::zoom::register(cx);
         self.last_render = Some(web_time::Instant::now());
@@ -101,17 +103,18 @@ impl Render for NativeChatView {
         // Docked, floating or none: decided before anything measures the transcript's width, and
         // before the hold below reads whether the docked column is sliding.
         self.sync_session_details(&p, window, cx);
+        self.sync_coordinator_board(&p, window, cx);
         self.hold_text_width_while_sliding(&p);
         self.sync_search_scroll();
         self.sync_files_links_jump();
         self.sync_open_question_jump(window);
-        self.sync_question_ping(window, cx);
         // A card above the composer that is opening or closing needs the next frame; the
         // transcript's rows ask for theirs as they are drawn.
         if self.disclosure_motion.borrow().running() {
             window.request_animation_frame();
         }
         self.sync_disclosure_anchor(window);
+        self.sync_transcript_focus_anchor(window, cx);
         /*
         CDXC:SessionChat 2026-09-18 WHY:
         React's maximized composer is a fixed overlay across the whole chat pane, so nothing of the
@@ -197,6 +200,10 @@ impl Render for NativeChatView {
         let subagent_viewer = self.render_subagent_viewer(&p, window, cx);
         let edit_menu = self.edit_menu(window, cx);
         let session_details_dock = self.render_session_details_dock(&p, window, cx);
+        // A coordinator's board docks between the chat and Session details (coordinator_board.rs).
+        let board_dock = self.render_coordinator_board_dock(&p, cx);
+        // A side chat says whose it is, with Bring back and Delete (side_chats.rs).
+        let side_chat_bar = self.side_chat_bar(&p, cx);
         let pane_bounds = self.session_details_pane_bounds();
         let chat = div()
             .id("native-session-chat")
@@ -232,6 +239,7 @@ impl Render for NativeChatView {
                 },
             ))
             .capture_action(cx.listener(Self::scroll_bottom_action))
+            .capture_action(cx.listener(Self::tray_hotkey_action))
             .capture_action(cx.listener(Self::open_search_action))
             .capture_action(cx.listener(Self::chat_zoom_in_action))
             .capture_action(cx.listener(Self::chat_zoom_out_action))
@@ -283,6 +291,7 @@ impl Render for NativeChatView {
                     )
                 },
             )
+            .children(side_chat_bar)
             // The search bar is a sibling region above the list, never an overlay on it.
             .when_some(search_bar, |this, bar| this.child(bar))
             // The transcript (or the welcome that stands in for an empty one), carrying the fork
@@ -338,6 +347,7 @@ impl Render for NativeChatView {
             .min_h_0()
             .flex()
             .child(chat)
+            .children(board_dock)
             .children(session_details_dock)
             .child(
                 gpui::canvas(move |rect, _, _| pane_bounds.set(rect), |_, _, _, _| {})

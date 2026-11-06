@@ -121,6 +121,7 @@ pub(crate) fn focused_surface_close_decision(
             | TitlebarMode::BotFeed
             | TitlebarMode::GhostOverview
             | TitlebarMode::Changes
+            | TitlebarMode::SideChat
             | TitlebarMode::Work
             | TitlebarMode::Extension(_) => FocusedSurfaceCloseDecision::NoOp,
         },

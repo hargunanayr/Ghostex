@@ -71,6 +71,17 @@ pub(super) async fn route_chat_http(
             )
             .await
         }
+        "/api/readDictateSettings"
+        | "/api/setDictateSettings"
+        | "/api/readDictateEngine"
+        | "/api/listSpeechModels"
+        | "/api/downloadSpeechModel"
+        | "/api/cancelSpeechModelDownload"
+        | "/api/deleteSpeechModel"
+        | "/api/skipDictationPolish" => {
+            crate::voice_agent::handle_dictate_http(&state, endpoint.path, request_id, &body_json)
+                .await
+        }
         "/api/setVoiceAgentKey" => {
             crate::voice_agent::handle_set_voice_agent_key_http(
                 &state,
@@ -211,13 +222,32 @@ pub(super) async fn route_chat_http(
             )
             .await
         }
-        "/api/handoffSessionChatDraft" => {
-            handle_handoff_session_chat_draft_http(&state, endpoint.path, request_id, &body_json)
+        "/api/handoffSessionChatDraft" | "/api/replaceSessionChatDraft" => {
+            let mut response = if endpoint.path == "/api/handoffSessionChatDraft" {
+                handle_handoff_session_chat_draft_http(
+                    &state,
+                    endpoint.path,
+                    request_id.clone(),
+                    &body_json,
+                )
                 .await
-        }
-        "/api/replaceSessionChatDraft" => {
-            handle_replace_session_chat_draft_http(&state, endpoint.path, request_id, &body_json)
+            } else {
+                handle_replace_session_chat_draft_http(
+                    &state,
+                    endpoint.path,
+                    request_id.clone(),
+                    &body_json,
+                )
                 .await
+            };
+            crate::session_chat_send_diagnostics::record_response(
+                &state,
+                &request_id,
+                &body_json,
+                &mut response,
+            )
+            .await;
+            response
         }
         "/api/takeBackSessionChatQueuedMessage" => {
             crate::session_chat_send::handle_take_back_session_chat_queued_message_http(
@@ -353,6 +383,15 @@ pub(super) async fn route_chat_http(
         "/api/exportSessionTranscript" => {
             handle_export_session_transcript_http(&state, endpoint.path, request_id, &body_json)
                 .await
+        }
+        "/api/countSessionTranscriptTurns" => {
+            crate::session_transcript_export::handle_count_session_transcript_turns_http(
+                &state,
+                endpoint.path,
+                request_id,
+                &body_json,
+            )
+            .await
         }
         "/api/readSessionTranscriptSizes" => {
             handle_read_session_transcript_sizes_http(&state, endpoint.path, request_id, &body_json)

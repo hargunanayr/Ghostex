@@ -1,4 +1,5 @@
-//! The pills on the working card (working_card.rs) and the floating menu each one opens. Always
+//! The pills on the working card (working_card.rs) and the floating menu each one opens (Tasks
+//! opens the Session details panel instead wherever that panel can show, session_details/). Always
 //! leftmost, two icon pills: "Scroll to bottom" and "Previous question". Then Threads, Tasks,
 //! Subagents and Background, whose labels, counts and order come from the core (`chatPills`,
 //! packages/gx-chat-core/src/extras/chat_pills.rs, where the user's decision lives); this opens the
@@ -10,7 +11,6 @@
 //! The phone draws the same pills and menus in apps/mobile/app/src/chat/native/cards/ChatPills.tsx.
 
 use super::{appearance::ChatAppearance, state::NativeChatView, transcript::text};
-use crate::app::helpers::ThrottledAnimationExt as _;
 use crate::app::native_chat::cursor::ChatCursor as _;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
@@ -19,7 +19,7 @@ use gpui::{
     px, rgb, svg,
 };
 use serde_json::{Value, json};
-use std::{cell::Cell, rc::Rc, time::Duration};
+use std::{cell::Cell, rc::Rc};
 
 /// A menu's header line, the gap between its sections and its footer line ("N more"), unscaled.
 pub(super) const MENU_HEADER_HEIGHT: f32 = 24.0;
@@ -39,11 +39,6 @@ pub(super) fn waiting_color(waiting: &str) -> Option<gpui::Hsla> {
     }
 }
 
-/// The corner dot's offsets from a pill's padding box: inside its edge, in the top right corner,
-/// so the pills' scroller never cuts it.
-pub(super) const CORNER_DOT_TOP: f32 = 1.0;
-pub(super) const CORNER_DOT_RIGHT: f32 = 2.0;
-
 /// Each pill's frame at its last paint, which its menu opens against.
 #[derive(Default)]
 pub(super) struct ChatPillBounds {
@@ -51,93 +46,82 @@ pub(super) struct ChatPillBounds {
     tasks: Rc<Cell<Bounds<Pixels>>>,
     subagents: Rc<Cell<Bounds<Pixels>>>,
     background: Rc<Cell<Bounds<Pixels>>>,
+    side_chats: Rc<Cell<Bounds<Pixels>>>,
+    /// The Board pill (coordinator_board.rs), which its floating card opens against.
+    board: Rc<Cell<Bounds<Pixels>>>,
     /// The Resources pill, which the question list (questions_list.rs) opens against.
     resources: Rc<Cell<Bounds<Pixels>>>,
     /// The Links pill (links_pill.rs), which the session's links list lines up with.
     pub(super) links: Rc<Cell<Bounds<Pixels>>>,
+    /// The Saved draft pill (saved_draft_pill.rs), which its menu opens against.
+    pub(super) saved_draft: Rc<Cell<Bounds<Pixels>>>,
+    /// The Approvals pill (relayed_approval.rs), which its menu of thread cards opens against.
+    approvals: Rc<Cell<Bounds<Pixels>>>,
 }
 
 impl ChatPillBounds {
-    fn cell(&self, id: &str) -> Rc<Cell<Bounds<Pixels>>> {
+    pub(super) fn cell(&self, id: &str) -> Rc<Cell<Bounds<Pixels>>> {
         match id {
             "threads" => self.threads.clone(),
             "tasks" => self.tasks.clone(),
             "background" => self.background.clone(),
+            SIDE_CHATS_PILL => self.side_chats.clone(),
+            super::coordinator_board::BOARD_MENU => self.board.clone(),
             super::questions_list::QUESTIONS_MENU => self.resources.clone(),
+            super::saved_draft_pill::SAVED_DRAFT_MENU => self.saved_draft.clone(),
+            super::relayed_approval::APPROVALS_MENU => self.approvals.clone(),
             _ => self.subagents.clone(),
         }
     }
 }
 
-/// The amber dot in a pill's top right corner, the one shape for the ? pill's waiting questions
-/// (question_ping.rs) and a running pill (`running_dot`), so the two cannot drift apart again.
-pub(super) fn corner_dot(s: f32) -> gpui::Div {
-    tinted_corner_dot(s, rgb(ATTENTION_COLOR).into())
+/// A status dot's colour (gx-chat-core `PillDot::tone`): the sidebar's question pink, its approval
+/// red (also Blocked), and its working amber.
+pub(super) fn pill_dot_color(tone: &str) -> gpui::Hsla {
+    rgb(match tone {
+        "question" => crate::app::native_sidebar::status::QUESTION_COLOR,
+        "approval" | "blocked" => crate::app::native_sidebar::status::APPROVAL_COLOR,
+        _ => crate::app::native_sidebar::status::WORKING_COLOR,
+    })
+    .into()
 }
 
-fn tinted_corner_dot(s: f32, color: gpui::Hsla) -> gpui::Div {
-    let dot = super::scroll_bottom::question_ping_dot();
-    div()
-        .absolute()
-        .top(px(CORNER_DOT_TOP * s))
-        .right(px(CORNER_DOT_RIGHT * s))
-        .size(px(dot * s))
-        .rounded_full()
-        .bg(color)
-}
-
-/// A pill's corner (gx-chat-core extras/chat_pills.rs, CDXC:SessionChat 2026-10-27): the pulsing
-/// amber dot while something runs, the sidebar's red or pink dot while something waits on the
-/// user, and both overlapping with the sidebar's 1px ring (`sized_overlapped_dots`) when both
-/// hold, the waiting one in front. `ring` is what the pill sits on.
-fn corner_indicator(pill: &Value, s: f32, ring: gpui::Hsla) -> Option<AnyElement> {
-    let running = pill["running"] == true;
-    let waiting = waiting_color(&text(pill, "waiting"));
-    match (running, waiting) {
-        (true, None) => Some(running_dot(s)),
-        (false, Some(color)) => Some(tinted_corner_dot(s, color).into_any_element()),
-        (true, Some(color)) => Some(
-            // The ring sits outside each dot, so the stack starts one ring further out and the
-            // front dot lands where the single dot does.
+/// A pill's status, inside it after its label: each tone's dot followed by its count, in tabular
+/// figures so the pill keeps its width as counts change (gx-chat-core extras/chat_pills.rs
+/// `pill_dots`, where the user's decision lives). No pill draws a corner dot.
+pub(super) fn inline_dots(dots: &[(gpui::Hsla, String)], p: &ChatAppearance) -> gpui::Div {
+    let s = p.scale;
+    let mut row = div().flex().items_center().gap(px(5.0 * s));
+    for (color, count) in dots {
+        row = row.child(
             div()
-                .absolute()
-                .top(px((CORNER_DOT_TOP - 1.0) * s))
-                .right(px((CORNER_DOT_RIGHT - 1.0) * s))
-                .child(crate::app::native_sidebar::status::sized_overlapped_dots(
-                    vec![rgb(ATTENTION_COLOR).into(), color],
-                    super::scroll_bottom::question_ping_dot(),
-                    s,
-                    ring,
-                    None,
-                ))
-                .into_any_element(),
-        ),
-        (false, None) => None,
+                .flex()
+                .items_center()
+                .gap(px(3.0 * s))
+                .child(
+                    div()
+                        .size(px(6.0 * s))
+                        .rounded_full()
+                        .flex_shrink_0()
+                        .bg(*color),
+                )
+                .child(
+                    div()
+                        .text_color(p.foreground)
+                        .font_features(FontFeatures(vec![("tnum".into(), 1)].into()))
+                        .child(count.clone()),
+                ),
+        );
     }
+    row
 }
 
-/// A running pill's corner dot (`running`, extras/chat_pills.rs, where the user's decision lives).
-/// It fades on the 1.6 s beat of the Subagents menu's running dot (agent_fleet.rs), and stays still
-/// with Reduce motion on.
-fn running_dot(s: f32) -> AnyElement {
-    let dot = corner_dot(s);
-    if crate::app::helpers::gpui_macos_reduce_motion_enabled() {
-        return dot.into_any_element();
-    }
-    dot.with_throttled_animation(
-        "chat-pill-running-dot",
-        Duration::from_millis(1600),
-        |dot, phase| {
-            let progress = if phase < 0.5 {
-                phase * 2.0
-            } else {
-                (1.0 - phase) * 2.0
-            };
-            dot.opacity(1.0 - 0.65 * progress)
-        },
-    )
-    .into_any_element()
-}
+/// The Stashed pill's id (gx-chat-core extras/chat_pills.rs `stashed_pill`): it opens Saved Prompts
+/// rather than a menu of its own.
+const STASHED_PILL: &str = "stashed";
+
+/// The Side chats pill's id (gx-chat-core extras/side_chats.rs); its menu is side_chats.rs.
+const SIDE_CHATS_PILL: &str = ghostex_gx_chat_core::extras::side_chats::SIDE_CHATS_PILL;
 
 /// The menu-toggle key of a pill (menu_toggle.rs).
 fn trigger_id(id: &str) -> &'static str {
@@ -145,9 +129,13 @@ fn trigger_id(id: &str) -> &'static str {
         "threads" => "chat-pill-threads",
         "tasks" => "chat-pill-tasks",
         "background" => "chat-pill-background",
+        SIDE_CHATS_PILL => "chat-pill-side-chats",
+        super::coordinator_board::BOARD_MENU => super::coordinator_board::BOARD_TRIGGER,
         // The Resources pill opens the question list.
         super::questions_list::QUESTIONS_MENU => super::questions_list::QUESTIONS_TRIGGER,
         super::resource_modal::RESOURCE_MODAL_MENU => super::resource_modal::RESOURCE_MODAL_TRIGGER,
+        super::saved_draft_pill::SAVED_DRAFT_MENU => super::saved_draft_pill::SAVED_DRAFT_TRIGGER,
+        super::relayed_approval::APPROVALS_MENU => super::relayed_approval::APPROVALS_TRIGGER,
         _ => "chat-pill-subagents",
     }
 }
@@ -155,9 +143,14 @@ fn trigger_id(id: &str) -> &'static str {
 fn icon(id: &str) -> &'static str {
     match id {
         "threads" => "titlebar/users-group.svg",
+        super::coordinator_board::BOARD_MENU => "titlebar/layout-board-split.svg",
         "resources" => "titlebar/stack.svg",
+        // The More actions row's own icon for Stash prompt (actions.rs).
+        STASHED_PILL => "titlebar/stack-push.svg",
         "tasks" => "titlebar/list-check.svg",
         "background" => "titlebar/terminal-2.svg",
+        SIDE_CHATS_PILL => "titlebar/messages.svg",
+        super::relayed_approval::APPROVALS_MENU => "titlebar/shield-check.svg",
         _ => "titlebar/users.svg",
     }
 }
@@ -165,8 +158,13 @@ fn icon(id: &str) -> &'static str {
 fn menu_width(id: &str) -> f32 {
     match id {
         "tasks" => 360.0,
+        super::coordinator_board::BOARD_MENU => super::coordinator_board::BOARD_WIDTH,
         super::questions_list::QUESTIONS_MENU => super::questions_list::QUESTIONS_MENU_WIDTH,
         super::resource_modal::RESOURCE_MODAL_MENU => super::resource_modal::RESOURCE_MODAL_WIDTH,
+        super::saved_draft_pill::SAVED_DRAFT_MENU => {
+            super::saved_draft_pill::SAVED_DRAFT_MENU_WIDTH
+        }
+        super::relayed_approval::APPROVALS_MENU => super::relayed_approval::APPROVALS_MENU_WIDTH,
         _ => 440.0,
     }
 }
@@ -184,6 +182,7 @@ fn panel_menu_height(id: &str, snapshot: &Value) -> Option<f32> {
             "backgroundTasksPanel",
             super::background_tasks::background_menu_height,
         ),
+        SIDE_CHATS_PILL => ("sideChatsPanel", super::side_chats::side_chats_menu_height),
         _ => return None,
     };
     let panel = &snapshot[key];
@@ -307,36 +306,49 @@ impl NativeChatView {
     ) -> Option<AnyElement> {
         let open = &self.snapshot["openQuestions"];
         self.open_question_pill_text()?;
-        let color = p.card_muted;
+        let s = p.scale;
         let label = text(open, "accessibilityLabel");
-        let content = if self.question_ping.showing_count() {
-            div()
-                .text_size(px(11.5 * p.scale))
-                .line_height(px(16.0 * p.scale))
-                .font_features(FontFeatures(vec![("tnum".into(), 1)].into()))
-                .text_color(color)
-                .child(open["count"].as_u64().unwrap_or(0).to_string())
-                .into_any_element()
-        } else {
-            pill_glyph("titlebar/question-mark.svg", color, p.scale)
-        };
+        let count = open["count"].as_u64().unwrap_or(0);
+        // The ? and, while questions wait, the pink dot and their count inside the pill, as every
+        // pill flags (`inline_dots`).
         Some(
-            icon_pill("chat-previous-question", content, p)
-                .relative()
+            div()
+                .id("chat-previous-question")
+                .tab_index(0)
+                .role(gpui::Role::Button)
                 .aria_label(label)
+                .flex()
+                .items_center()
+                .flex_shrink_0()
+                .gap(px(5.0 * s))
+                .px(px(7.0 * s))
+                .py(px(2.0 * s))
+                .rounded_full()
+                .border(px(s))
                 .border_color(p.foreground.opacity(0.1))
+                .text_size(px(11.5 * s))
+                .line_height(px(16.0 * s))
+                .whitespace_nowrap()
+                .chat_cursor_pointer()
+                .focus_visible(|style| style.border_color(p.ring))
                 .hover(|style| style.bg(p.foreground.opacity(0.06)))
-                .on_hover(cx.listener(|chat, hovered: &bool, _, cx| {
-                    chat.question_pill_hovered(*hovered, cx)
-                }))
+                .child(
+                    div()
+                        .h(px(16.0 * s))
+                        .flex()
+                        .items_center()
+                        .child(pill_glyph("titlebar/question-mark.svg", p.card_muted, s)),
+                )
+                .when(count > 0, |pill| {
+                    pill.child(inline_dots(
+                        &[(pill_dot_color("question"), count.to_string())],
+                        p,
+                    ))
+                })
                 .on_click(cx.listener(|chat, _, _, cx| {
                     cx.stop_propagation();
                     chat.previous_question(cx)
                 }))
-                .children(super::question_ping::attention_dot(
-                    self.question_ping_frame(),
-                    p,
-                ))
                 .into_any_element(),
         )
     }
@@ -390,13 +402,26 @@ impl NativeChatView {
         let s = p.scale;
         let id = text(pill, "id");
         let trigger = trigger_id(&id);
-        let open = self.chat_menu_is_open(trigger);
+        let board = id == super::coordinator_board::BOARD_MENU;
+        let open = self.chat_menu_is_open(trigger)
+            || (board
+                && (self.coordinator_board_docked()
+                    || self.chat_menu_is_open(super::coordinator_board::BOARD_COLUMNS_TRIGGER)));
         let bounds = self.pill_bounds.cell(&id);
         let measured = bounds.clone();
-        let count = text(pill, "count");
-        // Two overlapping corner dots reach half a dot further in than one, so the pill makes that
-        // room on its right instead of drawing over its count.
-        let stacked = pill["running"] == true && waiting_color(&text(pill, "waiting")).is_some();
+        // What the pill flags, inside it after its label; with any, they stand in for its count.
+        let dots: Vec<(gpui::Hsla, String)> = pill["dots"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|dot| (pill_dot_color(&text(dot, "tone")), text(dot, "count")))
+            .collect();
+        let count = if dots.is_empty() {
+            text(pill, "count")
+        } else {
+            String::new()
+        };
+        let dots = (!dots.is_empty()).then(|| inline_dots(&dots, p));
         div()
             .id(trigger)
             .relative()
@@ -408,11 +433,6 @@ impl NativeChatView {
             .flex_shrink_0()
             .gap(px(5.0 * s))
             .px(px(8.0 * s))
-            .when(stacked, |pill| {
-                pill.pr(px(
-                    (8.0 + super::scroll_bottom::question_ping_dot() / 2.0) * s
-                ))
-            })
             .py(px(2.0 * s))
             .rounded_full()
             .border(px(s))
@@ -424,7 +444,6 @@ impl NativeChatView {
             .chat_cursor_pointer()
             .when(open, |pill| pill.bg(p.foreground.opacity(0.08)))
             .hover(|style| style.bg(p.foreground.opacity(0.06)))
-            .children(corner_indicator(pill, s, p.composer_background))
             .child(
                 svg()
                     .path(icon(&id))
@@ -433,6 +452,7 @@ impl NativeChatView {
                     .text_color(p.card_muted),
             )
             .child(text(pill, "label"))
+            .children(dots)
             .when(!count.is_empty(), |pill| {
                 pill.child(
                     div()
@@ -443,6 +463,18 @@ impl NativeChatView {
             })
             .on_click(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
+                if id == "tasks" && this.show_session_details_for_tasks(cx) {
+                    return;
+                }
+                if id == STASHED_PILL {
+                    // The list the Stash prompt row opens from an empty chat box (toolbar.rs).
+                    this.host("stashedPrompts", json!({}), cx);
+                    return;
+                }
+                if id == super::coordinator_board::BOARD_MENU {
+                    this.toggle_coordinator_board(bounds.get(), window, cx);
+                    return;
+                }
                 this.toggle_pill_menu(&id, bounds.get(), window, cx);
                 if id == super::questions_list::QUESTIONS_MENU && this.chat_menu_is_open(trigger) {
                     this.keep_question_ages_current(cx);
@@ -502,8 +534,20 @@ impl NativeChatView {
         if id == super::questions_list::QUESTIONS_MENU {
             return self.questions_menu_height();
         }
+        if id == super::coordinator_board::BOARD_MENU {
+            return self.coordinator_board_menu_height();
+        }
+        if id == super::coordinator_board::BOARD_COLUMNS_MENU {
+            return self.board_columns_height();
+        }
         if id == super::resource_modal::RESOURCE_MODAL_MENU {
             return self.resource_modal_height();
+        }
+        if id == super::saved_draft_pill::SAVED_DRAFT_MENU {
+            return self.saved_draft_menu_height();
+        }
+        if id == super::relayed_approval::APPROVALS_MENU {
+            return self.approvals_menu_height();
         }
         if id == "filesLinks" {
             let scale = ChatAppearance::current(&self.snapshot).scale;
@@ -531,8 +575,13 @@ impl NativeChatView {
             "tasks" => self.tasks_menu_body(p, cx),
             "subagents" => self.fleet_menu_body(p, cx),
             "background" => self.background_menu_body(p),
+            SIDE_CHATS_PILL => self.side_chats_menu_body(p, cx),
             super::questions_list::QUESTIONS_MENU => self.questions_menu_body(p, window, cx),
             super::resource_modal::RESOURCE_MODAL_MENU => self.resource_modal_body(p, window, cx),
+            super::saved_draft_pill::SAVED_DRAFT_MENU => self.saved_draft_menu_body(p, cx),
+            super::relayed_approval::APPROVALS_MENU => self.approvals_menu_body(p, cx),
+            super::coordinator_board::BOARD_MENU => self.coordinator_board_menu_body(p, cx),
+            super::coordinator_board::BOARD_COLUMNS_MENU => self.board_columns_body(p, cx),
             super::session_details::SESSION_DETAILS_MENU => {
                 self.session_details_menu_body(p, window, cx)
             }

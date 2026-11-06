@@ -90,12 +90,12 @@ fn login(args: &[String]) -> CliResult<Option<Value>> {
         .ok_or_else(|| failure("The home directory is unavailable."))?;
     let claude = helpers::executable(&home, "claude")
         .ok_or_else(|| failure("Install Claude Code first."))?;
-    let cswap =
-        helpers::executable(&home, "cswap").ok_or_else(|| failure("Install claude-swap first."))?;
+    let cswap = helpers::executable(&home, "cswap")
+        .ok_or_else(|| failure("Install Claude Swap in Settings > Accounts first."))?;
     println!("Reading saved Claude accounts...");
     let roster = helpers::json_command(&home, "cswap", &["list", "--json"]).map_err(failure)?;
     let rows = roster["accounts"].as_array().ok_or_else(|| {
-        failure("cswap returned no account list. Update claude-swap and try again.")
+        failure("Claude Swap didn't list your accounts. Update it in Settings > Accounts and try again.")
     })?;
     let target = account
         .map(|slot| {
@@ -184,7 +184,7 @@ fn login(args: &[String]) -> CliResult<Option<Value>> {
     let latest_roster =
         helpers::json_command(&home, "cswap", &["list", "--json"]).map_err(failure)?;
     let latest_rows = latest_roster["accounts"].as_array().ok_or_else(|| {
-        failure("cswap's account list could not be checked. No saved account was changed.")
+        failure("Your accounts could not be checked, so no saved account was changed.")
     })?;
     if let Some(target) = target {
         let still_selected = latest_rows
@@ -204,17 +204,17 @@ fn login(args: &[String]) -> CliResult<Option<Value>> {
         .command(&cswap)
         .arg("add")
         .status()
-        .map_err(|e| failure(format!("Could not save the login with cswap: {e}")))?;
+        .map_err(|e| failure(format!("Could not save the login: {e}")))?;
     // A new account is saved once cswap lists it, even when cswap then exits with an error;
     // a reconnect only refreshes an existing slot, so there the exit status is the only proof.
     if !status.success() && target.is_some() {
         return Err(failure(
-            "cswap could not save this login. Check the message above and try again.",
+            "Claude Swap could not save this login. Check the message above and try again.",
         ));
     }
     let saved_roster = read_saved_roster(&home)?;
     let saved_rows = saved_roster["accounts"].as_array().ok_or_else(|| {
-        failure("cswap returned no account list. Update claude-swap and try again.")
+        failure("Claude Swap didn't list your accounts. Update it in Settings > Accounts and try again.")
     })?;
     let saved = saved_row(
         latest_rows,
@@ -227,7 +227,7 @@ fn login(args: &[String]) -> CliResult<Option<Value>> {
         failure(if status.success() {
             "cswap saved the login, but its account list does not show it. Refresh Accounts and try again."
         } else {
-            "cswap could not save this login. Check the message above and try again."
+            "Claude Swap could not save this login. Check the message above and try again."
         })
     })?;
     let report = serde_json::json!({"schemaVersion":1,"account":{"number":saved["number"],"email":saved["email"]}});

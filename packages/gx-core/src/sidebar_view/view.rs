@@ -207,6 +207,24 @@ pub struct GroupCore {
     /// The machine's stream is down while its rows are still held, so the group draws faded and
     /// its terminal rows are not interactive. Never set for this computer's groups.
     pub is_stale: bool,
+    /// The machines that have this project, for a project the one-list sidebar merged from more
+    /// than one machine or took from another machine (`merged.rs`); empty for a project only this
+    /// computer has, and in Separate by machine.
+    pub machine_names: Vec<MachineChip>,
+    /// Where New Terminal, Create Agent and the header's ⋯ actions run when that is not this
+    /// group's own project: the project on the machine a session of this repository last
+    /// started on (`merged.rs`).
+    pub action_target: Option<GroupActionTarget>,
+}
+
+/// The project a merged group's creating actions go to (`GroupCore::action_target`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GroupActionTarget {
+    /// That project's own sidebar group id.
+    pub group_id: String,
+    pub project_context: ProjectContextView,
+    /// Its machine, when that is not this computer.
+    pub remote_machine: Option<RemoteMachineView>,
 }
 
 /// What a project row draws besides its sessions.
@@ -222,6 +240,10 @@ pub struct ProjectContextView {
     /// read the same here, because the one reader (the project menu's Copy Remote URL) tests it
     /// for truthiness.
     pub git_remote_origin_url: Option<String>,
+    /// The daemon's project probe found the project's folder in a git work tree (it published an
+    /// origin, `null` for none, or a repository root). `false` for a plain folder, and also for a
+    /// project the probe has not reached yet (the first minutes after its gxserver starts).
+    pub git_work_tree: bool,
     /// The Hermes profile this project is the bot of; absent for every ordinary project.
     pub bot_profile: Option<String>,
     /// Whether that bot's Hermes gateway runs (the row's dot); false for every ordinary project.
@@ -232,6 +254,9 @@ pub struct ProjectContextView {
     /// Issues Workflow's Linear parts are on (a Linear key applies), so a project whose tracker is
     /// Linear offers Create Linear ticket and Link to offers Linear issues and projects.
     pub work_linear: bool,
+    /// Create Linear Ticket is offered: the workspace picked Linear, or a project or workspace
+    /// Linear key applies (not only the shared key).
+    pub work_linear_create: bool,
     /// Issues Workflow's GitHub parts are on (`gh` is signed in), so Link to offers pull requests.
     pub work_pull_requests: bool,
     /// The GitHub parts are on and the workspace's primary tracker is GitHub (issues and GitHub
@@ -364,7 +389,8 @@ pub struct FoldedStatus {
 
 impl FoldedStatus {
     pub(crate) fn add(&mut self, row: &SessionRow) {
-        if row.awaiting_approval {
+        // A thread that is not moving is the same red: it needs someone to look.
+        if row.awaiting_approval || row.stuck {
             self.approval = true;
             return;
         }
@@ -507,6 +533,14 @@ pub enum NeedsYou {
     Attention,
 }
 
+/// One computer's pill: its short name, with its full name for the tooltip
+/// (`machine_short_names.rs`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MachineChip {
+    pub name: String,
+    pub short_name: String,
+}
+
 /// One session (or browser tab) as a sidebar row.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SessionRow {
@@ -541,12 +575,20 @@ pub struct SessionRow {
     /// only the user can grant; drawn as the red approval dot ahead of every other status
     /// (CDXC:SessionStatus 2026-10-27 in server/src/session_approval.rs).
     pub awaiting_approval: bool,
+    /// gxserver's `stuckSince`: working with no output for long enough to count as stuck; drawn as
+    /// the red dot until it moves again (CDXC:Coordinators 2026-11-05 in
+    /// server/src/coordinators/stall.rs).
+    pub stuck: bool,
     pub agent_icon: Option<String>,
     /// `terminal`, `browser`, or whatever else a newer daemon publishes.
     pub session_kind: Option<String>,
     /// The sidebar's own lifecycle vocabulary: `running`, `sleeping`, `error`, `done`.
     pub lifecycle_state: String,
     pub is_pinned: bool,
+    /// gxserver's `sidebarOrder`: the manual place the Project sidebar gives the row among its
+    /// project's rows (and the order of its Pinned), which the Unified sidebar's pinned cards
+    /// follow too (unified_sidebar/build.rs). `None` when the row has none.
+    pub sidebar_order: Option<i64>,
     pub is_parked: bool,
     pub is_draft: bool,
     pub is_favorite: bool,
@@ -573,12 +615,29 @@ pub struct SessionRow {
     pub menu_facts: SessionMenuFacts,
     /// The session is a coordinator (it starts and supervises thread sessions).
     pub is_coordinator: bool,
-    /// The coordinator this session is a thread of, on the same machine.
+    /// The coordinator this session is a thread of: on the same machine, or (for a thread a
+    /// coordinator started on another computer) the coordinator's machine.
     pub coordinator_parent: Option<SessionKey>,
     /// A thread's state: `waiting`, `working`, `finished`, `sleeping`, `closed` or `done`.
     pub thread_state: Option<String>,
+    /// A coordinator's threads on other computers, which the list nests under it from those
+    /// computers' own rows.
+    pub coordinator_remote_threads:
+        Vec<ghostex_gx_protocol::presentation::PresentationRemoteThread>,
+    /// The name of the computer a coordinator's thread runs on, for a thread drawn under a
+    /// coordinator on another computer (`remote_thread_rows`): the row's badge.
+    pub computer_name: Option<String>,
+    /// The machine a session of a project the one-list sidebar merged runs on, when that is not
+    /// this computer (`merged.rs`): the row's machine badge. Unlike `computer_name` it says
+    /// nothing about coordinators.
+    pub machine_name: Option<String>,
+    /// That machine's short name (`machine_short_names.rs`), which the badge draws.
+    pub machine_short_name: Option<String>,
     /// The agentbox box the session's agent runs in, when it does not run on its machine.
     pub agentbox: Option<crate::agentbox::SessionAgentbox>,
+    /// The Cloud Box the session runs on (its ☁ badge and state dot), or the box a draft's tray
+    /// picked; the registry's state wins over what the box last published (`cloud_boxes.rs`).
+    pub cloud_box: Option<crate::cloud_boxes::SessionCloudBoxBadge>,
     /// The Claude cloud session this row stands for, when its agent runs on claude.ai.
     pub claude_cloud: Option<ghostex_gx_protocol::presentation::PresentationClaudeCloud>,
     /// What the session is linked to; present only for a session of a project with work mode on
@@ -647,6 +706,18 @@ pub struct SessionTiming {
 }
 
 impl SessionRow {
+    /// A coordinator's thread on another computer, drawn in the coordinator's computer's list
+    /// under it (`remote_thread_rows`).
+    ///
+    /// CDXC:RemoteMachines 2026-11-04 WHY:
+    /// The thread's own computer lists it too, so a reader that takes each computer's list as that computer's sessions (the Running Agents panel, the Unified sidebar, Quick Access) leaves this copy out. Without that the Running Agents panel listed a thread running on Windows under the Mac's project, with Windows at "No running agents", and the Unified sidebar drew it twice, once without its computer's name.
+    pub fn is_borrowed_thread(&self) -> bool {
+        matches!(
+            (&self.key, &self.coordinator_parent),
+            (Some(key), Some(parent)) if key.machine != parent.machine
+        )
+    }
+
     /// The compact countdown a row draws instead of its relative time, at the host's clock.
     pub fn timer_label(&self, now_ms: u64) -> Option<String> {
         timer_trailing_label(self, now_ms)

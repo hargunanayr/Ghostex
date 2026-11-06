@@ -31,8 +31,10 @@ pub(crate) async fn restart(
     state: &AppState,
     params: &Map<String, Value>,
 ) -> Result<(), DomainStateError> {
-    if let Some(fixed) = fix_refused_send(state, params).await {
-        return fixed;
+    if let Some(answered) =
+        crate::session_chat_send_failure::answer_card_action(state, params).await
+    {
+        return answered;
     }
     match params.get("actionId").and_then(Value::as_str) {
         Some(SESSION_CHAT_NOTICE_ACTION_SIGN_IN) => return sign_in(state, params).await,
@@ -194,46 +196,6 @@ async fn restart_on_opencode2(
     crate::session_chat_queue_runtime::cycle_session(state, &target.project_id, &target.session_id)
         .await
         .map_err(|reason| invalid(format!("Ghostex could not restart this session: {reason}.")))
-}
-
-/// Fix it on the card a failed send recovery left (session_chat_queue_runtime/send_heal.rs): the
-/// user asked for the restart the recovery would not risk on its own, so it runs without the
-/// idle and once-in-ten-minutes checks. `None` when the session shows no such card.
-async fn fix_refused_send(
-    state: &AppState,
-    params: &Map<String, Value>,
-) -> Option<Result<(), DomainStateError>> {
-    let target = resolve_session_chat_send_target(state, params, "fixSend").ok()?;
-    let notice = crate::session_chat_notice::session_chat_watchdog_notice(
-        &target.project_id,
-        &target.session_id,
-    )?;
-    if !notice
-        .actions
-        .iter()
-        .any(|action| action.id == crate::session_chat_notice::SESSION_CHAT_NOTICE_ACTION_FIX_SEND)
-    {
-        return None;
-    }
-    let restarted = crate::session_chat_queue_runtime::cycle_session(
-        state,
-        &target.project_id,
-        &target.session_id,
-    )
-    .await
-    .map_err(|reason| invalid(format!("Ghostex could not fix this session: {reason}.")));
-    if restarted.is_ok() {
-        crate::session_chat_notice::clear_session_chat_watchdog_notice(
-            &target.project_id,
-            &target.session_id,
-        );
-        crate::session_chat_options::session_chat_terminal_notice_publisher(
-            state,
-            &target.project_id,
-            &target.session_id,
-        )();
-    }
-    Some(restarted)
 }
 
 /// Sign in on the card of an agent that could not start because its account has no saved login
@@ -475,12 +437,7 @@ pub(crate) async fn reload(
     crate::session_chat_queue_runtime::cycle_session(state, &project_id, &session_id)
         .await
         .map_err(|reason| invalid(format!("Ghostex could not reload this session: {reason}.")))?;
-    crate::session_chat_notice::clear_session_chat_watchdog_notice(&project_id, &session_id);
-    crate::session_chat_options::session_chat_terminal_notice_publisher(
-        state,
-        &project_id,
-        &session_id,
-    )();
+    note_agent_restarted(state, &project_id, &session_id);
     crate::session_chat_send_diagnostics::record_send_recovery(
         state,
         "sessionAgentReloaded",
@@ -502,6 +459,15 @@ pub(crate) async fn reload(
     }))
 }
 
+/// After a reload or a self-heal restart (session_self_heal.rs): the chat drops the old agent's
+/// watchdog notice and shows the new terminal's state.
+pub(crate) fn note_agent_restarted(state: &AppState, project_id: &str, session_id: &str) {
+    crate::session_chat_notice::clear_session_chat_watchdog_notice(project_id, session_id);
+    crate::session_chat_options::session_chat_terminal_notice_publisher(
+        state, project_id, session_id,
+    )();
+}
+
 async fn read_session(
     state: &AppState,
     project_id: &str,
@@ -518,4 +484,55 @@ async fn read_session(
     })
     .await
     .map_err(|error| invalid(error.to_string()))?
+}
+
+/// How long [`restart_when_idle`] waits for the agent to finish a turn that started while its update ran.
+const RESTART_WHEN_IDLE_WAIT: Duration = Duration::from_secs(30 * 60);
+
+/// Restarts a running session's agent on its own conversation (the sleep and wake above) once it has no
+/// turn, question or compaction going, and never on a session whose background work a restart would end.
+/// `agent` names the agent in the reasons it gives back; `source` labels the send-target read.
+///
+/// CDXC:AgentProviders 2026-10-14 DECISION:
+/// User (Q74): only restart when there is a conversation to resume and the session is still running; never wake a session the user put to sleep or closed while the update ran. Both are read again on every check, right before the restart.
+/// CDXC:Updates 2026-11-05 WHY: Codex's "Update now" (session_chat_codex_update.rs) and Settings > Updates (updates/install.rs, the user's Q1363 "restart when idle") restart sessions onto a new CLI the same way, so the loop lives here.
+pub(crate) async fn restart_when_idle(
+    state: &AppState,
+    project_id: &str,
+    session_id: &str,
+    agent: &str,
+    source: &'static str,
+) -> Result<(), String> {
+    let mut params = Map::new();
+    params.insert("projectId".to_string(), json!(project_id));
+    params.insert("sessionId".to_string(), json!(session_id));
+    let started = Instant::now();
+    loop {
+        let target = resolve_session_chat_send_target(state, &params, source)
+            .map_err(|_| "the session was closed".to_string())?;
+        if target.session["lifecycleState"].as_str() != Some("running") {
+            return Err(
+                "the session was put to sleep or stopped, so Ghostex left it that way".to_string(),
+            );
+        }
+        if !crate::session_chat_queue_runtime::has_conversation_to_resume(&target.session).await {
+            return Err(format!(
+                "this session has no conversation yet for {agent} to come back to"
+            ));
+        }
+        if let Some(reason) =
+            crate::session_chat_queue_runtime::work_a_restart_would_end(state, &target).await
+        {
+            return Err(reason.to_string());
+        }
+        if !crate::session_chat_queue_runtime::agent_is_busy(&target.session).await {
+            return crate::session_chat_queue_runtime::cycle_session(state, project_id, session_id)
+                .await
+                .map_err(|reason| reason.to_string());
+        }
+        if started.elapsed() > RESTART_WHEN_IDLE_WAIT {
+            return Err(format!("{agent} stayed busy for 30 minutes"));
+        }
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
 }

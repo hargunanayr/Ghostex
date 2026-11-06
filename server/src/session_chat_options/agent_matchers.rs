@@ -217,6 +217,7 @@ fn codex_footer_model(segment: &str) -> Option<(String, String, std::str::Split<
 /// names no effort, so none is reported and the model's own default stands.
 const CODEX_DEFAULT_EFFORT_WORD: &str = "default";
 
+/// CDXC:AgentScreenDetection 2026-11-02 WHY: Newer Codex prints "Fast" with a capital F ("GPT-6.1-Sol xhigh Fast"); an exact lowercase match dropped the whole segment, so the model and effort were lost and a pending Fast or model change blocked the queue. Effort and default words get the same case-insensitive reading so their casing cannot discard the model either.
 pub(super) fn match_codex_segment(segment: &str) -> Option<SessionChatDetectedSelection> {
     let (model, label, mut tokens) = codex_footer_model(segment)?;
     let mut selection = SessionChatDetectedSelection {
@@ -228,17 +229,22 @@ pub(super) fn match_codex_segment(segment: &str) -> Option<SessionChatDetectedSe
         ..SessionChatDetectedSelection::default()
     };
     let mut next = tokens.next();
-    if let Some(effort) = next.filter(|token| CODEX_EFFORTS.contains(token)) {
+    if let Some(effort) = next.and_then(|token| {
+        CODEX_EFFORTS
+            .iter()
+            .copied()
+            .find(|effort| token.eq_ignore_ascii_case(effort))
+    }) {
         selection.effort = Some(SessionChatDetectedChoice {
             value: effort.to_string(),
             label: effort.to_string(),
             source: SessionChatOptionEvidence::Terminal,
         });
         next = tokens.next();
-    } else if next == Some(CODEX_DEFAULT_EFFORT_WORD) {
+    } else if next.is_some_and(|token| token.eq_ignore_ascii_case(CODEX_DEFAULT_EFFORT_WORD)) {
         next = tokens.next();
     }
-    if next == Some("fast") {
+    if next.is_some_and(|token| token.eq_ignore_ascii_case("fast")) {
         selection.fast = Some(true);
         next = tokens.next();
     }
@@ -548,7 +554,15 @@ pub(crate) fn match_cursor_statusline(line: &str) -> Option<SessionChatDetectedS
     if segments.len() < 3 || !is_cursor_usage_segment(segments.last()?) {
         return None;
     }
-    let combined = segments.get(segments.len() - 2)?.trim();
+    // CDXC:AgentScreenDetection 2026-11-05 WHY: Cursor ends some names with zero-width spaces
+    // ("Grok 4.7  High Fast\u{200b}\u{200b}", as `--list-models` prints them), which hid the " Fast"
+    // and effort suffixes, so the whole name became the model and was pinned as `--model` (#422).
+    let combined: String = segments
+        .get(segments.len() - 2)?
+        .chars()
+        .filter(|ch| !matches!(ch, '\u{200b}'..='\u{200d}' | '\u{feff}'))
+        .collect();
+    let combined = combined.trim();
     if combined.is_empty() || combined == "\u{2014}" {
         return None;
     }

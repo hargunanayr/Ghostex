@@ -20,6 +20,7 @@ pub enum Parser {
     SaveCommand,
     SaveAgent,
     SessionSelector,
+    ExportTranscript,
     Group,
     Project,
     ProjectMove,

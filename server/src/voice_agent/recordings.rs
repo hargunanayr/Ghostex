@@ -10,7 +10,7 @@
 //! `<gxserver state>/voice-agent/dictations/`. Recordings stay until the user deletes them.
 //!
 //! CDXC:VoiceMode 2026-10-20 DECISION:
-//! User: "i want that we never lose what the user was trying to transcribe please, if dictation fails we need to say so and allow the user to transcribe what we had recorded so far (we need to keep that voice recording basically)" and "we can't fail the dictation due to any issues with api or connection. please fully separate recording the audio from sending it to the api and getting transcription, they are not related". Recording and transcribing are two steps; a cancelled or dismissed recording is kept ("even if he cancels it we need to save so user can hover over the voice button and click Transcribe previous"), and every recording is listed in Settings > Voice agent's Dictation history until the user deletes it.
+//! User: "i want that we never lose what the user was trying to transcribe please, if dictation fails we need to say so and allow the user to transcribe what we had recorded so far (we need to keep that voice recording basically)" and "we can't fail the dictation due to any issues with api or connection. please fully separate recording the audio from sending it to the api and getting transcription, they are not related". Recording and transcribing are two steps; a cancelled or dismissed recording is kept ("even if he cancels it we need to save so user can hover over the voice button and click Transcribe previous"), and every recording is listed in Settings > Voice's Dictation history until the user deletes it.
 //! CDXC:VoiceMode 2026-10-20 SEE-ALSO:
 //! `transcribe.rs` (xAI's batch speech-to-text), `recordings_http.rs` (the API), the desktop's `apps/desktop/src/app/voice_agent/recorder.rs` and `dictation.rs`, the phone's `src/voice/dictation.ts` and `GhostexVoiceRecorder.kt`.
 
@@ -32,6 +32,8 @@ pub(super) enum Status {
     /// Uploaded; nobody asked for its text yet.
     Recorded,
     Transcribing,
+    /// Transcribed and cleaned (`text` holds that); AI polish is running.
+    Polishing,
     Transcribed,
     Failed,
     /// Cancelled while recording or while transcribing; Recover transcribes it.
@@ -73,6 +75,15 @@ pub(super) struct Recording {
     /// The recognizer's language hint the client sent ("en"), reused by Transcribe again.
     #[serde(default)]
     pub(super) language: Option<String>,
+    /// The recognizer's own words, before the dictionary, filler removal and polish.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) raw_text: Option<String>,
+    /// What made the text: `{engine, label}` (`speech/dictate.rs`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) engine: Option<Value>,
+    /// What became of AI polish: `{status, message?}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) polish: Option<Value>,
     pub(super) updated_at: i64,
 }
 
@@ -87,6 +98,9 @@ impl Recording {
             "client": self.client,
             "status": self.status,
             "text": self.text,
+            "rawText": self.raw_text,
+            "engine": self.engine,
+            "polish": self.polish,
             "error": self.error,
             "format": audio_format(&self.audio_file),
             "bytes": self.audio_bytes,
@@ -319,6 +333,9 @@ pub(super) fn save_piece(paths: &GxserverPaths, piece: Piece<'_>) -> Result<Save
         text: None,
         error: None,
         language: finished.language,
+        raw_text: None,
+        engine: None,
+        polish: None,
         updated_at: now,
     };
     write(paths, &recording)?;
@@ -387,6 +404,17 @@ pub(super) fn ensure_recovered(paths: &GxserverPaths) {
 /// week.
 fn recover_after_restart(paths: &GxserverPaths) {
     for recording in list(paths) {
+        if recording.status == Status::Polishing {
+            // The cleaned text is already saved; only the polish was lost.
+            let _ = update(paths, &recording.id, |recording| {
+                recording.status = Status::Transcribed;
+                recording.polish = Some(json!({
+                    "status": "failed",
+                    "message": "Ghostex restarted while the text was being polished.",
+                }));
+            });
+            continue;
+        }
         if recording.status == Status::Transcribing {
             let _ = update(paths, &recording.id, |recording| {
                 recording.status = Status::Failed;

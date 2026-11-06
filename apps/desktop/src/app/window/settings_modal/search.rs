@@ -1,6 +1,6 @@
 //! Settings search, ported from packages/settings-catalog/src/pages/: the same Fuse.js fuzzy
 //! match (7.3.0, `threshold: 0.24`, `ignoreLocation`, keys title/subtitle/options), the same
-//! section, group and page results, and the same Show Advanced visibility rules.
+//! section, group and page results (a row's hidden `keywords` match like its title), and the same Show Advanced visibility rules.
 //!
 //! Only whether a row matches matters to Settings (never the ranking), and Fuse includes a row
 //! when any one of its keys matches, so this ports Fuse's Bitap matcher and its per-key
@@ -186,11 +186,20 @@ impl SectionSearch {
     }
 }
 
-fn fuse_item_matches(pattern: &BitapPattern, fields: &[&str], options: &[String]) -> bool {
+fn fuse_item_matches(
+    pattern: &BitapPattern,
+    fields: &[&str],
+    options: &[String],
+    keywords: &[String],
+) -> bool {
     fields
         .iter()
         .filter(|field| !js_trim(field).is_empty())
         .any(|field| pattern.matches(field))
+        || keywords
+            .iter()
+            .filter(|keyword| !js_trim(keyword).is_empty())
+            .any(|keyword| pattern.matches(keyword))
         || options
             .iter()
             .filter(|option| !js_trim(option).is_empty())
@@ -213,7 +222,7 @@ pub(crate) fn section_search(
         };
     }
     let pattern = BitapPattern::new(trimmed);
-    let section_matches = fuse_item_matches(&pattern, &[section_title], &[]);
+    let section_matches = fuse_item_matches(&pattern, &[section_title], &[], &[]);
     let visible_keys = rows
         .iter()
         .filter(|row| {
@@ -222,7 +231,12 @@ pub(crate) fn section_search(
                 .iter()
                 .flat_map(|option| [option.label.clone(), option.value.clone()])
                 .collect();
-            fuse_item_matches(&pattern, &[&row.title, &row.subtitle], &options)
+            fuse_item_matches(
+                &pattern,
+                &[&row.title, &row.subtitle],
+                &options,
+                &row.keywords,
+            )
         })
         .map(|row| row.key.clone())
         .collect();
@@ -345,7 +359,7 @@ impl TabSearch {
 
 /// `getExtraSettingsTabSearch(query, tab, debuggingMode)`.
 /// `hidden_keys` are rows a search leaves out on every page (a built-in extension's rows while it
-/// is off, such as the voice agent's call rows on Settings > Voice agent).
+/// is off, such as the voice agent's call rows on Settings > Voice).
 pub(crate) fn extra_tab_search(
     query: &str,
     tab: &str,
@@ -615,4 +629,45 @@ pub(crate) fn general_group_of(scroll_target: &str) -> String {
         .and_then(serde_json::Value::as_str)
         .unwrap_or(scroll_target)
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn finds_row(query: &str, section: &str, key: &str) -> bool {
+        GeneralSearch::new(query, true, Vec::new()).setting_visible(section, key)
+    }
+
+    #[test]
+    fn the_monospace_font_is_found_by_its_name_and_its_old_one() {
+        for query in ["monospace", "monospace font", "font family", "ghostty font"] {
+            assert!(finds_row(query, "theming", "terminalFontFamily"), "{query}");
+        }
+    }
+
+    #[test]
+    fn the_moved_chat_rows_are_found_on_the_interface_page() {
+        assert!(finds_row(
+            "text strength",
+            "theming",
+            "sessionChatTextStrengthPercent"
+        ));
+        assert!(finds_row("chat zoom", "theming", "sessionChatZoomPercent"));
+        assert!(finds_row(
+            "thinking in grey",
+            "theming",
+            "sessionChatMutedThinking"
+        ));
+    }
+
+    #[test]
+    fn the_interface_page_is_found_by_its_new_name_and_its_old_one() {
+        for query in ["interface", "theme"] {
+            assert!(
+                GeneralSearch::new(query, true, Vec::new()).subsection_visible("theming", true),
+                "{query}"
+            );
+        }
+    }
 }

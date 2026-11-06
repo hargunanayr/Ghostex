@@ -197,6 +197,20 @@ pub struct Submission {
     pub send_request_id: Option<String>,
     /// Interrupt and send: gxserver stops the agent's running turn and sends this one now.
     pub interrupt: bool,
+    /// A sleeping Cloud Box refused the draft push, so the box never saved this revision and the
+    /// send that wakes it goes without one (`session/cloud_box.rs`).
+    pub draft_unsaved: bool,
+    /// The words the reader typed when `text` is what they became: the one-click answers envelope
+    /// a message of typed answers goes as (`questions::inline_answers::typed_answers`). A send that
+    /// did not leave gives these back to the chat box.
+    pub typed: Option<String>,
+}
+
+impl Submission {
+    /// The text a send that did not leave gives back to the chat box.
+    pub fn typed_text(&self) -> &str {
+        self.typed.as_deref().unwrap_or(&self.text)
+    }
 }
 
 /// A submission whose send or queue call failed, kept so pressing Enter again on the same text

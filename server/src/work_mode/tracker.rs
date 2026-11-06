@@ -1,5 +1,6 @@
 //! Which tracker a workspace's projects use for tickets and projects: Linear (tickets and Linear
-//! projects) or GitHub (issues and GitHub Projects). Every caller asks `project_work_tracker` (or
+//! projects), GitHub (issues and GitHub Projects), or the workspace's ticket command (its tickets,
+//! picked only on this computer and never in a team workspace). Every caller asks `project_work_tracker` (or
 //! `workspace_work_tracker`); the presentation projection reads the answer the background pass
 //! remembered (`cached_project_work_tracker`).
 //!
@@ -26,7 +27,7 @@ use serde_json::{json, Map, Value};
 use crate::paths::GxserverPaths;
 use crate::workspaces::{project_workspace_id, workspace_exists, DEFAULT_WORKSPACE_ID};
 
-use super::{linear_api_key, WorkSourceId};
+use super::{linear_api_key, workspace_command, WorkSourceId};
 
 /// How long a team's choice read from Convex is trusted before the background pass reads it again.
 const TEAM_TRACKER_TTL: Duration = Duration::from_secs(5 * 60);
@@ -116,7 +117,10 @@ pub(crate) fn refresh_team_work_tracker(paths: &GxserverPaths, workspace_id: &st
         return false;
     }
     if let Ok(flow) = crate::team_sync::read_team_flow(paths, &workspace_params(workspace_id)) {
-        remember_team_work_tracker(workspace_id, WorkSourceId::from_wire(flow.get("tracker")));
+        remember_team_work_tracker(
+            workspace_id,
+            WorkSourceId::from_wire_built_in(flow.get("tracker")),
+        );
     }
     true
 }
@@ -127,7 +131,9 @@ pub(crate) fn workspace_params(workspace_id: &str) -> Map<String, Value> {
     params
 }
 
-/// The tracker a workspace picked on this computer (the workspaces document), if any.
+/// The tracker a workspace picked on this computer (the workspaces document), if any: Linear,
+/// GitHub, or a ticket command's id this computer knows. Whether that command still applies is
+/// the caller's to check (`workspace_work_tracker`).
 pub(crate) fn stored_workspace_work_tracker(
     workspaces: &Value,
     workspace_id: &str,
@@ -155,7 +161,9 @@ pub(crate) fn workspace_work_tracker(
     if let Some(tracker) = cached_team_work_tracker(workspace_id) {
         return (tracker, WorkTrackerSource::Team);
     }
-    if let Some(tracker) = stored_workspace_work_tracker(workspaces, workspace_id) {
+    if let Some(tracker) = stored_workspace_work_tracker(workspaces, workspace_id)
+        .filter(|tracker| command_tracker_applies(paths, workspace_id, *tracker))
+    {
         return (tracker, WorkTrackerSource::Workspace);
     }
     let tracker = if linear_api_key(paths, None, Some(workspace_id)).is_some() {
@@ -164,6 +172,21 @@ pub(crate) fn workspace_work_tracker(
         WorkSourceId::Github
     };
     (tracker, WorkTrackerSource::Default)
+}
+
+/// Whether a stored `tracker` applies: Linear and GitHub always do; a ticket command only while
+/// the workspace pins it and has no team (a team's command is stopped), so a command that was
+/// cleared or that a team join stopped leaves the workspace on the rule for one never picked.
+fn command_tracker_applies(
+    paths: &GxserverPaths,
+    workspace_id: &str,
+    tracker: WorkSourceId,
+) -> bool {
+    let WorkSourceId::Command(id) = tracker else {
+        return true;
+    };
+    !crate::team_sync::workspace_has_team(paths, workspace_id)
+        && workspace_command(workspace_id).is_some_and(|command| command.source_id == id.as_str())
 }
 
 /// Which tracker a project uses: its workspace's (a worktree project follows its parent checkout).
@@ -177,6 +200,44 @@ pub(crate) fn project_work_tracker(
 ) -> WorkSourceId {
     let workspace_id = project_workspace_id(workspaces, project, projects);
     workspace_work_tracker(paths, workspaces, &workspace_id).0
+}
+
+/// Whether the workspace explicitly picked Linear as its tracker (the team's choice, else this
+/// computer's), as opposed to Linear being the default for a never-picked workspace.
+pub(crate) fn workspace_picked_linear(workspaces: &Value, workspace_id: &str) -> bool {
+    let workspace_id = if workspace_exists(workspaces, workspace_id) {
+        workspace_id
+    } else {
+        DEFAULT_WORKSPACE_ID
+    };
+    cached_team_work_tracker(workspace_id)
+        .or_else(|| stored_workspace_work_tracker(workspaces, workspace_id))
+        == Some(WorkSourceId::Linear)
+}
+
+/// The projects that may offer Create Linear Ticket, as the background pass found them.
+///
+/// CDXC:WorkMode 2026-11-05 DECISION:
+/// User: "why do i see create linear ticket fam???" in a project with no Linear set up. The shared Linear key alone applies to every project, so it no longer shows the item: the workspace must have picked Linear as its tracker, or a key of the project's or its workspace's own must apply. Nothing else changes (the default tracker, the Work list and Link to read Linear as before). A set empty until the first pass, so the item never flashes at startup.
+fn linear_create_projects() -> &'static Mutex<std::collections::HashSet<String>> {
+    static CACHE: OnceLock<Mutex<std::collections::HashSet<String>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(std::collections::HashSet::new()))
+}
+
+pub(crate) fn remember_project_linear_create(project_id: &str, applies: bool) {
+    if let Ok(mut cache) = linear_create_projects().lock() {
+        if applies {
+            cache.insert(project_id.to_string());
+        } else {
+            cache.remove(project_id);
+        }
+    }
+}
+
+pub(crate) fn project_linear_create(project_id: &str) -> bool {
+    linear_create_projects()
+        .lock()
+        .is_ok_and(|cache| cache.contains(project_id))
 }
 
 pub(crate) fn remember_project_work_tracker(project_id: &str, tracker: WorkSourceId) {
@@ -199,5 +260,40 @@ pub(crate) fn cached_project_work_tracker(project_id: &str) -> WorkSourceId {
         WorkSourceId::Linear
     } else {
         WorkSourceId::Github
+    }
+}
+
+#[cfg(test)]
+mod linear_create_tests {
+    use super::*;
+
+    #[test]
+    fn only_an_explicit_linear_pick_counts_as_picked() {
+        let doc = |tracker: Option<&str>| {
+            let mut workspace = json!({});
+            if let Some(tracker) = tracker {
+                workspace["tracker"] = json!(tracker);
+            }
+            json!({ "workspaces": { "w-linear-create-test": workspace } })
+        };
+        assert!(workspace_picked_linear(
+            &doc(Some("linear")),
+            "w-linear-create-test"
+        ));
+        assert!(!workspace_picked_linear(
+            &doc(Some("github")),
+            "w-linear-create-test"
+        ));
+        assert!(!workspace_picked_linear(&doc(None), "w-linear-create-test"));
+    }
+
+    #[test]
+    fn create_linear_ticket_is_off_until_the_pass_allows_it() {
+        let id = "linear-create-test-project";
+        assert!(!project_linear_create(id));
+        remember_project_linear_create(id, true);
+        assert!(project_linear_create(id));
+        remember_project_linear_create(id, false);
+        assert!(!project_linear_create(id));
     }
 }

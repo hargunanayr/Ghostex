@@ -148,7 +148,14 @@ pub(crate) fn gpui_migrated_hotkey_for_action<'a>(
 /// The chat box answers this chord itself, in its own key context, so it also works while you type
 /// and never reaches terminals (`ghostexChatHotkeyActionId` in the shared catalog).
 pub(crate) fn gpui_chat_owned_hotkey_action_id(action_id: &str) -> bool {
-    matches!(action_id, "scrollChatToBottom")
+    matches!(
+        action_id,
+        "scrollChatToBottom"
+            | "newChatPickProject"
+            | "newChatPickComputer"
+            | "newChatPickWhere"
+            | "newChatPickBranch"
+    )
 }
 
 /// Hotkeys the Files view answers itself while it has focus (`native_docs/render.rs`), so the root
@@ -305,12 +312,17 @@ pub(crate) const GPUI_DEFAULT_GHOSTEX_HOTKEYS: &[(&str, &str)] = &[
     ("toggleChatSummaryMode", "ctrl+alt+s"),
     ("toggleChatComposerMaximized", "ctrl+alt+m"),
     ("toggleChatFilesLinks", "ctrl+alt+l"),
+    ("newChatPickProject", "alt+o"),
+    ("newChatPickComputer", "alt+m"),
+    ("newChatPickWhere", "alt+w"),
+    ("newChatPickBranch", "alt+b"),
     ("toggleVoiceAgent", "ctrl+alt+v"),
     // No default key (CDXC:VoiceMode 2026-10-23 DECISION in packages/settings-catalog/src/hotkey_definitions.rs).
     ("voiceCallAboutSession", ""),
     // No default key (CDXC:VoiceMode 2026-10-24 DECISION in packages/settings-catalog/src/hotkey_definitions.rs).
     ("holdToTalk", ""),
-    ("toggleDictation", "ctrl+alt+d"),
+    // Option+Ctrl+Space since 2026-11-05 (packages/settings-catalog/src/hotkey_definitions.rs).
+    ("toggleDictation", "ctrl+alt+space"),
     // Read aloud's two hotkeys have no default key (packages/settings-catalog/src/hotkey_definitions.rs).
     ("readAloudLastReply", ""),
     ("readAloudStop", ""),

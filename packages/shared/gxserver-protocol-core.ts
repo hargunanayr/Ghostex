@@ -147,10 +147,17 @@ export type GxserverEndpointPath =
    * commands the Cloud Boxes page runs (server/src/agentbox/endpoint.rs).
    */
   | '/api/agentbox'
+  /**
+   * CDXC:CloudBoxes 2026-11-02 SEE-ALSO:
+   * Cloud Boxes: providers, connect, the box registry, create/resume/stop/delete, snapshots, spend
+   * and the cap (server/src/cloud_boxes/, contract in gxserver-protocol-cloud-boxes.ts).
+   */
+  | '/api/cloudBoxes'
   | '/api/agentAccounts'
   | '/api/readAgentResumePlan'
   | '/api/requestSessionRename'
   | '/api/generateSessionTitle'
+  | '/api/previewSessionTitle'
   | '/api/cancelFirstPromptAutoTitle'
   | '/api/ingestTerminalTitleEvent'
   | '/api/updateAgentActivity'
@@ -240,6 +247,7 @@ export type GxserverEndpointPath =
   | '/api/setSessionChatDraft'
   | '/api/acknowledgeSessionChatDraftHandoff'
   | '/api/exportSessionTranscript'
+  | '/api/countSessionTranscriptTurns'
   | '/api/sendSessionText'
   | '/api/sendSessionMessage'
   | '/api/sendSessionEnter'

@@ -553,8 +553,10 @@ impl ExtensionsTab {
                                 SizedButtonSize::Sm,
                                 pending,
                                 None,
-                                move |page: &mut Self, _window, cx| {
-                                    page.install_extension(name.clone(), cx)
+                                // An update can ask for more than the installed version did, so it
+                                // goes through the same consent as an install.
+                                move |page: &mut Self, window, cx| {
+                                    page.open_consent(name.clone(), window, cx)
                                 },
                                 cx,
                             )),
@@ -1013,15 +1015,21 @@ impl ExtensionsTab {
             },
             cx,
         );
+        let updating = self
+            .browser
+            .installed
+            .iter()
+            .any(|extension| extension.id() == name);
         let confirm = {
             let name = name.clone();
             modal_action_button(
                 &m,
                 "extension-consent-install",
-                if installing {
-                    "Installing…"
-                } else {
-                    "Install"
+                match (installing, updating) {
+                    (true, true) => "Updating…",
+                    (true, false) => "Installing…",
+                    (false, true) => "Update",
+                    (false, false) => "Install",
                 },
                 None,
                 ModalButtonTone::Neutral,
@@ -1042,7 +1050,7 @@ impl ExtensionsTab {
             .rounded(px(MODAL_RADIUS_SECTION))
             .border_1()
             .border_color(hsla(m.hairline))
-            .bg(hsla(m.solid_surface))
+            .bg(hsla(p.dialog_surface()))
             .shadow_xl()
             .font_family(MODAL_UI_FONT)
             .text_size(px(14.0))

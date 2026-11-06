@@ -6,23 +6,26 @@
 //!
 //! CDXC:Coordinators 2026-10-29 DECISION:
 //! User: "allow picking medium here but default to high". An orchestrator is offered Medium, High and XHigh and starts on High; an agent without XHigh is offered its levels from Medium up to its highest below Max (Antigravity: Medium and High) and starts on High. Supersedes the 2026-10-17 rule above (High and XHigh, starting on XHigh), which stays as the record of that decision.
+//! CDXC:Coordinators 2026-10-31 DECISION:
+//! User: "please allow setting low as the orchestrator effort level". An orchestrator is offered Low as well: Low, Medium, High and XHigh, starting on High as before; an agent without XHigh is offered its levels from Low up to its highest below Max (Antigravity: Low, Medium and High). An agent or model without a Low level is offered from Medium up, as before. Supersedes the 2026-10-29 list above (it started at Medium).
 //! SEE-ALSO: apps/desktop/src/app/window/new_coordinator_modal.rs (the dialog), server/src/ghostex_cli/coordinator/command.rs (`ghostex orchestrator options` and `create`, which the phone's sheet uses), server/src/coordinators/role.rs (`default_orchestrator_effort`).
 
 /// Levels above XHigh that an orchestrator is never offered.
 const BEYOND_ORCHESTRATOR: [&str; 3] = ["max", "ultra", "ultracode"];
 
-/// The levels Ghostex recommends for an orchestrator out of `efforts` (an agent's levels, lowest
-/// first): Medium up to the agent's highest level below Max (Medium, High and XHigh where it has
-/// them). An agent without a Medium level is offered its three highest levels below Max.
+/// The levels Ghostex offers an orchestrator out of `efforts` (an agent's levels, lowest first): Low
+/// up to the agent's highest level below Max (Low, Medium, High and XHigh where it has them). An
+/// agent without a Low level starts at Medium, and one without a Medium level is offered its three
+/// highest levels below Max.
 fn recommended_orchestrator_efforts<T: AsRef<str>>(efforts: &[T]) -> Vec<String> {
     let offered: Vec<&str> = efforts
         .iter()
         .map(AsRef::as_ref)
         .filter(|effort| !BEYOND_ORCHESTRATOR.contains(effort))
         .collect();
-    let start = offered
-        .iter()
-        .position(|effort| *effort == "medium")
+    let start = ["low", "medium"]
+        .into_iter()
+        .find_map(|level| offered.iter().position(|effort| *effort == level))
         .unwrap_or_else(|| offered.len().saturating_sub(3));
     offered[start..]
         .iter()
@@ -78,24 +81,42 @@ mod tests {
     const ANTIGRAVITY: [&str; 3] = ["low", "medium", "high"];
 
     #[test]
-    fn offers_medium_through_xhigh() {
+    fn offers_low_through_xhigh() {
         let offered = |efforts: &[&str]| orchestrator_efforts(efforts, false, None);
-        assert_eq!(offered(&CLAUDE), ["medium", "high", "xhigh"]);
-        assert_eq!(offered(&CODEX), ["medium", "high", "xhigh"]);
-        assert_eq!(offered(&ANTIGRAVITY), ["medium", "high"]);
+        assert_eq!(offered(&CLAUDE), ["low", "medium", "high", "xhigh"]);
+        assert_eq!(offered(&CODEX), ["low", "medium", "high", "xhigh"]);
+        assert_eq!(offered(&ANTIGRAVITY), ["low", "medium", "high"]);
+        // A model without Low starts at Medium; Pi's extra levels below Low stay out.
+        assert_eq!(
+            offered(&["medium", "high", "xhigh", "max"]),
+            ["medium", "high", "xhigh"]
+        );
+        assert_eq!(
+            offered(&["off", "minimal", "low", "medium", "high", "xhigh", "max"]),
+            ["low", "medium", "high", "xhigh"]
+        );
     }
 
     #[test]
     fn starts_on_high_or_the_highest_level_at_or_below_it() {
-        assert_eq!(default_orchestrator_effort(&CLAUDE).as_deref(), Some("high"));
+        assert_eq!(
+            default_orchestrator_effort(&CLAUDE).as_deref(),
+            Some("high")
+        );
         assert_eq!(default_orchestrator_effort(&CODEX).as_deref(), Some("high"));
-        assert_eq!(default_orchestrator_effort(&ANTIGRAVITY).as_deref(), Some("high"));
+        assert_eq!(
+            default_orchestrator_effort(&ANTIGRAVITY).as_deref(),
+            Some("high")
+        );
         // No High: Medium; no Medium or High: the highest level offered.
         assert_eq!(
             default_orchestrator_effort(&["low", "medium", "xhigh"]).as_deref(),
             Some("medium")
         );
-        assert_eq!(default_orchestrator_effort(&["xhigh", "max"]).as_deref(), Some("xhigh"));
+        assert_eq!(
+            default_orchestrator_effort(&["xhigh", "max"]).as_deref(),
+            Some("xhigh")
+        );
         assert_eq!(default_orchestrator_effort::<&str>(&[]), None);
     }
 
@@ -103,10 +124,13 @@ mod tests {
     fn show_all_lists_everything_and_a_current_level_stays_listed() {
         assert_eq!(orchestrator_efforts(&CLAUDE, true, None), CLAUDE);
         assert_eq!(
-            orchestrator_efforts(&CLAUDE, false, Some("low")),
-            ["low", "medium", "high", "xhigh"]
+            orchestrator_efforts(&CLAUDE, false, Some("max")),
+            ["low", "medium", "high", "xhigh", "max"]
         );
         // The start level is the recommended one even while every level is listed.
-        assert_eq!(default_orchestrator_effort(&CLAUDE).as_deref(), Some("high"));
+        assert_eq!(
+            default_orchestrator_effort(&CLAUDE).as_deref(),
+            Some("high")
+        );
     }
 }

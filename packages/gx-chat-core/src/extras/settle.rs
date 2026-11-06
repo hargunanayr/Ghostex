@@ -78,6 +78,19 @@ fn settle_with_ids(
                 next_request_id(),
             ) {
                 effects.extend(more);
+            } else if let Some(more) = crate::extras::coordinator_board::settle_answer(
+                state,
+                *request_id,
+                answer.clone(),
+                next_request_id(),
+            ) {
+                effects.extend(more);
+            } else if let Some(more) = crate::extras::coordinator_board::settle_change(
+                &mut state.extras.panels,
+                *request_id,
+                answer.clone(),
+            ) {
+                effects.extend(more);
             } else if coordinator_threads::settle_read(
                 &mut state.extras.panels,
                 *request_id,
@@ -89,6 +102,12 @@ fn settle_with_ids(
                 answer.clone(),
             ) {
                 effects.extend(more);
+            } else if let Some(more) =
+                crate::extras::side_chats::settle(state, *request_id, answer.clone())
+            {
+                effects.extend(more);
+            } else if crate::extras::secret_requests::settle(state, *request_id, answer.clone()) {
+            } else if crate::extras::relayed_approvals::settle(state, *request_id, answer.clone()) {
             } else if let Some(more) =
                 settle_terminal_tail_rpc(state, *request_id, answer, context.now_ms)
             {
@@ -171,7 +190,8 @@ fn settle_with_ids(
     } else {
         Vec::new()
     };
-    working_strip::settle_working_word(&mut state.extras.working_word, working, context);
+    let presented = crate::session::working::presents_working(state);
+    working_strip::settle_working_word(&mut state.extras.working_word, presented, context);
     panels::settle_task_signature(&mut state.extras.panels, tasks.as_ref());
     if state.core.operation_error_code.as_deref() != Some("composerNotReady") {
         terminal_tail::retire(&mut state.extras.terminal_tail);

@@ -9,6 +9,7 @@ Environment:
     GHOSTEX_NATIVE_MODAL_DEMO_STATE=<per-modal state name>    (default: the opening state)
     GHOSTEX_NATIVE_MODAL_DEMO_BACKGROUND=1                    (open without taking focus, for screenshots)
     GHOSTEX_EXPORT_MODAL_DEMO_MODE=handoff|export             (Handoff / Export only)
+    GHOSTEX_EXPORT_MODAL_DEMO_PREFS=<file>                    (Handoff / Export's saved choices)
 Hosts simulate the daemon: a primary action answers after one second with a
 fake success, or with a failure message when the state is `failed`. Closing
 actions quit the demo.
@@ -20,6 +21,8 @@ mod assets;
 mod export_transcript_modal;
 #[path = "../fold_motion.rs"]
 mod fold_motion;
+#[path = "../host_name.rs"]
+mod host_name;
 #[path = "../hotkey_label.rs"]
 mod hotkey_label;
 #[path = "../app/window/native_modal_kit/mod.rs"]
@@ -279,17 +282,22 @@ fn demo_handoff_computers() -> Vec<ExportTranscriptComputer> {
         title: title.to_string(),
         path: Some(path.to_string()),
         same_repo,
+        is_own: false,
     };
     vec![
         ExportTranscriptComputer {
             machine_id: "local".to_string(),
-            label: "This computer".to_string(),
+            label: "This machine".to_string(),
             is_source: true,
             projects: vec![
+                ExportTranscriptProject {
+                    is_own: true,
+                    ..project("p-scratch", "Scratch", "~/dev/scratch", false)
+                },
                 project("p-acme", "acme-web", "~/dev/acme-web", false),
                 project("p-docs", "gamma-docs", "~/dev/gamma-docs", false),
             ],
-            preferred_project_id: None,
+            preferred_project_id: Some("p-scratch".to_string()),
             missing_repository: None,
         },
         ExportTranscriptComputer {
@@ -359,7 +367,6 @@ fn open_export_transcript(demo: &DemoEnv, cx: &mut App) {
     let initial_mode = match env("GHOSTEX_EXPORT_MODAL_DEMO_MODE").as_str() {
         "export" => Some(ExportTranscriptMode::Export),
         "handoff" => Some(ExportTranscriptMode::Handoff),
-        "remote" => Some(ExportTranscriptMode::HandoffAdvanced),
         _ => None,
     };
     let agents = if demo.state == "noagents" {
@@ -383,9 +390,13 @@ fn open_export_transcript(demo: &DemoEnv, cx: &mut App) {
     let host_slot = slot.clone();
     let fail = demo.state == "failed";
     let host: ExportTranscriptModalHost = Rc::new(move |command, cx: &mut App| match command {
-        ExportTranscriptModalCommand::RunExport { include, carry } => {
+        ExportTranscriptModalCommand::RunExport {
+            include,
+            last_turns,
+            carry,
+        } => {
             eprintln!(
-                "run export: commands={} patches={} reasoning={} carry={carry}",
+                "run export: commands={} patches={} reasoning={} last_turns={last_turns:?} carry={carry}",
                 include.commands, include.patches, include.reasoning
             );
             let slot = host_slot.clone();
@@ -401,6 +412,33 @@ fn open_export_transcript(demo: &DemoEnv, cx: &mut App) {
         ExportTranscriptModalCommand::StartConversation { agent_id, target } => {
             eprintln!("handoff to {agent_id} at {target:?}");
             cx.quit();
+        }
+        // A 120-turn conversation of about 3.6 KB a turn, a little more with each switch on.
+        ExportTranscriptModalCommand::CountTurns(include) => {
+            let slot = host_slot.clone();
+            cx.defer(move |cx| {
+                let open = slot.borrow().clone();
+                if let Some((window, view)) = open {
+                    let _ = window.update(cx, |_, _window, cx| {
+                        view.update(cx, |modal, cx| {
+                            let turn = 3_600
+                                + 900 * usize::from(include.commands)
+                                + 600 * usize::from(include.patches)
+                                + 400 * usize::from(include.reasoning);
+                            let sizes: Vec<usize> = (1..=120).map(|n| n * turn).collect();
+                            modal.set_turn_count(
+                                include,
+                                ExportTranscriptTurnCount::Counted {
+                                    turns: 120,
+                                    whole_bytes: 120 * turn,
+                                    last_turns_bytes: sizes,
+                                },
+                                cx,
+                            );
+                        })
+                    });
+                }
+            });
         }
         ExportTranscriptModalCommand::TargetChanged(target) => {
             eprintln!("target {target:?}");
@@ -439,7 +477,10 @@ fn open_export_transcript(demo: &DemoEnv, cx: &mut App) {
         default_agent_id: Some("codex".to_string()),
         handoff_target: None,
         palette: demo.palette,
-        prefs_path: None,
+        // A saved prefs file, to draw what a user comes back to.
+        prefs_path: Some(env("GHOSTEX_EXPORT_MODAL_DEMO_PREFS"))
+            .filter(|path| !path.is_empty())
+            .map(std::path::PathBuf::from),
         initial_mode,
         computers: demo_handoff_computers(),
         restore: None,

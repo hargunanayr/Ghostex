@@ -61,6 +61,9 @@ struct GroupKey {
     is_stale: bool,
     /// The remote machine's name as the settings spell it; it rides in the group's Copy Details.
     machine_name: Option<String>,
+    /// The machines a merged entry names, and the copy its actions go to (`merged.rs`).
+    machine_names: Vec<super::view::MachineChip>,
+    action_target: Option<(String, usize)>,
 }
 
 struct CachedGroup {
@@ -108,6 +111,9 @@ struct CacheState {
     membership: BTreeMap<String, Arc<ProjectMembers>>,
     project_contexts: BTreeMap<String, Arc<ProjectContextInput>>,
     rows: BTreeMap<String, BTreeMap<String, RowRef>>,
+    /// The rows of Cloud Box sessions merged into this computer's projects, by their key on the
+    /// box machine (`cloud_boxes.rs`). Kept like `rows`; dropped whole when the registry moves.
+    box_rows: BTreeMap<SessionKey, RowRef>,
     browser_rows: BTreeMap<String, (Vec<BrowserTabInput>, Vec<RowRef>)>,
     /// The next row number to mint; monotonic while the cache lives.
     next_row_id: u64,
@@ -119,6 +125,8 @@ struct CacheState {
     /// machine's come out of its built groups; the others are counted straight off the store.
     machine_summaries: BTreeMap<MachineId, MachineSummary>,
     work: SidebarUpdateWork,
+    /// The other machines' projects of the one-list sidebar (`merged.rs`), while it merges.
+    merge: Option<super::merged::MergeCache>,
 }
 
 /// The sidebar list of one machine, kept up to date from the store.
@@ -149,9 +157,20 @@ impl SidebarViewModel {
     /// filter, and a successor chosen out of that would move with a filter the close has nothing to
     /// do with.
     pub fn close_project_successor_session_id(&self, closing_group_id: &str) -> Option<String> {
+        self.close_projects_successor_session_id(closing_group_id, &[])
+    }
+
+    /// The same when `closing_too` are going with it (a repository's other checkouts), so the
+    /// session it names is not in a project about to leave as well.
+    pub fn close_projects_successor_session_id(
+        &self,
+        closing_group_id: &str,
+        closing_too: &[String],
+    ) -> Option<String> {
         let state = self.state.as_ref()?;
         super::close_successor::close_project_successor_candidates(&state.view, closing_group_id)
             .into_iter()
+            .filter(|group_id| !closing_too.contains(group_id))
             .find_map(|group_id| {
                 let build = state.groups.get(&group_id)?;
                 super::close_successor::first_awake_successor_session_id(&build.build.store_rows)
@@ -248,7 +267,8 @@ impl SidebarViewModel {
         now_ms: u64,
     ) -> bool {
         let machine = machine_id(&inputs.ui.selected_machine_id);
-        let focus = focus_key(core, &machine);
+        let merging = machine.is_local() && inputs.host.merge_machines;
+        let focus = focus_key(core, &machine, merging);
         let store = core.presentation();
         let machine_loaded = store.loaded(&machine).is_some();
 
@@ -319,27 +339,26 @@ impl SidebarViewModel {
         // offers before it reads them, so a filter whose tag was turned off in settings (or whose
         // custom tag the daemon dropped) filters nothing.
         let enabled_filters = inputs.settings.enabled_tag_filters(&filter_catalog);
-        let effective_inputs: Cow<'_, SidebarInputs> = if inputs
-            .ui
-            .selected_tag_filters
-            .iter()
-            .all(|tag| enabled_filters.contains(tag))
-        {
-            Cow::Borrowed(inputs)
-        } else {
-            let mut pruned = inputs.clone();
-            pruned
-                .ui
-                .selected_tag_filters
-                .retain(|tag| enabled_filters.contains(tag));
-            Cow::Owned(pruned)
-        };
+        let effective_inputs: Cow<'_, SidebarInputs> =
+            if inputs.ui.selected_tag_filters.iter().all(|tag| {
+                enabled_filters.contains(tag) || tag == crate::cloud_boxes::CLOUD_BOX_FILTER
+            }) {
+                Cow::Borrowed(inputs)
+            } else {
+                let mut pruned = inputs.clone();
+                pruned.ui.selected_tag_filters.retain(|tag| {
+                    enabled_filters.contains(tag) || tag == crate::cloud_boxes::CLOUD_BOX_FILTER
+                });
+                Cow::Owned(pruned)
+            };
         let effective = effective_inputs.as_ref();
+        let side_chat_needs = super::rows::side_chat_needs(store, &machine);
         let row_context = RowContext {
             catalog: &catalog,
             debugging_mode: effective.settings.debugging_mode,
             always_show_state_tooltip: !machine.is_local(),
             session_notes: effective.settings.session_notes_enabled,
+            side_chat_needs: &side_chat_needs,
         };
 
         // 1. Project facts.
@@ -427,6 +446,14 @@ impl SidebarViewModel {
             if let Some(sessions) = rows.get_mut(*project_id) {
                 sessions.remove(*session_id);
             }
+            // A side chat's questions and approvals show on its main session's row.
+            let parent = store
+                .machine(&machine)
+                .and_then(|entry| entry.effective_session(project_id, session_id))
+                .and_then(|session| session.side_chat_parent_session_id.clone());
+            if let (Some(parent), Some(sessions)) = (parent, rows.get_mut(*project_id)) {
+                sessions.remove(&parent);
+            }
         }
         for project in changes
             .projects_removed
@@ -434,6 +461,30 @@ impl SidebarViewModel {
             .filter(|project| project.machine == machine)
         {
             rows.remove(&project.project_id);
+        }
+        // A draft's ☁ badge reads the box its first message started from the registry.
+        if changes.cloud_boxes_changed {
+            for sessions in rows.values_mut() {
+                sessions.retain(|_, row| row.row.cloud_box.is_none());
+            }
+        }
+        let mut box_rows = match (&mut previous, rows_all_dirty || changes.cloud_boxes_changed) {
+            (Some(previous), false) => std::mem::take(&mut previous.box_rows),
+            _ => BTreeMap::new(),
+        };
+        if changes
+            .machines_reloaded
+            .iter()
+            .any(crate::cloud_boxes::is_cloud_box_machine)
+        {
+            box_rows.clear();
+        }
+        for session in changes
+            .sessions_changed
+            .iter()
+            .chain(&changes.sessions_removed)
+        {
+            box_rows.remove(session);
         }
 
         // 4. Membership, per project.
@@ -465,6 +516,7 @@ impl SidebarViewModel {
             membership,
             project_contexts: BTreeMap::new(),
             rows,
+            box_rows,
             browser_rows: BTreeMap::new(),
             next_row_id,
             groups: BTreeMap::new(),
@@ -472,6 +524,7 @@ impl SidebarViewModel {
             next_deadline_ms: None,
             machine_loaded,
             machine_summaries: BTreeMap::new(),
+            merge: None,
             work: SidebarUpdateWork {
                 reset,
                 rows_all_dirty,
@@ -551,6 +604,7 @@ impl SidebarViewModel {
                 if let Some(row) = resolve_row(
                     &mut state,
                     store,
+                    core.cloud_boxes(),
                     &machine,
                     project_id,
                     session_id,
@@ -560,6 +614,22 @@ impl SidebarViewModel {
                     rows.push(row);
                 }
             }
+            // The project's Cloud Box sessions, after its own (Q1015 "in project with badge").
+            if machine.is_local() {
+                for key in
+                    crate::cloud_boxes::box_session_keys(store, core.cloud_boxes(), project_id)
+                {
+                    if let Some(row) =
+                        resolve_box_row(&mut state, core, &key, effective, &row_context)
+                    {
+                        rows.push(row);
+                    }
+                }
+            }
+            // The project's coordinators' threads on other computers, nested under them.
+            let remote_threads =
+                remote_thread_rows(&mut state, store, &rows, effective, &row_context);
+            rows.extend(remote_threads);
             // A project's facts are kept until the project row, the overlays, or the host's git
             // numbers move.
             let project_dirty = meta_dirty
@@ -593,6 +663,8 @@ impl SidebarViewModel {
                 project,
                 remote_machine: remote_context(Some(project_id)),
                 is_stale,
+                machine_names: Vec::new(),
+                action_target: None,
             });
             for subgroup in &members.subgroups {
                 let mut rows: Vec<RowRef> = Vec::new();
@@ -600,6 +672,7 @@ impl SidebarViewModel {
                     if let Some(row) = resolve_row(
                         &mut state,
                         store,
+                        core.cloud_boxes(),
                         &machine,
                         project_id,
                         session_id,
@@ -618,7 +691,36 @@ impl SidebarViewModel {
                     project: None,
                     remote_machine: remote_context(Some(project_id)),
                     is_stale,
+                    machine_names: Vec::new(),
+                    action_target: None,
                 });
+            }
+        }
+
+        // Every machine's projects in this one list (`merged.rs`), unless Separate by machine.
+        let mut drawn_focus = state.focus.clone();
+        if merging {
+            let (cache, outcome) = super::merged::merge_machines(
+                previous.as_mut().and_then(|previous| previous.merge.take()),
+                &super::merged::MergeInput {
+                    core,
+                    inputs: effective,
+                    changes,
+                    rows_all_dirty,
+                    context: &row_context,
+                },
+                &mut plans,
+                &mut state.next_row_id,
+                &mut state.work,
+            );
+            state.merge = Some(cache);
+            // A session of a merged copy is drawn in its entry, so that entry is the active one.
+            if let Some(entry) = drawn_focus
+                .active_group_id
+                .as_ref()
+                .and_then(|group_id| outcome.merged_into.get(group_id))
+            {
+                drawn_focus.active_group_id = Some(entry.clone());
             }
         }
 
@@ -632,7 +734,7 @@ impl SidebarViewModel {
         );
         let mut builds: BTreeMap<String, GroupBuild> = BTreeMap::new();
         for plan in &plans {
-            let key = group_key(plan, &state.focus, effective, &thread_tallies);
+            let key = group_key(plan, &drawn_focus, effective, &thread_tallies);
             let reuse = previous
                 .as_mut()
                 .and_then(|previous| previous.groups.remove(&plan.group_id))
@@ -649,7 +751,7 @@ impl SidebarViewModel {
                     state.work.groups_built += 1;
                     build_group(
                         plan,
-                        &state.focus,
+                        &drawn_focus,
                         &effective.ui,
                         &effective.settings,
                         &thread_tallies,
@@ -686,6 +788,26 @@ impl SidebarViewModel {
             .iter()
             .map(|tag| tag_label(Some(tag), &catalog).unwrap_or_else(|| tag.clone()))
             .collect();
+        let spaces = super::workspaces::window_spaces(store, effective, &machine)
+            .map(|spaces| SpacesState::from_wire(&spaces));
+        let collections = match side_state.and_then(|side| side.project_collections.as_ref()) {
+            // A document has arrived for this machine, so the daemon is authoritative from
+            // here on, an empty one included: after the user deletes their last collection
+            // the stored copy still holds it for as long as it takes the sidebar to write,
+            // and falling back to it there would draw the collection the user just removed.
+            Some(state) => CollectionsState::from_wire(state),
+            None => effective
+                .host
+                .stored_project_collections
+                .as_ref()
+                .map(CollectionsState::from_local_json)
+                .unwrap_or_default(),
+        };
+        // The one list files every machine's projects by every machine's documents (`merged.rs`).
+        let merged_documents = match merging {
+            true => super::merged::union_documents(store, effective, spaces, collections),
+            false => (spaces, collections),
+        };
         state.view = assemble(AssembleInput {
             tag_filter_labels,
             plans: &plans,
@@ -694,22 +816,9 @@ impl SidebarViewModel {
             ui: &effective.ui,
             settings: &effective.settings,
             host: &effective.host,
-            spaces: super::workspaces::window_spaces(store, effective, &machine)
-                .map(|spaces| SpacesState::from_wire(&spaces)),
+            spaces: merged_documents.0,
             spaces_enabled: super::machine_spaces::spaces_enabled_on(store, effective, &machine),
-            collections: match side_state.and_then(|side| side.project_collections.as_ref()) {
-                // A document has arrived for this machine, so the daemon is authoritative from
-                // here on, an empty one included: after the user deletes their last collection
-                // the stored copy still holds it for as long as it takes the sidebar to write,
-                // and falling back to it there would draw the collection the user just removed.
-                Some(state) => CollectionsState::from_wire(state),
-                None => effective
-                    .host
-                    .stored_project_collections
-                    .as_ref()
-                    .map(CollectionsState::from_local_json)
-                    .unwrap_or_default(),
-            },
+            collections: merged_documents.1,
             local_machine_loaded: store.loaded(&MachineId::Local).is_some(),
             machine_summaries: &state.machine_summaries,
             // Asked only when the two cheap tests before it both say no, which on a populated
@@ -798,6 +907,7 @@ fn browser_rows_for_project(
 fn resolve_row(
     state: &mut CacheState,
     store: &PresentationStore,
+    boxes: &crate::cloud_boxes::CloudBoxes,
     machine: &MachineId,
     project_id: &str,
     session_id: &str,
@@ -820,17 +930,19 @@ fn resolve_row(
         session_id: session_id.to_string(),
     };
     let sidebar_id = key.to_sidebar_session_id();
+    let mut row = session_row(
+        key,
+        &session,
+        super::inputs::CloseAfterDoneInput::from_session(&session).as_ref(),
+        inputs.host.local_delayed_sends.get(&sidebar_id),
+        context,
+    );
+    row.cloud_box = row.cloud_box.map(|badge| badge.with_started_box(boxes));
     state.next_row_id += 1;
     state.work.rows_built += 1;
     let row = RowRef {
         id: state.next_row_id,
-        row: Arc::new(session_row(
-            key,
-            &session,
-            super::inputs::CloseAfterDoneInput::from_session(&session).as_ref(),
-            inputs.host.local_delayed_sends.get(&sidebar_id),
-            context,
-        )),
+        row: Arc::new(row),
     };
     state
         .rows
@@ -840,8 +952,148 @@ fn resolve_row(
     Some(row)
 }
 
+/// The rows of the threads `rows`' coordinators run on other computers, each built from that
+/// computer's own session and marked as the coordinator's thread. A computer whose rows are not in
+/// the store (not connected from this app) shows none.
+///
+/// CDXC:RemoteMachines 2026-11-03 WHY:
+/// The thread's own computer does not know it is a thread (the link lives with the coordinator, and that computer may run an older gxserver), so its row carries no coordinator fields; the coordinator's `coordinatorRemoteThreads` names it, and the row is taken from that machine's store like a Cloud Box row, reusing the cross-machine row cache, which a change to that session clears.
+/// SEE-ALSO: server/src/coordinators/remote_threads.rs (the field), resolve_box_row below (the same cache).
+fn remote_thread_rows(
+    state: &mut CacheState,
+    store: &PresentationStore,
+    rows: &[RowRef],
+    inputs: &SidebarInputs,
+    context: &RowContext<'_>,
+) -> Vec<RowRef> {
+    let mut threads = Vec::new();
+    for coordinator in rows
+        .iter()
+        .filter(|row| row.row.is_coordinator && !row.row.coordinator_remote_threads.is_empty())
+    {
+        let Some(parent) = coordinator.row.key.clone() else {
+            continue;
+        };
+        for thread in &coordinator.row.coordinator_remote_threads {
+            let Some(machine) = store
+                .machine_for_server_session(
+                    &thread.server_id,
+                    &thread.project_id,
+                    &thread.session_id,
+                )
+                .filter(|machine| *machine != parent.machine)
+            else {
+                continue;
+            };
+            let key = SessionKey {
+                machine,
+                project_id: thread.project_id.clone(),
+                session_id: thread.session_id.clone(),
+            };
+            // The machine's tab names it; this computer's tab when the coordinator is elsewhere.
+            let machine_id = key.machine.remote_id().unwrap_or(super::LOCAL_MACHINE_ID);
+            let computer_name = inputs
+                .host
+                .machine(machine_id)
+                .map(|tab| tab.label.trim())
+                .filter(|label| !label.is_empty())
+                .unwrap_or(if key.machine.is_local() {
+                    "This computer"
+                } else {
+                    machine_id
+                })
+                .to_string();
+            // Its pill (`machine_short_names.rs`), which the badge draws.
+            let short_name = inputs
+                .host
+                .machine(machine_id)
+                .map(|tab| tab.short_name.trim().to_string())
+                .filter(|short| !short.is_empty());
+            if let Some(row) = state.box_rows.get(&key).filter(|row| {
+                row.row.coordinator_parent.as_ref() == Some(&parent)
+                    && row.row.thread_state == thread.thread_state
+                    && row.row.computer_name.as_deref() == Some(computer_name.as_str())
+                    && row.row.machine_short_name == short_name
+            }) {
+                threads.push(row.clone());
+                continue;
+            }
+            let Some(session) = store
+                .machine(&key.machine)
+                .and_then(|entry| entry.effective_session(&key.project_id, &key.session_id))
+            else {
+                continue;
+            };
+            let sidebar_id = key.to_sidebar_session_id();
+            let mut row = session_row(
+                key.clone(),
+                &session,
+                super::inputs::CloseAfterDoneInput::from_session(&session).as_ref(),
+                inputs.host.local_delayed_sends.get(&sidebar_id),
+                context,
+            );
+            row.coordinator_parent = Some(parent.clone());
+            row.thread_state = thread.thread_state.clone();
+            row.computer_name = Some(computer_name.clone());
+            row.machine_short_name = short_name;
+            state.next_row_id += 1;
+            state.work.rows_built += 1;
+            let row = RowRef {
+                id: state.next_row_id,
+                row: Arc::new(row),
+            };
+            state.box_rows.insert(key, row.clone());
+            threads.push(row);
+        }
+    }
+    threads
+}
+
+/// A Cloud Box session's row in its home project: built like any row from the box machine's
+/// session, with the badge taken from the registry, which knows the box's state better than the
+/// box itself (a stopped box publishes nothing).
+fn resolve_box_row(
+    state: &mut CacheState,
+    core: &Core,
+    key: &SessionKey,
+    inputs: &SidebarInputs,
+    context: &RowContext<'_>,
+) -> Option<RowRef> {
+    if let Some(row) = state.box_rows.get(key) {
+        return Some(row.clone());
+    }
+    let session = core
+        .presentation()
+        .machine(&key.machine)?
+        .effective_session(&key.project_id, &key.session_id)?;
+    let sidebar_id = key.to_sidebar_session_id();
+    let mut row = session_row(
+        key.clone(),
+        &session,
+        super::inputs::CloseAfterDoneInput::from_session(&session).as_ref(),
+        inputs.host.local_delayed_sends.get(&sidebar_id),
+        context,
+    );
+    if let Some(cloud_box) = core.cloud_boxes().of_machine(&key.machine) {
+        row.cloud_box = Some(crate::cloud_boxes::SessionCloudBoxBadge::from_box(
+            cloud_box,
+        ));
+    }
+    // Listed with the sessions, never Drafts: the rows of a box that is not up (`cached_box_snapshot`)
+    // carry no draft flag, so a not-started agent jumped out of Drafts when its box stopped.
+    row.is_draft = false;
+    state.next_row_id += 1;
+    state.work.rows_built += 1;
+    let row = RowRef {
+        id: state.next_row_id,
+        row: Arc::new(row),
+    };
+    state.box_rows.insert(key.clone(), row.clone());
+    Some(row)
+}
+
 /// The project facts a project group draws.
-fn project_context(
+pub(super) fn project_context(
     store: &PresentationStore,
     machine: &MachineId,
     meta: &ProjectMeta,
@@ -895,12 +1147,15 @@ fn project_context(
             .value()
             .filter(|url| !url.is_empty())
             .cloned(),
+        git_work_tree: !project.git_remote_origin_url.is_absent()
+            || project.git_repository_root_path.is_some(),
         bot_profile: meta.bot_profile(project_id).map(str::to_string),
         bot_gateway_running: project.bot_gateway_running == Some(true),
         bot_runs_today: project.bot_runs_today.unwrap_or_default(),
         ghost: meta.ghost(project_id).cloned(),
         work_mode: project.work_mode,
         work_linear: project.work_mode && project.work_linear,
+        work_linear_create: project.work_mode && project.work_linear && project.work_linear_create,
         work_pull_requests: project.work_mode && !project.work_github_off,
         work_github: project.work_mode
             && !project.work_github_off
@@ -1009,6 +1264,13 @@ fn group_key(
             .remote_machine
             .as_ref()
             .map(|remote| remote.machine_name.clone()),
+        machine_names: plan.machine_names.clone(),
+        action_target: plan.action_target.as_ref().map(|target| {
+            (
+                target.group_id.clone(),
+                Arc::as_ptr(&target.project) as usize,
+            )
+        }),
     }
 }
 
@@ -1039,7 +1301,7 @@ fn parse_sidebar_session_key(sidebar_session_id: &str) -> Option<(String, String
 /// `projectNativeSidebarGroup` prefixes every group of a remote machine with `remote:<machine>:`,
 /// on top of an id that already names the machine for a project group. The double prefix is what
 /// the persisted collapse state holds, so it is reproduced rather than tidied up.
-fn storage_id(machine: &MachineId, raw: &str) -> String {
+pub(super) fn storage_id(machine: &MachineId, raw: &str) -> String {
     match machine.remote_id() {
         None => raw.to_string(),
         Some(machine_id) => format!("remote:{machine_id}:{raw}"),
@@ -1114,27 +1376,52 @@ fn machine_id(selected_machine_id: &str) -> MachineId {
 }
 
 /// Focus in the vocabulary the rows compare against: raw session ids of this machine.
-fn focus_key(core: &Core, machine: &MachineId) -> FocusKey {
+fn focus_key(core: &Core, machine: &MachineId, merging: bool) -> FocusKey {
     let focus = core.focus();
+    // A Cloud Box session is drawn in its home project on this computer's tab, so its focus is
+    // this tab's focus, and the project it lives in on the box reads as that home project. The
+    // one-list sidebar draws every machine's sessions (`merged.rs`).
+    let drawn_here = |owner: &MachineId| {
+        merging
+            || owner == machine
+            || (machine.is_local() && crate::cloud_boxes::is_cloud_box_machine(owner))
+    };
+    let home_project = |owner: &MachineId| -> Option<String> {
+        core.cloud_boxes()
+            .of_machine(owner)
+            .and_then(|cloud_box| cloud_box.home_project_id.clone())
+    };
+    let box_home = focus
+        .active_project
+        .as_ref()
+        .filter(|project| {
+            machine.is_local() && crate::cloud_boxes::is_cloud_box_machine(&project.machine)
+        })
+        .and_then(|project| home_project(&project.machine));
     FocusKey {
-        active_group_id: focus
-            .active_group
-            .as_ref()
-            .map(crate::focus::ActiveGroup::to_sidebar_group_id),
-        active_project_id: focus
-            .active_project
-            .as_ref()
-            .filter(|project| project.machine == *machine)
-            .map(|project| project.project_id.clone()),
+        active_group_id: match &box_home {
+            Some(home) => Some(ProjectKey::local(home.clone()).to_sidebar_group_id()),
+            None => focus
+                .active_group
+                .as_ref()
+                .map(crate::focus::ActiveGroup::to_sidebar_group_id),
+        },
+        active_project_id: box_home.or_else(|| {
+            focus
+                .active_project
+                .as_ref()
+                .filter(|project| project.machine == *machine)
+                .map(|project| project.project_id.clone())
+        }),
         focused_session_id: focus
             .focused_session
             .as_ref()
-            .filter(|session| session.machine == *machine)
+            .filter(|session| drawn_here(&session.machine))
             .map(|session| session.session_id.clone()),
         visible_session_ids: focus
             .visible_sessions
             .iter()
-            .filter(|session| session.machine == *machine)
+            .filter(|session| drawn_here(&session.machine))
             .map(|session| session.session_id.clone())
             .collect(),
     }

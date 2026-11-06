@@ -14,11 +14,17 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "serd
 crossterm = "0.29"
 futures-util = "0.3"
 hex = "0.4"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp", "tiff"] }
 ghostex-paths = { path = "../packages/paths" }
 ghostex-gx-protocol = { path = "../packages/gx-protocol" }
+ghostex-gx-cloud = { path = "../packages/gx-cloud" }
 ghostex-docs = { path = "../packages/project-docs" }
 ghostex-find = { path = "../packages/find" }
 ghostex-settings-catalog = { path = "../packages/settings-catalog" }
+# CDXC:SettingsSync 2026-11-06 SEE-ALSO:
+# Settings sync's merge rules and the Spaces mapping (`settings_sync`), shared with the phone, and
+# the one list's repository identity (`unified_sidebar::repo`) that files a repository alike on every computer.
+ghostex-gx-core = { path = "../packages/gx-core" }
 # CDXC:FilesAndLinks 2026-10-12 SEE-ALSO:
 # The chat core's own rules for what a message mentions (`transcript/files_links.rs`), which
 # `readSessionFilesLinks` runs over every transcript so the list and the transcript agree.
@@ -28,6 +34,10 @@ ghostex-gx-chat-core = { path = "../packages/gx-chat-core" }
 # clients use, and paints it to a PNG with resvg (the renderer the desktop's diagrams use).
 ghostex-gx-visual = { path = "../packages/gx-visual" }
 resvg = { version = "0.46.0", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
+# CDXC:WorkMode 2026-10-28 WHY:
+# A command ticket source's SVG icon is parsed with the XML reader resvg already compiles in and
+# rebuilt from an allowlist (work_mode/command/icon.rs). Keep it at usvg's version.
+roxmltree = "0.21.2"
 # PNG encoding for the check's picture (tiny-skia's `png-format`, on by default).
 tiny-skia = "0.11"
 ghostex-agent-sync = { path = "../packages/agent-sync" }
@@ -38,6 +48,12 @@ convex = { version = "0.10.4", default-features = false, features = ["rustls-tls
 # tokio-tungstenite build axum's WebSocket support compiles in (0.29; convex pins 0.28) and convex's
 # rustls stack, so no new socket or TLS code ships. `tungstenite` below is that same 0.29 build.
 tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+# CDXC:Dictate 2026-11-05 WHY:
+# Dictate's local engine, pure Rust so it builds for every release target (static musl Linux, static-CRT Windows, macOS): telmo runs Parakeet on the CPU with no dependencies, candle runs Whisper. ONNX Runtime and whisper.cpp can't link into those builds (server/src/voice_agent/speech/engine.rs).
+telmo = { version = "0.3.3", default-features = false }
+candle-core = "0.11.1"
+candle-nn = "0.11.1"
+candle-transformers = "0.11.1"
 libc = "0.2"
 markdown = "1"
 md-5 = "0.11"

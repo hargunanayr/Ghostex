@@ -1,4 +1,6 @@
 use super::*;
+use gpui::StatefulInteractiveElement as _;
+use std::time::Duration;
 
 const CEF_COMPONENT: &str = "cef";
 pub(crate) const CEF_RUNTIME_DIR_ENV: &str = "GHOSTEX_CEF_DIR";
@@ -14,6 +16,41 @@ const CEF_FRAMEWORK_EXECUTABLE_RELATIVE_PATH: &str =
 enum CefComponentWindowState {
     Installing(CefComponentProgress),
     Failed(String),
+    /// The download could not reach the server (`component_store::is_no_connection_failure`); the
+    /// app retries on its own, and `checking` is set while one of those retries runs.
+    Offline {
+        message: String,
+        checking: bool,
+    },
+}
+
+impl CefComponentWindowState {
+    /// What a failed install shows: the friendly offline state, or the error as it is.
+    fn for_failure(message: String) -> Self {
+        if component_store::is_no_connection_failure(&message) {
+            Self::Offline {
+                message,
+                checking: false,
+            }
+        } else {
+            Self::Failed(message)
+        }
+    }
+}
+
+/// Whether bytes of the component have arrived (or the install is past the download).
+fn cef_component_download_started(progress: &CefComponentProgress) -> bool {
+    match progress.phase {
+        component_store::ComponentStoreProgressPhase::Checking => false,
+        component_store::ComponentStoreProgressPhase::Downloading => progress.downloaded_bytes > 0,
+        _ => true,
+    }
+}
+
+/// CDXC:CefRuntime 2026-10-31 DECISION:
+/// The user, on the Linux setup window offline: show a short "You're offline" with what is needed, keep Retry visible, keep the raw error out of the way, and retry by itself when the connection returns, with a back-off and without stealing focus. Automatic retries wait 5, 10, 20 and 40 seconds, then every minute.
+fn offline_retry_delay(attempt: u32) -> Duration {
+    Duration::from_secs((5_u64 << attempt.min(4)).min(60))
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -37,6 +74,7 @@ pub(crate) struct GpuiCefComponentWindow {
     main_app: gpui::WeakEntity<GhostexGpuiApp>,
     state: CefComponentWindowState,
     version: String,
+    details_open: bool,
 }
 
 impl GpuiCefComponentWindow {
@@ -50,6 +88,7 @@ impl GpuiCefComponentWindow {
             main_app,
             state,
             version,
+            details_open: false,
         })
     }
 
@@ -63,11 +102,88 @@ impl GpuiCefComponentWindow {
             app.start_cef_component_install(cx);
         });
     }
+
+    fn toggle_details(&mut self, cx: &mut gpui::Context<Self>) {
+        self.details_open = !self.details_open;
+        cx.notify();
+    }
+}
+
+/// A small button of the setup window; `primary` is the filled Retry.
+fn cef_component_window_button(
+    id: &'static str,
+    label: &'static str,
+    primary: bool,
+    cx: &mut gpui::Context<GpuiCefComponentWindow>,
+    on_click: fn(&mut GpuiCefComponentWindow, &mut gpui::Context<GpuiCefComponentWindow>),
+) -> impl IntoElement {
+    div()
+        .id(id)
+        .flex()
+        .flex_none()
+        .h(px(30.0))
+        .px(px(16.0))
+        .items_center()
+        .justify_center()
+        .rounded(px(6.0))
+        .border_1()
+        .border_color(rgb(0xffffff).opacity(if primary { 0.22 } else { 0.16 }))
+        .when(primary, |this| {
+            this.bg(rgb(0x377bd8)).hover(|this| this.bg(rgb(0x4389e7)))
+        })
+        .when(!primary, |this| {
+            this.hover(|this| this.bg(rgb(0xffffff).opacity(0.06)))
+        })
+        .cursor_pointer()
+        .text_size(px(12.0))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(rgb(0xffffff).opacity(if primary { 0.94 } else { 0.72 }))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|_, _: &MouseDownEvent, window, cx| {
+                window.prevent_default();
+                cx.stop_propagation();
+            }),
+        )
+        .on_mouse_up(
+            MouseButton::Left,
+            cx.listener(move |this, _: &MouseUpEvent, window, cx| {
+                window.prevent_default();
+                cx.stop_propagation();
+                on_click(this, cx);
+            }),
+        )
+        .child(label)
+}
+
+/// The raw error, small and scrollable so it never pushes the buttons off the window.
+fn cef_component_error_text(text: String, color: impl Into<gpui::Hsla>) -> impl IntoElement {
+    div()
+        .id("ghostex-gpui-cef-component-error")
+        .flex_1()
+        .min_h_0()
+        .overflow_y_scroll()
+        .rounded(px(6.0))
+        .bg(rgb(0xffffff).opacity(0.04))
+        .px(px(10.0))
+        .py(px(8.0))
+        .text_size(px(10.5))
+        .line_height(px(15.0))
+        .text_color(color.into())
+        .child(text)
 }
 
 impl Render for GpuiCefComponentWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let (title, detail, progress, failed) = match &self.state {
+        let root = div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .bg(rgb(0x17191d))
+            .p(px(28.0))
+            .gap(px(14.0));
+
+        match &self.state {
             CefComponentWindowState::Installing(component_progress) => {
                 let (detail, progress) = match component_progress.phase {
                     component_store::ComponentStoreProgressPhase::Checking => {
@@ -106,113 +222,134 @@ impl Render for GpuiCefComponentWindow {
                         ("Starting Ghostex…".to_string(), 1.0)
                     }
                 };
-                ("Preparing Ghostex", detail, progress, false)
-            }
-            CefComponentWindowState::Failed(message) => (
-                "Chromium runtime download failed",
-                message.clone(),
-                0.0,
-                true,
-            ),
-        };
-
-        div()
-            .flex()
-            .flex_col()
-            .size_full()
-            .bg(rgb(0x17191d))
-            .p(px(28.0))
-            .gap(px(14.0))
-            .child(
-                div()
-                    .text_size(px(21.0))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(rgb(0xffffff).opacity(0.95))
-                    .child(title),
-            )
-            .child(
-                div()
-                    .text_size(px(12.5))
-                    .line_height(px(18.0))
-                    .text_color(rgb(0xffffff).opacity(0.62))
-                    .child(if failed {
-                        "Ghostex needs Chromium Embedded Framework before browser surfaces can start. Check your connection to GitHub, then retry."
-                    } else {
-                        "Ghostex uses a shared Chromium runtime. It is downloaded once for this CEF version and reused by future app updates."
-                    }),
-            )
-            .child(
-                div()
-                    .text_size(px(11.0))
-                    .text_color(rgb(0xffffff).opacity(0.42))
-                    .child(format!("CEF {}", self.version)),
-            )
-            .child(
-                div()
-                    .w_full()
-                    .h(px(6.0))
-                    .rounded(px(3.0))
-                    .bg(rgb(0xffffff).opacity(0.08))
+                root.child(cef_component_title("Preparing Ghostex"))
+                    .child(cef_component_lead(
+                        "Ghostex uses a shared Chromium runtime. It is downloaded once for this CEF version and reused by future app updates.",
+                    ))
+                    .child(cef_component_note(format!("CEF {}", self.version)))
                     .child(
                         div()
-                            .h_full()
-                            .w(relative(progress))
+                            .flex_none()
+                            .w_full()
+                            .h(px(6.0))
                             .rounded(px(3.0))
-                            .bg(if failed {
-                                rgb(0xe15a64)
-                            } else {
-                                rgb(0x4f8fe8)
-                            }),
-                    ),
-            )
-            .child(
+                            .bg(rgb(0xffffff).opacity(0.08))
+                            .child(
+                                div()
+                                    .h_full()
+                                    .w(relative(progress))
+                                    .rounded(px(3.0))
+                                    .bg(rgb(0x4f8fe8)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_size(px(11.5))
+                            .line_height(px(17.0))
+                            .text_color(rgb(0xffffff).opacity(0.58))
+                            .child(detail),
+                    )
+            }
+            CefComponentWindowState::Offline { message, checking } => {
+                let details = self
+                    .details_open
+                    .then(|| format!("CEF {}\n{message}", self.version));
+                let status = if *checking {
+                    "Checking the connection…"
+                } else {
+                    "Waiting for a connection…"
+                };
+                let details_open = self.details_open;
+                root.child(cef_component_title("You're offline"))
+                    .child(cef_component_lead(
+                        "Ghostex needs an internet connection once, to download its browser runtime from GitHub. It continues on its own when you're back online.",
+                    ))
+                    .when_some(details, |this, details| {
+                        this.child(cef_component_error_text(
+                            details,
+                            rgb(0xffffff).opacity(0.55),
+                        ))
+                    })
+                    .child(cef_component_buttons(Some(details_open), Some(status), cx))
+            }
+            CefComponentWindowState::Failed(message) => {
+                let message = message.clone();
+                root.child(cef_component_title("Browser runtime setup failed"))
+                    .child(cef_component_lead(
+                        "Ghostex needs its browser runtime before it can start. Retry, and if this keeps happening, report the error below.",
+                    ))
+                    .child(cef_component_note(format!("CEF {}", self.version)))
+                    .child(cef_component_error_text(message, rgb(0xff9da5)))
+                    .child(cef_component_buttons(None, None, cx))
+            }
+        }
+    }
+}
+
+fn cef_component_title(text: &'static str) -> impl IntoElement {
+    div()
+        .flex_none()
+        .text_size(px(21.0))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(rgb(0xffffff).opacity(0.95))
+        .child(text)
+}
+
+fn cef_component_lead(text: &'static str) -> impl IntoElement {
+    div()
+        .flex_none()
+        .text_size(px(12.5))
+        .line_height(px(18.0))
+        .text_color(rgb(0xffffff).opacity(0.62))
+        .child(text)
+}
+
+fn cef_component_note(text: String) -> impl IntoElement {
+    div()
+        .flex_none()
+        .text_size(px(11.0))
+        .text_color(rgb(0xffffff).opacity(0.42))
+        .child(text)
+}
+
+/// Retry, the optional Details toggle and a status line, pinned to the bottom of the window so the
+/// text above can never push them off it.
+fn cef_component_buttons(
+    details_open: Option<bool>,
+    status: Option<&'static str>,
+    cx: &mut gpui::Context<GpuiCefComponentWindow>,
+) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_none()
+        .mt_auto()
+        .items_center()
+        .gap(px(10.0))
+        .child(cef_component_window_button(
+            "ghostex-gpui-cef-component-retry",
+            "Retry",
+            true,
+            cx,
+            GpuiCefComponentWindow::retry,
+        ))
+        .when_some(details_open, |this, open| {
+            this.child(cef_component_window_button(
+                "ghostex-gpui-cef-component-details",
+                if open { "Hide details" } else { "Details" },
+                false,
+                cx,
+                GpuiCefComponentWindow::toggle_details,
+            ))
+        })
+        .when_some(status, |this, status| {
+            this.child(
                 div()
                     .text_size(px(11.5))
-                    .line_height(px(17.0))
-                    .text_color(if failed {
-                        rgb(0xff9da5).into()
-                    } else {
-                        rgb(0xffffff).opacity(0.58)
-                    })
-                    .child(detail),
+                    .text_color(rgb(0xffffff).opacity(0.5))
+                    .child(status),
             )
-            .when(failed, |this| {
-                this.child(
-                    div()
-                        .id("ghostex-gpui-cef-component-retry")
-                        .flex()
-                        .h(px(30.0))
-                        .w(px(92.0))
-                        .items_center()
-                        .justify_center()
-                        .rounded(px(6.0))
-                        .border_1()
-                        .border_color(rgb(0xffffff).opacity(0.22))
-                        .bg(rgb(0x377bd8))
-                        .hover(|this| this.bg(rgb(0x4389e7)))
-                        .cursor_pointer()
-                        .text_size(px(12.0))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(rgb(0xffffff).opacity(0.94))
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|_, _: &MouseDownEvent, window, cx| {
-                                window.prevent_default();
-                                cx.stop_propagation();
-                            }),
-                        )
-                        .on_mouse_up(
-                            MouseButton::Left,
-                            cx.listener(|this, _: &MouseUpEvent, window, cx| {
-                                window.prevent_default();
-                                cx.stop_propagation();
-                                this.retry(cx);
-                            }),
-                        )
-                        .child("Retry"),
-                )
-            })
-    }
+        })
 }
 
 fn cef_component_bytes_label(bytes: u64) -> String {
@@ -325,29 +462,53 @@ impl GhostexGpuiApp {
 
     #[allow(dead_code)] // the ghostex-gpui-cef-bootstrap binary (Linux) is the only caller
     fn start_cef_component_install(&mut self, cx: &mut gpui::Context<Self>) {
+        self.start_cef_component_install_attempt(None, cx);
+    }
+
+    /// `offline_attempt` is set for the automatic retries while offline (`offline_retry_delay`):
+    /// they keep the offline view, saying it checks the connection, until a download really starts,
+    /// and never activate the window. Retry (`None`) starts over and shows the progress at once.
+    fn start_cef_component_install_attempt(
+        &mut self,
+        offline_attempt: Option<u32>,
+        cx: &mut gpui::Context<Self>,
+    ) {
         self.cef_component_install_generation =
             self.cef_component_install_generation.wrapping_add(1);
         let generation = self.cef_component_install_generation;
-        let version = expected_cef_component_version();
-        self.open_cef_component_window(
-            CefComponentWindowState::Installing(CefComponentProgress::checking()),
-            version,
-            cx,
-        );
+        if offline_attempt.is_some() {
+            self.update_cef_component_window_quietly(
+                |state| {
+                    if let CefComponentWindowState::Offline { checking, .. } = state {
+                        *checking = true;
+                    }
+                },
+                cx,
+            );
+        } else {
+            self.open_cef_component_window(
+                CefComponentWindowState::Installing(CefComponentProgress::checking()),
+                expected_cef_component_version(),
+                cx,
+            );
+        }
 
-        let (progress_tx, mut progress_rx) = mpsc::unbounded();
+        let (progress_tx, mut progress_rx) = mpsc::unbounded::<CefComponentProgress>();
         cx.spawn(async move |this, cx| {
             while let Some(progress) = progress_rx.next().await {
                 let _ = this.update(cx, |this, cx| {
                     if this.cef_component_install_generation != generation {
                         return;
                     }
-                    if let Some(handle) = this.cef_component_window {
-                        let _ = handle.update(cx, |view, window, cx| {
-                            view.set_state(CefComponentWindowState::Installing(progress), cx);
-                            window.refresh();
-                        });
+                    // The store reports Downloading before the request is made, so a retry
+                    // that is still offline would flash the progress view every time.
+                    if offline_attempt.is_some() && !cef_component_download_started(&progress) {
+                        return;
                     }
+                    this.update_cef_component_window_quietly(
+                        |state| *state = CefComponentWindowState::Installing(progress),
+                        cx,
+                    );
                 });
             }
         })
@@ -371,18 +532,24 @@ impl GhostexGpuiApp {
                         this.initialize_cef(cx);
                     }
                     Err(message) => {
-                        if let Some(handle) = this.cef_component_window {
-                            let _ = handle.update(cx, |view, window, cx| {
-                                view.set_state(
-                                    CefComponentWindowState::Failed(message.clone()),
-                                    cx,
-                                );
-                                window.refresh();
-                            });
+                        let state = CefComponentWindowState::for_failure(message);
+                        let offline = matches!(state, CefComponentWindowState::Offline { .. });
+                        if this.cef_component_window.is_some() {
+                            this.update_cef_component_window_quietly(
+                                |current| *current = state,
+                                cx,
+                            );
                         } else {
                             this.open_cef_component_window(
-                                CefComponentWindowState::Failed(message),
+                                state,
                                 expected_cef_component_version(),
+                                cx,
+                            );
+                        }
+                        if offline {
+                            this.schedule_offline_retry(
+                                generation,
+                                offline_attempt.map_or(0, |attempt| attempt.saturating_add(1)),
                                 cx,
                             );
                         }
@@ -391,6 +558,42 @@ impl GhostexGpuiApp {
             });
         })
         .detach();
+    }
+
+    /// The next automatic retry, unless Retry or another attempt started in the meantime.
+    fn schedule_offline_retry(
+        &mut self,
+        generation: u64,
+        attempt: u32,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(offline_retry_delay(attempt))
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.cef_component_install_generation == generation {
+                    this.start_cef_component_install_attempt(Some(attempt), cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Changes what the setup window shows without raising or focusing it.
+    fn update_cef_component_window_quietly(
+        &mut self,
+        change: impl FnOnce(&mut CefComponentWindowState),
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if let Some(handle) = self.cef_component_window {
+            let _ = handle.update(cx, |view, window, cx| {
+                let mut state = view.state.clone();
+                change(&mut state);
+                view.set_state(state, cx);
+                window.refresh();
+            });
+        }
     }
 }
 
@@ -842,7 +1045,68 @@ fn expected_cef_component_version() -> String {
 mod tests {
     use super::*;
 
-    const BUILD_CEF: &str = "156.0.14+g4fa4ab5+chromium-156.0.8078.48";
+    #[test]
+    fn only_a_download_without_a_connection_shows_the_offline_state() {
+        let offline = "Could not download component asset from https://github.com/maddada/ghostex-components/releases/download/cef-x/cef-x-linux-x64.tar.gz: HTTPS request failed (no connection): io: failed to lookup address information: Temporary failure in name resolution";
+        assert!(matches!(
+            CefComponentWindowState::for_failure(offline.to_string()),
+            CefComponentWindowState::Offline {
+                checking: false,
+                ..
+            }
+        ));
+        for failure in [
+            "Could not download component asset from https://github.com/x: HTTPS request failed: http status: 404",
+            "Component download write failed: No space left on device (os error 28)",
+            "Downloaded component asset failed SHA-256 verification against the app's sealed manifest",
+            "The sealed CEF component manifest is unavailable.",
+        ] {
+            assert!(
+                matches!(
+                    CefComponentWindowState::for_failure(failure.to_string()),
+                    CefComponentWindowState::Failed(_)
+                ),
+                "{failure}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_quiet_retry_shows_progress_only_once_bytes_arrive() {
+        let progress = |phase, downloaded_bytes| CefComponentProgress {
+            downloaded_bytes,
+            phase,
+            size_bytes: 150 << 20,
+        };
+        use component_store::ComponentStoreProgressPhase as Phase;
+        assert!(!cef_component_download_started(&progress(
+            Phase::Checking,
+            0
+        )));
+        assert!(!cef_component_download_started(&progress(
+            Phase::Downloading,
+            0
+        )));
+        assert!(cef_component_download_started(&progress(
+            Phase::Downloading,
+            64 << 10
+        )));
+        assert!(cef_component_download_started(&progress(
+            Phase::Verifying,
+            0
+        )));
+    }
+
+    #[test]
+    fn offline_retries_back_off_to_once_a_minute() {
+        let delays: Vec<u64> = (0..8)
+            .map(|attempt| offline_retry_delay(attempt).as_secs())
+            .collect();
+        assert_eq!(delays, [5, 10, 20, 40, 60, 60, 60, 60]);
+        assert_eq!(offline_retry_delay(u32::MAX).as_secs(), 60);
+    }
+
+    const BUILD_CEF: &str = "156.0.15+gcf671c0+chromium-156.0.8078.80";
     const OLD_CEF: &str = "154.0.26+ge72305f+chromium-154.0.8037.58";
 
     /// A folder of test runtime folders, removed when the test ends.
@@ -890,7 +1154,7 @@ mod tests {
         assert!(skipped[0].contains(&stray.join("libcef.so").display().to_string()));
         let readiness = linux_cef_runtime_readiness(source, &skipped, || {
             Ok(CefRuntimeReadiness::InstallRequired {
-                version: "156.0.14-g4fa4ab5-chromium-156.0.8078.48-stripped".to_string(),
+                version: "156.0.15-gcf671c0-chromium-156.0.8078.80-stripped".to_string(),
             })
         });
         assert!(matches!(

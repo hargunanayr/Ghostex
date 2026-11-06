@@ -60,7 +60,7 @@ pub const DEFAULT_GHOSTEX_SETTINGS: &[(&str, J)] = &[
     ("otherFileOpenTarget", J::Str("files")),
     ("videoFileOpenTarget", J::Str("files")),
     ("audioFileOpenTarget", J::Str("files")),
-    ("docsOpenFilesAsTabs", J::Bool(false)),
+    ("docsOpenFilesAsTabs", J::Bool(true)),
     // CDXC:Settings 2026-06-29-17:54:
     // New installs start at General Settings. Once the user closes Settings, the
     // modal saves only navigation chrome state here, not search text or private
@@ -123,8 +123,13 @@ pub const DEFAULT_GHOSTEX_SETTINGS: &[(&str, J)] = &[
     ("gitActionsTitlebarButtonHidden", J::Bool(false)),
     // CDXC:Extensions 2026-10-01 DECISION: Actions is off by default (built_in_extensions.rs).
     ("actionsHidden", J::Bool(true)),
-    // CDXC:AgentBox 2026-10-06 DECISION: Cloud Boxes is off by default (official_extensions.rs).
-    ("cloudBoxesHidden", J::Bool(true)),
+    // CDXC:CloudBoxes 2026-11-02 DECISION: Cloud Boxes is on by default everywhere (D11, official_extensions.rs); `cloudBoxesEnabled` replaces `cloudBoxesHidden`, whose saved `true` default would have kept it off.
+    ("cloudBoxesEnabled", J::Bool(true)),
+    // Cloud Boxes (packages/gx-protocol/src/cloud_box/settings.rs `setting_keys`): 0 = no monthly cap.
+    ("cloudBoxesMonthlyCapUsd", J::Num(0.0)),
+    ("cloudBoxesIdleStopMinutes", J::Num(15.0)),
+    ("cloudBoxesDeleteStoppedAfterDays", J::Num(7.0)),
+    ("cloudBoxesPhoneStartEnabled", J::Bool(false)),
     // CDXC:Workspaces 2026-10-09 DECISION: Workspaces is off by default (official_extensions.rs).
     ("workspacesHidden", J::Bool(true)),
     // CDXC:VoiceMode 2026-10-21 DECISION: Read aloud is off by default (official_extensions.rs).
@@ -184,6 +189,8 @@ pub const DEFAULT_GHOSTEX_SETTINGS: &[(&str, J)] = &[
     ("globalBeadsDisplayKey", J::Str("")),
     ("globalBeadsDirectory", J::Str("")),
     ("globalDocsDirectory", J::Str("")),
+    // Empty keeps Add Project opening at the home folder, as before the setting existed.
+    ("defaultProjectsFolder", J::Str("")),
     // CDXC:Git 2026-05-15-14:33:
     // Project-header git stats should hide the changed-file count by default and
     // show only added/removed line counts. Users can opt back into the file
@@ -226,6 +233,7 @@ pub const DEFAULT_GHOSTEX_SETTINGS: &[(&str, J)] = &[
     // and never the raw account id the hash is derived from.
     ("analyticsEnabled", J::Bool(true)),
     ("debuggingMode", J::Bool(false)),
+    ("claudeHookFreeActivity", J::Bool(false)),
     (
         "diagnosticLogging",
         J::Obj(&[("scenarios", J::Obj(&[])), ("version", J::Num(1.0))]),
@@ -443,6 +451,9 @@ pub const DEFAULT_GHOSTEX_SETTINGS: &[(&str, J)] = &[
     ("keepViewsLoaded", J::Bool(false)),
     ("autoSleepRequireAgentResumeCommand", J::Bool(true)),
     ("autoSleepFavoriteAgentSessions", J::Bool(false)),
+    ("startServerAtLogin", J::Bool(false)),
+    ("openAppAtLogin", J::Bool(false)),
+    ("resumeSessionsAfterRestart", J::Bool(false)),
     ("keepAwakeActivateOnExternalDisplay", J::Bool(false)),
     ("keepAwakeActivateOnLaunch", J::Bool(false)),
     ("keepAwakeAllowDisplaySleep", J::Bool(false)),
@@ -482,6 +493,10 @@ pub const DEFAULT_GHOSTEX_SETTINGS: &[(&str, J)] = &[
     // CDXC:Notifications 2026-10-05 DECISION:
     // User: a banked reset that expires within 3 days, and again within 24 hours, also gets a system notification, which "can be switched off for the system" while the red bell row stays.
     ("resetExpirySystemNotifications", J::Bool(true)),
+    // CDXC:Notifications 2026-11-01 DECISION:
+    // User (Q929) on a switch and a colour for the light-blue border a session's pane gets when it finishes work: "Yes, add both", "make it disabled by default for new users too pls. keep the color and the switch in same row in settings. only show color picker if toggled on."
+    ("showFinishedWorkBorder", J::Bool(false)),
+    ("finishedWorkBorderColor", J::Str("#95d7f6")),
     // CDXC:Workarea 2026-05-23-00:50:
     // The session-id pane overlay preference is configurable, and the
     // native label itself must still render only for terminal panes that carry
@@ -520,8 +535,19 @@ pub const DEFAULT_GHOSTEX_SETTINGS: &[(&str, J)] = &[
     ("unifiedGroupByProject", J::Bool(false)),
     // CDXC:Sidebar 2026-10-31 SEE-ALSO: gx-core unified_sidebar/grouping.rs; repository keys in the order the user dragged the project groups into. No Settings row: the drag is how it is set.
     ("unifiedProjectOrder", J::Arr(&[])),
-    ("unifiedSessionCardHoverButtons", super::session_card_hover_actions::DEFAULT_UNIFIED_SESSION_CARD_HOVER_BUTTONS),
+    (
+        "unifiedSessionCardHoverButtons",
+        super::session_card_hover_actions::DEFAULT_UNIFIED_SESSION_CARD_HOVER_BUTTONS,
+    ),
     ("sidebarHideProjectsWithoutSessions", J::Bool(false)),
+    ("sidebarSeparateByMachine", J::Bool(false)),
+    // Settings > Sync, one switch per thing that syncs (gx-core settings_sync `SYNC_CATEGORIES`).
+    ("syncSpaces", J::Bool(true)),
+    ("syncAppearance", J::Bool(false)),
+    ("syncAgentDefaults", J::Bool(false)),
+    ("syncSoundsAndNotifications", J::Bool(false)),
+    ("syncKeybindings", J::Bool(false)),
+    ("syncCoordinator", J::Bool(false)),
     ("projectSwitchKeepAliveMinutes", J::Num(10.0)),
     ("sidebarSpaceFollowActiveSession", J::Bool(false)),
     ("sidebarVisibilityMemory", J::Str("shared")),
@@ -531,12 +557,17 @@ pub const DEFAULT_GHOSTEX_SETTINGS: &[(&str, J)] = &[
     ("sidebarTheme", J::Str("system")),
     ("sessionChatTheme", J::Str("app")),
     ("sessionChatFontFamily", J::Str("")),
+    // CDXC:SessionChat 2026-10-31 DECISION: User: "add a slider to pick the color of the text how strong it is (color of text in the chat now is not full white, i have user wanting it to be full white". 0% is today's colour, so nobody's look changes until they move it; 100% is full white in dark mode and full black in light mode.
+    ("sessionChatTextStrengthPercent", J::Num(0.0)),
+    // CDXC:Settings 2026-11-05 DECISION: User (issue #425): one Interface scale for the sidebar, chat, Files and terminal font, with Scale areas separately off by default. A file that never saved the switch reads it as on when an area was already set away from its default (`interface_scale::scale_areas_separately`).
+    ("interfaceScalePercent", J::Num(100.0)),
+    ("interfaceScaleAreasSeparately", J::Bool(false)),
     ("sessionChatZoomPercent", J::Num(100.0)),
+    ("filesZoomPercent", J::Num(100.0)),
     ("sessionChatCustomTranscriptWidthEnabled", J::Bool(false)),
     ("sessionChatTranscriptWidthPercent", J::Num(75.0)),
-    ("sessionChatVerboseMode", J::Bool(false)),
-    // CDXC:SessionChat 2026-09-27 DECISION: User: "make simple mode default enabled in the gpui app". A saved `false` still wins; only chats with no saved choice start simple.
-    ("sessionChatSimpleMode", J::Bool(true)),
+    // CDXC:SessionChat 2026-11-02 DECISION: User: "in settings i think we have setting for verbose, make that about defaulting to detailed view but make sure it's in advanced". Off, new chats open Normal (supersedes 2026-09-27's Simple mode by default, which this inherits as the off state); a saved `sessionChatVerboseMode` true or `sessionChatSimpleMode` false reads as on (`migrate_chat_view_default`).
+    ("sessionChatDetailedView", J::Bool(false)),
     ("sessionChatFileEditPreviews", J::Bool(false)),
     // CDXC:SessionChat 2026-10-16 DECISION: User, on a tester's request to draw the agent's thinking grey and its output white as terminals do: "Sure please do it as a toggle (disabled by default) so we can check how it looks." Off keeps the unified look; on, thinking takes the theme's muted text colour and replies its full foreground, in the desktop, web and phone chats.
     ("sessionChatMutedThinking", J::Bool(false)),
@@ -554,18 +585,29 @@ pub const DEFAULT_GHOSTEX_SETTINGS: &[(&str, J)] = &[
     ("voiceAgentOpenaiVoice", J::Str("marin")),
     ("voiceAgentSpeed", J::Str("1")),
     ("voiceAgentCallMode", J::Str("regular")),
+    // CDXC:VoiceMode 2026-11-05 DECISION: User (Q1261): the Dictate hotkey is Auto, a tap toggles and a hold of 300 ms or more records until release. These three are this app's own Dictate settings (the engine, model and clean-up are gxserver's, per computer); an empty microphone is the system default input.
+    ("dictateHotkeyMode", J::Str("auto")),
+    ("dictateMicrophone", J::Str("")),
+    ("dictateInsertSpacing", J::Bool(true)),
     // Read aloud's Voice (empty is the system voice) and Speed, on Settings > Chat. Auto-read has no
     // saved value: CDXC:VoiceMode 2026-10-21 DECISION in packages/gx-chat-core/src/read_aloud/events.rs.
     ("readAloudVoice", J::Str("")),
     ("readAloudRate", J::Num(1.0)),
     // CDXC:SessionChat 2026-10-16 DECISION: User: "please add a setting to enable the behavior ... but keep it disabled by default" and "make it an advanced setting". Picking an answer sends a one-question card only while this is on.
     ("chatSendOnPick", J::Bool(false)),
+    ("chatAnswersWaitForIdle", J::Bool(false)),
     ("chatPageOpenTarget", J::Str("popup")),
+    // CDXC:Coordinators 2026-11-05 DECISION: the Board pill opens the side list until the user picks Columns (extras/coordinator_board.rs in gx-chat-core).
+    ("coordinatorBoardView", J::Str("list")),
+    // CDXC:AgentGuide 2026-11-02 DECISION: User (Q1066): the short Ghostex note goes to every agent session Ghostex starts, "on by default (with a setting to turn it off)".
+    ("agentGhostexNote", J::Bool(true)),
+    // CDXC:AgentGuide 2026-11-02 DECISION: User (#263): "if user asks for browser we ask which the user prefers (internal ghostex browser, or external browser)", and (Q1069) the answer is kept in this setting, which the note and `ghostex agent-guide` then state so agents stop asking. Ask until the user picks.
+    ("agentPreviewBrowser", J::Str("ask")),
     // CDXC:MarkedHandovers 2026-10-11 DECISION: User: "force the marked handovers for coordinators/orchestrator threads and their children by default and make it disabled by default for non-orchestrator/child threads". This switch covers every other session and stays off by default; threads mark regardless, orchestrators unless `orchestratorPlainReplies` is on.
     ("markedHandovers", J::Bool(false)),
     // CDXC:MarkedHandovers 2026-10-17 DECISION: User: "please allow launching an orchestrator without the reply style so the orchestrator answers normally. but put "Not recommended" and make it an advanced setting". Off by default, so orchestrators keep marking their handovers; their threads mark their reports either way.
     ("orchestratorPlainReplies", J::Bool(false)),
-    // CDXC:Coordinators 2026-10-20 DECISION: User: "By default, we just show high and X high, but if he enables this, he can see all of the effort levels ... make the settings advanced." Off by default, so orchestrator effort pickers list only Medium, High and XHigh since 2026-10-29 ("allow picking medium here but default to high"; `orchestrator_efforts` in packages/gx-chat-core/src/menus/orchestrator_effort.rs).
+    // CDXC:Coordinators 2026-10-20 DECISION: User: "By default, we just show high and X high, but if he enables this, he can see all of the effort levels ... make the settings advanced." Off by default, so orchestrator effort pickers list only Low, Medium, High and XHigh since 2026-10-31 ("please allow setting low as the orchestrator effort level"; Medium joined on 2026-10-29 with "allow picking medium here but default to high"; `orchestrator_efforts` in packages/gx-chat-core/src/menus/orchestrator_effort.rs).
     ("orchestratorAllEfforts", J::Bool(false)),
     // CDXC:MarkedHandovers 2026-10-11 DECISION: User: coloured labels (style D) by default, their first pick of the three.
     ("markedHandoversStyle", J::Str("labels")),
@@ -707,10 +749,14 @@ pub const DEFAULT_GHOSTEX_SETTINGS: &[(&str, J)] = &[
             ("toggleChatSummaryMode", J::Str("ctrl+alt+s")),
             ("toggleChatComposerMaximized", J::Str("ctrl+alt+m")),
             ("toggleChatFilesLinks", J::Str("ctrl+alt+l")),
+            ("newChatPickProject", J::Str("alt+o")),
+            ("newChatPickComputer", J::Str("alt+m")),
+            ("newChatPickWhere", J::Str("alt+w")),
+            ("newChatPickBranch", J::Str("alt+b")),
             ("toggleVoiceAgent", J::Str("ctrl+alt+v")),
             ("voiceCallAboutSession", J::Str("")),
             ("holdToTalk", J::Str("")),
-            ("toggleDictation", J::Str("ctrl+alt+d")),
+            ("toggleDictation", J::Str("ctrl+alt+space")),
             ("createAgentSession", J::Str("cmd+shift+o")),
             ("createSession", J::Str("cmd+shift+t")),
             ("openCommandPalette", J::Str("cmd+shift+p")),
@@ -826,6 +872,7 @@ pub const DEFAULT_GHOSTEX_SETTINGS: &[(&str, J)] = &[
     ),
     ("showActivePaneOutline", J::Bool(false)),
     ("workspaceActivePaneBorderColor", J::Str("#3b82f6")),
+    ("workAreaFrame", J::Bool(false)),
     ("windowGlass", J::Str("auto")),
     ("windowGlassSource", J::Str("desktopAndWindows")),
     ("windowGlassImagePlacement", J::Str("static")),
@@ -885,6 +932,9 @@ pub const DEFAULT_GHOSTEX_SETTINGS: &[(&str, J)] = &[
     // native panes always render without configurable spacing.
     ("workspacePaneGap", J::Num(0.0)),
     ("remoteMachines", J::Arr(&[])),
+    // This computer's pill in the sidebar; empty uses one made from its name
+    // (CDXC:RemoteMachines 2026-11-06 in gx-core machine_short_names.rs).
+    ("localMachineShortName", J::Str("")),
     ("remoteTailscaleEnabled", J::Bool(true)),
     ("commandsPanelDefaultHeightPx", J::Num(125.0)),
     ("commandsPanelSide", J::Str("bottom")),

@@ -69,15 +69,80 @@ pub fn handle_with_ids(
             .into_iter()
             .collect()
         }
+        ActionKind::ToggleCoordinatorBoardGroup => {
+            crate::extras::coordinator_board::toggle(
+                &mut state.extras.panels.board_toggled,
+                text(action, "group"),
+            );
+            Vec::new()
+        }
+        ActionKind::InsertBoardReference => {
+            crate::extras::coordinator_board::insert_reference(&action.params)
+        }
+        ActionKind::CoordinatorBoardAnswer => crate::extras::coordinator_board::answer(
+            state,
+            &action.params,
+            next_request_id(),
+        )
+        .into_iter()
+        .collect(),
+        ActionKind::CoordinatorBoardChange => crate::extras::coordinator_board::change(
+            state,
+            &action.params,
+            next_request_id(),
+        )
+        .into_iter()
+        .collect(),
+        ActionKind::CoordinatorBoardMore => {
+            crate::extras::coordinator_board::toggle(
+                &mut state.extras.panels.board_expanded,
+                text(action, "group"),
+            );
+            Vec::new()
+        }
         // gxserver resumes a closed thread first; the host's focus follows its answer.
         ActionKind::OpenCoordinatorThread => crate::extras::coordinator_threads::open_thread(
             &mut state.extras.panels,
+            text(action, "serverId"),
             text(action, "projectId"),
             text(action, "sessionId"),
             next_request_id(),
         )
         .into_iter()
         .collect(),
+
+        ActionKind::OpenSideChat => {
+            crate::extras::side_chats::open(text(action, "projectId"), text(action, "sessionId"))
+                .into_iter()
+                .collect()
+        }
+        ActionKind::BringBackSideChat | ActionKind::DeleteSideChat => {
+            let target = action
+                .param("sessionId")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let call = if action.kind == ActionKind::BringBackSideChat {
+                crate::extras::side_chats::SideChatCall::BringBack(target)
+            } else {
+                crate::extras::side_chats::SideChatCall::Delete(target)
+            };
+            vec![crate::extras::side_chats::call(
+                &mut state.extras.panels,
+                call,
+                next_request_id(),
+            )]
+        }
+
+        ActionKind::AnswerRelayedApproval => {
+            crate::extras::relayed_approvals::answer(state, action, next_request_id())
+                .into_iter()
+                .collect()
+        }
+        ActionKind::AnswerSecretRequest => {
+            crate::extras::secret_requests::answer(state, action, next_request_id())
+                .into_iter()
+                .collect()
+        }
 
         ActionKind::SearchOpen => {
             search::open(&mut state.extras.search);

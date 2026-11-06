@@ -10,14 +10,20 @@ use gpui_component::tooltip::ManagedTooltipExt as _;
 use gpui_component::{ElementExt as _, h_flex};
 use serde_json::{Value, json};
 
-use ghostex_gx_core::unified_sidebar::UnifiedStatus;
+use ghostex_gx_core::SessionRow;
+use ghostex_gx_core::unified_sidebar::{UnifiedBranchLine, UnifiedStatus};
 
 use super::model::UnifiedCard;
+use super::pinned_drag::{PINNED_TARGET, pinned_scope};
 use crate::GhostexGpuiApp;
 use crate::app::helpers::chrome_color;
-use crate::app::helpers::indicator_animation::ThrottledAnimationExt as _;
 use crate::app::native_sidebar::appearance::SidebarAppearance;
-use crate::app::native_sidebar::status::{FAILED_COLOR, QUESTION_COLOR, WORKING_COLOR};
+use crate::app::native_sidebar::drag::{
+    SidebarDrag, SidebarDragPreview, SidebarDropTarget as _, drop_line,
+};
+use crate::app::native_sidebar::drag_source::SidebarDragSource as _;
+use crate::app::native_sidebar::row_drag::{RowDragIdentity, RowDragPreview};
+use crate::app::native_sidebar::status::{self, FAILED_COLOR, QUESTION_COLOR, WORKING_COLOR};
 
 pub(super) fn now_ms() -> i64 {
     web_time::SystemTime::now()
@@ -54,10 +60,13 @@ pub(super) fn status_look(
     }
 }
 
-/// The status word with its icon and, while the agent works, its timer.
+/// The status dot and, while the agent works, its timer.
 ///
 /// CDXC:Sidebar 2026-10-30 DECISION:
-/// User (Q786): a Unified card shows its status as an icon, a word and a live timer, in Ghostex's status colours, where a classic row draws a dot.
+/// User (Q786): a Unified card shows its status in Ghostex's status colours, with a live timer while the agent works.
+///
+/// CDXC:Sidebar 2026-11-04 DECISION:
+/// User: "Please don't say Working or Question or Done for the threads in the sidebar, should just show the icon", and "we should make the indicator dots stay in 1 place please instead of moving around when the time keeps changing". The status word is gone; the dot sits on the card's right edge, where a Project sidebar row draws its dot, and the timer grows leftward from it, so the dot never moves as the seconds tick. The word stays the slot's accessible label.
 pub(super) fn status_slot(
     card: &UnifiedCard,
     appearance: &SidebarAppearance,
@@ -65,49 +74,54 @@ pub(super) fn status_slot(
 ) -> Option<AnyElement> {
     let status = card.status?;
     let scale = appearance.scale;
-    let (icon, color) = status_look(status, appearance);
+    let (_, color) = status_look(status, appearance);
     let timer = (status == UnifiedStatus::Working)
         .then(|| card.row.timing.working_started_ms)
         .flatten()
         .map(|started| elapsed_label(now - started));
-    let glyph = gpui::svg()
-        .path(icon)
-        .size(px(13.0 * scale))
-        .flex_shrink_0()
-        .text_color(color);
-    let glyph = if status == UnifiedStatus::Working {
-        glyph
-            .with_throttled_animation(
-                format!("unified-working-{}", card.session.session_id),
-                std::time::Duration::from_millis(3000),
-                |icon, progress| {
-                    icon.with_transformation(gpui::Transformation::rotate(gpui::percentage(
-                        progress,
-                    )))
-                },
-            )
-            .into_any_element()
-    } else {
-        glyph.into_any_element()
+    /*
+    CDXC:Sidebar 2026-11-04 DECISION:
+    User (Q1230): the Unified card shows the classic row's static status dots ("use the same icons we have for the non-unified sidebar pls"). The working icon used to spin, and each of its frames rebuilt and laid out the whole sidebar thirty times a second while any agent worked: most of the app's CPU in a profile (issues-1027/macos-perf). The live timer has its own once-a-second tick (list.rs).
+    */
+    let row = &card.row;
+    let glyph = match status {
+        UnifiedStatus::Approval => status::approval_indicator(scale),
+        UnifiedStatus::Question => status::question_indicator(
+            &row.activity,
+            scale,
+            status::session_row_ring(appearance, false, false, None, false),
+        ),
+        _ => status::activity_indicator(
+            &row.activity,
+            row.has_background_work,
+            row.model_selection_failed || row.program_status_failed || row.stuck,
+            scale,
+        )?,
     };
     Some(
         h_flex()
+            .id("unified-card-status")
+            .aria_label(status.label())
             .flex_shrink_0()
             .gap(px(4.0 * scale))
             .text_size(px(12.5 * scale))
-            .font_weight(gpui::FontWeight::MEDIUM)
             .text_color(color)
+            .children(timer.map(|timer| div().opacity(0.85).child(timer)))
             .child(glyph)
-            .child(status.label())
-            .children(timer.map(|timer| {
-                div()
-                    .font_weight(gpui::FontWeight::NORMAL)
-                    .opacity(0.85)
-                    .child(timer)
-            }))
             .into_any_element(),
     )
 }
+
+/// A card's padding, the gap between its lines and the lines' heights, before the zoom.
+const CARD_PADDING_Y: f32 = 7.0;
+const CARD_LINE_GAP: f32 = 3.0;
+const CARD_PROJECT_LINE: f32 = 18.0;
+/// The sidebar's text at GPUI's default line height, which is what the title line comes to.
+const CARD_TITLE_LINE: f32 =
+    crate::app::native_sidebar::appearance::SIDEBAR_TEXT_SIZE * std::f32::consts::GOLDEN_RATIO;
+const CARD_META_LINE: f32 = 17.0;
+/// The space under a card, before the next one.
+const CARD_GAP: f32 = 2.0;
 
 /// Whether project icons show, as the Project sidebar's headers follow it.
 pub(super) fn show_project_icons(hud: &Value) -> bool {
@@ -143,6 +157,12 @@ pub(super) fn repo_tile(
     }
 }
 
+/// Whether a card drags onto the Agents panes, as a Project sidebar row does: a session on this
+/// computer, never a browser tab.
+fn drags_to_panes(row: &SessionRow) -> bool {
+    !row.is_browser && row.key.as_ref().is_some_and(|key| key.machine.is_local())
+}
+
 /// Marks a card or a slim row as the open session: its fill, and an outline drawn over it.
 ///
 /// CDXC:Sidebar 2026-10-30 DECISION:
@@ -152,14 +172,60 @@ pub(super) fn mark_active<E: Styled + ParentElement>(row: E, fill: Hsla, outline
 }
 
 impl GhostexGpuiApp {
-    /// The click, right-click and hover a card and a slim row share with the classic row.
+    /// The click, right-click, hover and drag a card and a slim row share with the classic row.
     pub(super) fn unified_row_interactions(
         &self,
         row: gpui::Stateful<gpui::Div>,
         card: &UnifiedCard,
+        appearance: &SidebarAppearance,
         cx: &mut gpui::Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
         let session_id = card.session.session_id.clone();
+        /*
+        CDXC:Sidebar 2026-11-05 DECISION:
+        User: "please allow me to drag a session card to split like i can for project sidebar". A Unified card or slim row is the Project sidebar row's drag source (`SidebarDrag` of kind "session", drag_source.rs), so the Agents panes take it with the same split and centre zones, refusals and preview (session_pane_placement.rs). Like that row, only a session on this computer drags, and not while a menu is open; it fades while it is dragged. Only pinned cards reorder (pinned_drag.rs), so a release anywhere else in the sidebar does nothing; a plain click still opens the session, since a press only becomes a drag once the pointer moves.
+        */
+        // A pinned card also drags within its pinned cards (pinned_drag.rs), from any computer.
+        let draggable =
+            drags_to_panes(&card.row) || (card.session.is_pinned && !card.row.is_browser);
+        let dragged = draggable.then(|| SidebarDrag {
+            kind: "session",
+            preview: SidebarDragPreview::Row(RowDragPreview {
+                identity: RowDragIdentity::Session {
+                    session: card.session.clone(),
+                },
+                appearance: appearance.clone(),
+                width: px(0.0),
+                pointer_x: px(0.0),
+            }),
+            id: session_id.clone(),
+            title: card.session.title().to_owned(),
+            scale: appearance.scale,
+            refused: Default::default(),
+        });
+        // The ring a reveal flashes once it has scrolled to the row, as a Project sidebar row
+        // draws it (native_sidebar/sessions.rs).
+        let flash = self
+            .native_sidebar
+            .reveal_flash
+            .as_ref()
+            .filter(|(id, _)| *id == session_id)
+            .map(|(_, start)| *start);
+        let row = row
+            .when_some(flash, |row, start| {
+                row.child(crate::app::native_sidebar::scroll::reveal_flash(
+                    start,
+                    appearance.scale,
+                ))
+            })
+            .when(
+                self.native_sidebar.is_dragging("session", &session_id),
+                |row| row.opacity(0.2),
+            )
+            .when_some(
+                dragged.filter(|_| self.native_sidebar.menu.is_none()),
+                |row, dragged| row.sidebar_drag_source(dragged, cx),
+            );
         let hover_id = session_id.clone();
         let menu = card
             .session
@@ -180,54 +246,88 @@ impl GhostexGpuiApp {
             .unwrap_or(1.0);
         // The menu hangs below the card, as a Project sidebar row's does.
         let owner = crate::app::native_sidebar::menus::MenuOwner::default();
-        row.on_prepaint(crate::app::native_sidebar::menus::record_menu_owner(&owner))
-            .on_hover(cx.listener(move |app, hovered: &bool, _, cx| {
-                let current =
-                    app.native_sidebar.hovered_session.as_deref() == Some(hover_id.as_str());
-                if *hovered && !current {
-                    app.native_sidebar.hovered_session = Some(hover_id.clone());
-                    cx.notify();
-                } else if !*hovered && current {
-                    app.native_sidebar.hovered_session = None;
-                    cx.notify();
+        let record_owner = crate::app::native_sidebar::menus::record_menu_owner(&owner);
+        // A card waiting to be scrolled to (a new session in Drafts, gx_store/draft_arrivals.rs)
+        // reports where it was drawn, as a Project sidebar row does.
+        let reveal = self
+            .native_sidebar
+            .pending_reveal
+            .as_ref()
+            .is_some_and(|request| request.session_id == session_id);
+        // Where the card was drawn, as a Project sidebar row records it: the links card opens
+        // beside it and the hover strip's menus hang under it.
+        let view = cx.entity().downgrade();
+        let bounds_id = session_id.clone();
+        // A card with links opens the Project sidebar's floating links card on hover.
+        let opens_links_card = self.native_session_links_row(&card.session).hover_card;
+        row.on_prepaint(move |bounds, window, app| {
+            record_owner(bounds, window, app);
+            let Some(view) = view.upgrade() else {
+                return;
+            };
+            view.update(app, |this, cx| {
+                if this.native_sidebar.session_card_bounds.get(&bounds_id) != Some(&bounds) {
+                    this.native_sidebar
+                        .session_card_bounds
+                        .insert(bounds_id.clone(), bounds);
                 }
-            }))
-            .on_click(
-                cx.listener(move |app, event: &gpui::ClickEvent, window, cx| {
-                    cx.stop_propagation();
-                    let modifiers = event.modifiers();
-                    if modifiers.shift || modifiers.platform || modifiers.control {
-                        return;
-                    }
-                    app.close_sidebar_extension_view(window, cx);
-                    app.dispatch_native_sidebar_ui(
-                        json!({"type": "selectSession", "sessionId": session_id, "mode": "focus"}),
-                        cx,
-                    );
-                    let _ = app.react_to_native_sidebar_session_click(&session_id, cx);
-                    app.reveal_floating_sessions(cx);
-                }),
-            )
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(move |_, event: &gpui::MouseDownEvent, window, cx| {
-                    cx.stop_propagation();
-                    Self::show_native_sidebar_context_menu(
-                        &menu,
-                        owner.get(),
-                        event.position,
-                        scale,
-                        window,
-                        cx,
-                    );
-                }),
-            )
+                if reveal {
+                    this.reveal_native_session_bounds(&bounds_id, bounds, scale, window, cx)
+                }
+            });
+        })
+        .on_hover(cx.listener(move |app, hovered: &bool, _, cx| {
+            let current = app.native_sidebar.hovered_session.as_deref() == Some(hover_id.as_str());
+            if *hovered && !current {
+                app.native_sidebar.hovered_session = Some(hover_id.clone());
+                if opens_links_card {
+                    app.open_session_links_card_after_delay(hover_id.clone(), cx);
+                }
+                cx.notify();
+            } else if !*hovered && current {
+                app.native_sidebar.hovered_session = None;
+                cx.notify();
+            }
+        }))
+        .on_click(
+            cx.listener(move |app, event: &gpui::ClickEvent, window, cx| {
+                cx.stop_propagation();
+                let modifiers = event.modifiers();
+                if modifiers.shift || modifiers.platform || modifiers.control {
+                    return;
+                }
+                app.close_sidebar_extension_view(window, cx);
+                app.dispatch_native_sidebar_ui(
+                    json!({"type": "selectSession", "sessionId": session_id, "mode": "focus"}),
+                    cx,
+                );
+                let _ = app.react_to_native_sidebar_session_click(&session_id, cx);
+                app.reveal_floating_sessions(cx);
+            }),
+        )
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |_, event: &gpui::MouseDownEvent, window, cx| {
+                cx.stop_propagation();
+                Self::show_native_sidebar_context_menu(
+                    &menu,
+                    owner.get(),
+                    event.position,
+                    scale,
+                    window,
+                    cx,
+                );
+            }),
+        )
     }
 
-    /// A card: three lines, or two when there is no branch or pull request to show.
+    /// A card: two lines under a project header, three in the ungrouped list.
     ///
     /// CDXC:Sidebar 2026-10-30 DECISION:
-    /// User (Q785, Q789): a Unified row is a three-line card. Line one names the project by its repository, followed by the machine's name for a session on another machine, with the status on the right; line two is the title; line three is the branch, the pull request and the agent. Hovering it shows Snooze and Park in the status's place (hover.rs).
+    /// User (Q785, Q789): a Unified row is a three-line card. Line one names the project by its repository, with the status on the right; line two is the title; line three is the branch, the pull request and the agent. Hovering it shows Snooze and Park in the status's place (hover.rs).
+    ///
+    /// CDXC:Sidebar 2026-11-06 DECISION:
+    /// User: "please move the name of the pc that has the session to be after the branch name in the 2nd row so it's 2 rows not 3 rows ... i really hate seeing 2 rows for some and 3 rows for some other sessions". The computer's name of a session on another computer no longer sits on a line of its own (or after the repository): it follows the branch on the branch line, "main · WN", on every card, with no branch ("No branch · WN", "Untracked · WN") and in the ungrouped list too. So under a project header every card is two lines and in the ungrouped list every card is three. When the line is tight the branch is cut first, so the name never disappears. It is the computer's short name (CDXC:RemoteMachines 2026-11-06 in gx-core machine_short_names.rs), with the full name in the card's tooltip.
     pub(in crate::app::native_sidebar) fn render_native_unified_card(
         &self,
         card: &UnifiedCard,
@@ -261,14 +361,9 @@ impl GhostexGpuiApp {
                 card.status,
                 None | Some(UnifiedStatus::Working | UnifiedStatus::Waiting)
             );
-        // CDXC:Sidebar 2026-10-31 DECISION: User (Q849): under a project header a card drops its project line, keeping the computer's name for a session on another machine. With nothing left on that line, its status or time and its hover strip move up beside the title.
-        let project = match (&card.machine_label, card.in_group) {
-            (Some(machine), true) => machine.clone(),
-            (None, true) => String::new(),
-            (Some(machine), false) => format!("{} · {machine}", card.repo_label),
-            (None, false) => card.repo_label.clone(),
-        };
-        let title_line_only = card.in_group && card.machine_label.is_none();
+        // CDXC:Sidebar 2026-10-31 DECISION: User (Q849): under a project header a card drops its project line. With nothing left on that line, its status or time and its hover strip move up beside the title. (The computer's name moved to the branch line, CDXC:Sidebar 2026-11-06 above.)
+        let project = card.repo_label.clone();
+        let title_line_only = card.in_group;
         // The strip of the Unified sidebar, or the status when the user turned every button off.
         let strip = hovered
             .then(|| self.render_unified_card_strip(card, appearance, cx))
@@ -294,13 +389,41 @@ impl GhostexGpuiApp {
             .work
             .as_ref()
             .and_then(|work| work.pull_request.as_ref());
-        let has_meta = card.row.menu_facts.branch.is_some() || pull_request.is_some();
+        /*
+        CDXC:Sidebar 2026-11-04 DECISION:
+        User: "for threads on madda folder which doesn't have github it just shows 2 rows (it shouldn't do this, should say something that indicates that it's without source control for that thread, with an icon there too to indicate this (no need for different color tho)". A card whose folder is in no git repository (gx-core unified_sidebar `no_source_control`) keeps its third line, reading "Untracked" (Q1239: "'No source control' is way too long man") beside a crossed-out branch, in the branch line's colour, so every card is the same height.
+        */
+        // CDXC:Sidebar 2026-11-05 DECISION: every card draws its third line, so every card is three
+        // lines high (gx-core `unified_branch_line`): a branch it last showed, or a quiet "No
+        // branch", stands in while its branch is not known.
+        let (branch_icon, branch_text, placeholder) = match &card.branch_line {
+            UnifiedBranchLine::Branch(branch) => ("titlebar/git-branch.svg", branch.clone(), false),
+            UnifiedBranchLine::Untracked => (
+                "titlebar/git-branch-deleted.svg",
+                "Untracked".to_string(),
+                false,
+            ),
+            UnifiedBranchLine::LastKnown(branch) => {
+                ("titlebar/git-branch.svg", branch.clone(), true)
+            }
+            UnifiedBranchLine::Unknown => {
+                ("titlebar/git-branch.svg", "No branch".to_string(), true)
+            }
+        };
+        /*
+        CDXC:Sidebar 2026-11-05 DECISION:
+        User: "the dot that indicates working/status is shifted to the left a bit and not center aligned with the icon below it". The agent icon sits in the status dot's own slot (`status::STATUS_SLOT_WIDTH`, centred), so the card's right column has one fixed width and every dot, a question's overlapped pair included, is centred over the agent icon, whatever the timer to its left says.
+        */
         let agent = || {
-            div().flex_shrink_0().opacity(0.75).child(
-                crate::app::native_sidebar::icons::session_icon(
+            div()
+                .w(px(status::STATUS_SLOT_WIDTH * scale))
+                .flex_shrink_0()
+                .flex()
+                .justify_center()
+                .opacity(0.75)
+                .child(crate::app::native_sidebar::icons::session_icon(
                     session, hud, appearance, false, false,
-                ),
-            )
+                ))
         };
         let title_color = if needs_you || focused {
             Hsla::from(chrome_color(0xd8d8d8, 0x292929))
@@ -340,9 +463,9 @@ impl GhostexGpuiApp {
             .w_full()
             .flex()
             .flex_col()
-            .gap(px(3.0 * scale))
+            .gap(px(CARD_LINE_GAP * scale))
             .px(px(8.0 * scale))
-            .py(px(7.0 * scale))
+            .py(px(CARD_PADDING_Y * scale))
             .rounded(px(5.0 * scale))
             .relative()
             .cursor_default()
@@ -352,7 +475,7 @@ impl GhostexGpuiApp {
             .when(!title_line_only, |column| {
                 column.child(
                     h_flex()
-                        .h(px(18.0 * scale))
+                        .h(px(CARD_PROJECT_LINE * scale))
                         .gap(px(6.0 * scale))
                         .when(!card.in_group, |line| {
                             line.child(repo_tile(card, appearance, show_project_icons(hud), false))
@@ -375,7 +498,7 @@ impl GhostexGpuiApp {
             })
             .child(
                 h_flex()
-                    .min_h(px(20.0 * scale))
+                    .min_h(px(CARD_TITLE_LINE * scale))
                     .gap(px(6.0 * scale))
                     .when(title_line_only && session.is_pinned, |line| {
                         line.child(pin())
@@ -391,58 +514,73 @@ impl GhostexGpuiApp {
                             .when(recede, |title| title.opacity(0.75))
                             .child(session.title().to_owned()),
                     )
-                    .when(!has_meta && !(title_line_only && hovered), |line| {
-                        line.child(agent())
-                    })
+                    // A coordinator's workers are no cards (CDXC:Sidebar 2026-11-04 in gx-core
+                    // unified_sidebar/build.rs), so its card carries the Project sidebar's crew
+                    // badge: how many wait for approval, wait on you or work; nothing while idle.
+                    .children(crate::app::native_sidebar::threads::coordinator_badge(
+                        session, appearance,
+                    ))
                     .children(right.take()),
             )
-            .when(has_meta, |column| {
-                column.child(
-                    h_flex()
-                        .h(px(17.0 * scale))
-                        .gap(px(5.0 * scale))
-                        .text_size(px(12.5 * scale))
-                        .font_weight(gpui::FontWeight::NORMAL)
-                        .text_color(appearance.muted)
-                        .children(card.row.menu_facts.branch.clone().map(|branch| {
-                            h_flex()
-                                .min_w_0()
-                                .flex_1()
-                                .gap(px(4.0 * scale))
-                                .child(
-                                    gpui::svg()
-                                        .path("titlebar/git-branch.svg")
-                                        .size(px(12.0 * scale))
-                                        .flex_shrink_0()
-                                        .text_color(appearance.muted),
-                                )
-                                .child(div().min_w_0().truncate().child(branch))
-                        }))
-                        .when(card.row.menu_facts.branch.is_none(), |line| {
-                            line.child(div().flex_1())
-                        })
-                        .children(pull_request.map(|pull_request| {
-                            let color: Hsla = match pull_request.state.as_str() {
-                                "merged" => chrome_color(0xa371f7, 0x8250df).into(),
-                                "closed" => rgb(FAILED_COLOR).into(),
-                                "draft" => appearance.muted,
-                                _ => chrome_color(0x3fb950, 0x1a7f37).into(),
-                            };
-                            h_flex()
-                                .flex_shrink_0()
-                                .gap(px(2.0 * scale))
-                                .text_color(color)
-                                .child(
-                                    gpui::svg()
-                                        .path("titlebar/git-pull-request.svg")
-                                        .size(px(12.0 * scale))
-                                        .text_color(color),
-                                )
-                                .child(format!("#{}", pull_request.number))
-                        }))
-                        .child(agent()),
-                )
-            })
+            .child(
+                h_flex()
+                    .h(px(CARD_META_LINE * scale))
+                    .gap(px(5.0 * scale))
+                    .text_size(px(12.5 * scale))
+                    .font_weight(gpui::FontWeight::NORMAL)
+                    .text_color(appearance.muted)
+                    .child(
+                        h_flex()
+                            .min_w_0()
+                            .flex_shrink(1.0)
+                            .gap(px(4.0 * scale))
+                            .when(placeholder, |line| line.opacity(0.6))
+                            .child(
+                                gpui::svg()
+                                    .path(branch_icon)
+                                    .size(px(12.0 * scale))
+                                    .flex_shrink_0()
+                                    .text_color(appearance.muted),
+                            )
+                            .child(div().min_w_0().truncate().child(branch_text)),
+                    )
+                    // The computer's short name (gx-core machine_short_names.rs); the card's
+                    // tooltip names it in full.
+                    .children(card.machine_short_label.clone().map(|machine| {
+                        div()
+                            .flex_shrink_0()
+                            .max_w(px(96.0 * scale))
+                            .truncate()
+                            .child(format!("· {machine}"))
+                    }))
+                    // The pull request and the agent stay on the right edge.
+                    .child(div().flex_1())
+                    .children(pull_request.map(|pull_request| {
+                        let color: Hsla = match pull_request.state.as_str() {
+                            "merged" => chrome_color(0xa371f7, 0x8250df).into(),
+                            "closed" => rgb(FAILED_COLOR).into(),
+                            "draft" => appearance.muted,
+                            _ => chrome_color(0x3fb950, 0x1a7f37).into(),
+                        };
+                        h_flex()
+                            .flex_shrink_0()
+                            .gap(px(2.0 * scale))
+                            .text_color(color)
+                            .child(
+                                gpui::svg()
+                                    .path("titlebar/git-pull-request.svg")
+                                    .size(px(12.0 * scale))
+                                    .text_color(color),
+                            )
+                            .child(format!("#{}", pull_request.number))
+                    }))
+                    .child(agent()),
+            )
+            // The line a pinned drag draws where this card would take it (pinned_drag.rs).
+            .children(
+                self.unified_pinned_drop_line(&session.session_id)
+                    .map(|position| drop_line(position, scale)),
+            )
             .when(focused, |row| {
                 mark_active(
                     row,
@@ -450,13 +588,33 @@ impl GhostexGpuiApp {
                     crate::app::native_sidebar::decorations::session_outline(appearance),
                 )
             });
-        let card_row = self.unified_row_interactions(card_row, card, cx);
+        let card_row = self.unified_row_interactions(card_row, card, appearance, cx);
+        let card_row = if session.is_pinned {
+            card_row.sidebar_drop_target(
+                PINNED_TARGET,
+                session.session_id.clone(),
+                Some(pinned_scope(card)),
+                cx,
+            )
+        } else {
+            card_row
+        };
+        /*
+        CDXC:Sidebar 2026-11-06 WHY:
+        A Discord tester: the hover buttons stayed on the first card hovered and did not follow the pointer to the next card until it left the sidebar. The managed tooltip attaches its own `on_hover`, and a GPUI element keeps only one hover listener, so on the card itself it replaced the card's hover tracking (`unified_row_interactions`) as soon as tooltips came on with the pointer inside. The tooltip sits on a wrapper of the card's exact size, so both listeners run.
+        */
         div()
             .w_full()
-            .pb(px(2.0 * scale))
+            .pb(px(CARD_GAP * scale))
             .px(px(3.0 * scale))
             .child(if tooltips {
-                card_row
+                div()
+                    .id(format!(
+                        "native-unified-card-tooltip-{}",
+                        session.session_id
+                    ))
+                    .w_full()
+                    .child(card_row)
                     .managed_discrete_tooltip_with_placement(
                         span.placement(),
                         appearance.tooltip_delay,
@@ -493,6 +651,28 @@ mod tests {
             .py(px(7.0))
             .rounded(px(5.0))
             .relative()
+    }
+
+    #[test]
+    fn only_a_session_on_this_computer_drags_onto_the_panes() {
+        use ghostex_gx_core::{MachineId, SessionKey};
+        let row = |key: Option<SessionKey>, is_browser: bool| SessionRow {
+            key,
+            is_browser,
+            ..SessionRow::default()
+        };
+        assert!(drags_to_panes(&row(
+            Some(SessionKey::local("p", "s")),
+            false
+        )));
+        let mut remote = SessionKey::local("p", "s");
+        remote.machine = MachineId::Remote("remote-ab12".to_string());
+        assert!(!drags_to_panes(&row(Some(remote), false)));
+        assert!(!drags_to_panes(&row(None, true)));
+        assert!(!drags_to_panes(&row(
+            Some(SessionKey::local("p", "s")),
+            true
+        )));
     }
 
     #[test]

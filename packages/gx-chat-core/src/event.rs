@@ -122,6 +122,14 @@ pub struct KnownSession {
     /// When the session last did something worth sorting by (an ISO time), for the `+` picker's
     /// newest-first order.
     pub active_at: String,
+    /// The name of the computer it runs on, as the host's machine tab spells it, for the `+`
+    /// picker's rows of sessions on another computer; empty when the host does not say.
+    pub computer: String,
+    /// The name of its project, for the `+` picker's rows of sessions on another computer.
+    pub project_name: String,
+    /// Its computer is not connected now (the host holds the rows it last saw): the transcript
+    /// still names the session from it, but the `+` picker leaves it out.
+    pub offline: bool,
 }
 
 impl KnownSession {
@@ -277,6 +285,9 @@ pub struct ChatSettings {
     /// The Send when you pick an answer setting (`chatSendOnPick`), the same way.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub send_on_pick: Option<bool>,
+    /// Whether answers wait for the agent's turn to end; the phone learns this from each read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answers_wait_for_idle: Option<bool>,
     /// The Show all effort levels setting (`orchestratorAllEfforts`), the same way.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub all_orchestrator_efforts: Option<bool>,
@@ -284,9 +295,16 @@ pub struct ChatSettings {
     /// the same way.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub marked_heading_strength: Option<f64>,
+    /// The Text strength setting (`sessionChatTextStrengthPercent`, 0 to 100), the same way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_text_strength: Option<f64>,
     /// The Tool call cards setting (`chatToolCallCards`), the same way.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_cards: Option<bool>,
+    /// The Default to Detailed view setting (`sessionChatDetailedView`): the level a chat with no
+    /// level of its own opens in (`transcript::view_level`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detailed_default: Option<bool>,
 }
 
 /// A size or position only the renderer can know, folded back into the document.

@@ -23,7 +23,7 @@ use serde_json::{Map, Value};
 use crate::document::{
     AccountStatus, AsyncQuestions, ChatPill, ComposerActions, ComposerChrome, ComposerOverflow,
     DeferredWorkRow, Draft, EmptyState, HostAction, IncomingDraft, Interaction, InterruptToast,
-    LoadingNotice, NewSessionWelcome, Note, QuestionCard, Queue, TerminalTail, ViewState,
+    LoadingNotice, NewSessionWelcome, Note, QuestionCard, Queue, TerminalTail, ViewChip, ViewState,
     WorkingCard, WorkingStrip,
 };
 
@@ -62,6 +62,10 @@ pub struct Document {
     pub agent_tasks: Tri<Value>,
     /// Latched once gxserver has read this session's screen.
     pub screen_probed: bool,
+    /// The session's Cloud Box is paused or stopped; sending a message wakes it
+    /// (`session/cloud_box.rs`). The composer's placeholder already says so.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub cloud_box_asleep: bool,
     pub agent: Tri<String>,
     pub agent_session_id: Tri<String>,
     /// A draft session's agent choices. Family e.
@@ -125,6 +129,10 @@ pub struct Document {
     pub history_active: bool,
     pub pending_attachments: u32,
     pub incoming_draft: Option<IncomingDraft>,
+    /// The Saved draft pill for `incoming_draft`, pinned at the left of the pill strip, or `null`.
+    /// Family d.
+    #[serde(default)]
+    pub saved_draft_pill: Option<super::panels::SavedDraftPill>,
     pub note: Note,
     /// The Catch me up button and card. Family d.
     #[serde(default)]
@@ -158,6 +166,9 @@ pub struct Document {
     #[serde(default)]
     pub open_questions: crate::questions::open_questions::OpenQuestions,
     pub notice_visible: bool,
+    /// The failed queue row the visible card stands for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub send_failure_card_prompt_id: Option<String>,
     #[serde(default, skip_serializing_if = "Tri::is_absent")]
     pub notice_error: Tri<String>,
     #[serde(default, skip_serializing_if = "Tri::is_absent")]
@@ -165,6 +176,13 @@ pub struct Document {
     /// The refusal's own code, so the composer can draw `composerNotReady` instead of an error
     /// line.
     pub operation_error_code: Option<String>,
+    /// With an `unreachable` refusal of a send or queue: the mode (`send`, `queue`, `compact`) the
+    /// error line's Retry submits the chat box with. The text went back to the box, and submitting
+    /// it again reuses the failed call's `sendRequestId`, so a send gxserver did take is answered
+    /// from its ledger instead of typed twice (`composer::send::submission_send_request_id`).
+    /// Absent when Retry only reconnects.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation_error_resend: Option<String>,
 
     // ---- options, model picker, accounts ----------------------------------
     /// The pill labels the composer shows. Family e.
@@ -201,6 +219,11 @@ pub struct Document {
     /// A model selection waiting on the agent, or `null`. Family e.
     #[serde(default, skip_serializing_if = "Tri::is_absent")]
     pub pending_model_selection: Tri<Value>,
+    /// The card above the composer while a failed model change holds messages, absent otherwise
+    /// (`menus/picker/hold_card.rs`). `body` is the plain failure sentence; `detail` retains the
+    /// diagnostic for the renderer's Details disclosure. Family e.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_hold_card: Option<std::sync::Arc<Value>>,
 
     // ---- context ----------------------------------------------------------
     /// The context meter under the composer. Family e.
@@ -217,11 +240,31 @@ pub struct Document {
     pub agent_tasks_panel: Tri<Value>,
     /// A coordinator's Threads panel, or `null`. Family f.
     pub coordinator_threads_panel: Tri<Value>,
+    /// A coordinator's board (`extras::coordinator_board`), or `null`. Family f.
+    pub coordinator_board: Tri<Value>,
+    /// The Side chats pill's menu (`extras::side_chats::project`), or `null`. Family f.
+    pub side_chats_panel: Tri<Value>,
+    /// A side chat's own bar (`{ parentSessionId, parentTitle }`), or `null`. Family f.
+    pub side_chat_of: Tri<Value>,
+    /// The private secret request cards above the composer (`extras::secret_requests::project`),
+    /// an array, empty when none. Family f.
+    pub secret_requests: Tri<Value>,
+    /// A coordinator's relayed thread approval cards (`extras::relayed_approvals::project`), an
+    /// array, empty when none: drawn under each thread's report, in the Approvals pill's menu and
+    /// on the board's Needs you row. Family f.
+    pub relayed_approvals: Tri<Value>,
+    /// A thread's "Approved from <coordinator>" lines (`extras::relayed_approvals::audit_lines`),
+    /// an array, empty when none. Family f.
+    pub relayed_answer_lines: Tri<Value>,
     /// The background tasks the agent left running (`extras::background_tasks`), which the
     /// Background pill's menu lists, or `null`. Family f.
     pub background_tasks_panel: Tri<Value>,
     /// The pills on the working card, each opening the menu of one of the panels above. Family f.
     pub chat_pills: Vec<ChatPill>,
+    /// The view modes that are on, as status chips at the left of the chat box's pill strip.
+    /// Family f.
+    #[serde(default)]
+    pub view_chips: Vec<ViewChip>,
     /// The working card right above the composer. Family f.
     pub working_card: WorkingCard,
     /// The subagent viewer, or `null` when closed. Family f.
@@ -250,9 +293,17 @@ pub struct Document {
     /// (`transcript/marked_sections.rs`); absent at 60%, the default. Family b.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub marked_heading_strength: Option<u8>,
+    /// How far the chat's body text is drawn from its standard colour toward full white or black,
+    /// 0 to 100 percent (`transcript/text_strength.rs`); absent at 0%, the default. Family b.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_text_strength: Option<u8>,
 
     // ---- modes and loading -----------------------------------------------
     pub summary_mode: bool,
+    /// The chat's one view level, `summary`, `normal` or `detailed` (`transcript::view_level`);
+    /// the renderers draw from it rather than from the records below.
+    #[serde(default)]
+    pub view_level: String,
     /// The user's verbose override, or `null` to follow the setting.
     pub verbose_override: Option<bool>,
     /// The user's Simple override for this chat, or `null` to follow the setting.

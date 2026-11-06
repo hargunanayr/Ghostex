@@ -15,7 +15,8 @@ use crate::session_chat_interactive::{
 };
 use crate::session_chat_notice::{
     SessionChatTerminalNotice, SESSION_CHAT_NOTICE_AGENT_EXITED,
-    SESSION_CHAT_NOTICE_PERMISSION_PROMPT, SESSION_CHAT_NOTICE_USAGE_LIMIT,
+    SESSION_CHAT_NOTICE_PERMISSION_PROMPT, SESSION_CHAT_NOTICE_TRUST_PROMPT,
+    SESSION_CHAT_NOTICE_USAGE_LIMIT,
 };
 use crate::session_status::TURN_COMPLETE_ATTENTION_SOURCE;
 
@@ -166,7 +167,9 @@ pub fn thread_needs_user_approval(session: &Value) -> bool {
     if let Some(prompt) = session_chat_prompt_setting(session)
         .and_then(|stored| parse_stored_session_chat_prompt(&stored))
     {
-        return matches!(prompt, SessionChatInteractivePrompt::Approval { .. });
+        // A Connectors card asks as a question, but only the user may grant it.
+        return matches!(prompt, SessionChatInteractivePrompt::Approval { .. })
+            || crate::connectors::is_connector_card(&prompt);
     }
     if screen.is_some() {
         return false;
@@ -205,7 +208,7 @@ pub fn thread_prompt(session: &Value) -> Option<ThreadPrompt> {
 }
 
 /// One line per question (with its options), or the approval and what it is for.
-fn prompt_summary(prompt: &SessionChatInteractivePrompt) -> String {
+pub(crate) fn prompt_summary(prompt: &SessionChatInteractivePrompt) -> String {
     match prompt {
         SessionChatInteractivePrompt::Question { questions, .. } => questions
             .iter()
@@ -248,6 +251,11 @@ pub struct ThreadScreenWait {
     asks: bool,
     /// A permission prompt or an approval read off the screen: the user's to grant.
     approval: bool,
+    /// The agent is no longer running: its screen is back at the shell.
+    agent_gone: bool,
+    /// The notice itself, as a chat frame carries it, for a permission prompt or a folder-trust
+    /// question: the card its coordinator's chat relays (relay.rs).
+    notice: Option<Value>,
 }
 
 impl ThreadScreenWait {
@@ -278,6 +286,12 @@ impl ThreadScreenWait {
                 blocking: true,
                 asks: notice.kind == SESSION_CHAT_NOTICE_PERMISSION_PROMPT,
                 approval: notice.kind == SESSION_CHAT_NOTICE_PERMISSION_PROMPT,
+                agent_gone: notice.kind == SESSION_CHAT_NOTICE_AGENT_EXITED,
+                notice: matches!(
+                    notice.kind.as_str(),
+                    SESSION_CHAT_NOTICE_PERMISSION_PROMPT | SESSION_CHAT_NOTICE_TRUST_PROMPT
+                )
+                .then(|| notice.to_value()),
             });
         }
         let prompt = prompt?;
@@ -290,6 +304,8 @@ impl ThreadScreenWait {
             blocking: false,
             asks: true,
             approval: matches!(prompt, SessionChatInteractivePrompt::Approval { .. }),
+            agent_gone: false,
+            notice: None,
         })
     }
 }
@@ -311,6 +327,17 @@ fn screen_fix(notice: &SessionChatTerminalNotice, thread_ref: &str) -> Option<St
     }
     if notice.kind == SESSION_CHAT_NOTICE_USAGE_LIMIT {
         return Some(format!("To continue before the reset, {switch}."));
+    }
+    // A start that failed fails the same way on a reload; when its saved chat came back empty after a crash, nothing brings that conversation back.
+    if notice.start_failed() {
+        return Some(
+            if notice.detail.as_deref() == Some(crate::session_chat_start_failure::LOST_CHAT_DETAIL)
+            {
+                format!("Its conversation was lost, so a reload cannot resume it. Start a new thread with the task, pointing it at the work already on disk (`ghostex read-text {thread_ref}` shows the last screen).")
+            } else {
+                format!("A reload starts it the same way, so fix what `ghostex read-text {thread_ref}` shows first, then run `ghostex agents reload {thread_ref}`.")
+            },
+        );
     }
     if notice.kind == SESSION_CHAT_NOTICE_AGENT_EXITED {
         return Some(format!(
@@ -350,14 +377,22 @@ fn recorded_screen_wait(session: &Value) -> Option<ThreadScreenWait> {
         .cloned()
 }
 
+/// CDXC:Coordinators 2026-11-04 WHY:
+/// An exited agent counts even while hooks say working. A Claude that dies without a Stop hook (the computer crashed mid-turn, then Ghostex's restore printed "No conversation found" because the crash had zeroed the transcript) leaves its last hook state at working forever, so G80sv on 2026-11-04 sat under Working at a bare PowerShell prompt for 20 minutes before the transcript check reported it. A shell prompt is stronger evidence than a hook that can no longer fire.
 fn applicable_screen_wait(session: &Value, hook_working: bool) -> Option<ThreadScreenWait> {
-    recorded_screen_wait(session).filter(|wait| wait.asks || !hook_working)
+    recorded_screen_wait(session).filter(|wait| wait.asks || wait.agent_gone || !hook_working)
 }
 
 /// True when a thread's last screen reading shows a permission prompt or an approval, which only
 /// the user can grant (Empryo, Copilot and the other agents whose approvals exist only on screen).
 pub fn screen_waits_on_approval(session: &Value) -> bool {
     recorded_screen_wait(session).is_some_and(|wait| wait.approval)
+}
+
+/// The permission prompt or folder-trust question a thread's screen last showed, as a chat frame
+/// carries it.
+pub fn screen_wait_notice(session: &Value) -> Option<Value> {
+    recorded_screen_wait(session).and_then(|wait| wait.notice)
 }
 
 /// True when the thread waits on something its screen shows; the supervisor's transcript check

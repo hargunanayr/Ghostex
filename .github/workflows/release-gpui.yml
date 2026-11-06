@@ -507,7 +507,7 @@ jobs:
       plan: ${{ needs.prepare.outputs.plan }}
     secrets: inherit
 
-  # Same workflow and scripts as linux_x64, built natively on ubuntu-24.04-arm.
+  # Same workflow and scripts as linux_x64, built natively on ubuntu-22.04-arm.
   # gxserver_source is `run` (await this run's gxserver-linux-arm64 artifact)
   # unless the runtime is out of scope on an existing release, then `release`
   # (embed that release's live gxserver-linux-arm64.tar.gz; plan.mjs).

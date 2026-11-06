@@ -23,6 +23,9 @@ pub fn markdown_link(href: &str, label: &str) -> Option<Value> {
     if let Some(reference) = crate::transcript::session_mentions::session_reference(href, label) {
         return Some(reference);
     }
+    if let Some(reference) = crate::extras::coordinator_board::board_reference(href, label) {
+        return Some(reference);
+    }
     if let LinkTarget::Url(url) = classify_link_href(href) {
         let mut entry = Map::new();
         entry.insert("href".to_string(), href.into());
@@ -47,8 +50,10 @@ pub fn markdown_link(href: &str, label: &str) -> Option<Value> {
 /// `state` the renderers draw its pill from.
 fn question_reference(href: &str, label: &str) -> Option<Value> {
     use crate::transcript::open_questions::{TagState, QUESTION_LINK_PREFIX};
-    let (tag, state) = href.strip_prefix(QUESTION_LINK_PREFIX)?.split_once(';')?;
-    let state = TagState::parse(state)?;
+    let (tag, rest) = href.strip_prefix(QUESTION_LINK_PREFIX)?.split_once(';')?;
+    let mut flags = rest.split(';');
+    let state = TagState::parse(flags.next()?)?;
+    let here = flags.any(|flag| flag == "here");
     let title = match state {
         TagState::Open => format!("{tag}: waiting for your answer"),
         TagState::Answered => format!("{tag}: answered"),
@@ -62,6 +67,11 @@ fn question_reference(href: &str, label: &str) -> Option<Value> {
     entry.insert("title".to_string(), title.into());
     entry.insert("kind".to_string(), "question".into());
     entry.insert("state".to_string(), state.as_str().into());
+    // On its own question: a click answers it there (the Reply popover) instead of jumping.
+    if here {
+        entry.insert("here".to_string(), true.into());
+        entry.insert("tag".to_string(), tag.into());
+    }
     Some(Value::Object(entry))
 }
 

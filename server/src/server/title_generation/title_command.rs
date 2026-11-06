@@ -158,7 +158,8 @@ pub(crate) fn argument_title_generation_command(
 ) -> Option<String> {
     Some(match agent {
         "cursor" => format!(
-            "{command} --print --yolo --trust --model cursor-grok-4.5-low --output-format text {quoted_prompt}"
+            "{} --print --mode ask --trust --model cursor-grok-4.5-low --output-format text {quoted_prompt}",
+            one_shot_text_job_command(command, "cursor")
         ),
         "grok" => format!(
             "{command} --model grok-4.5 --reasoning-effort low --output-format plain --no-alt-screen --no-plan --no-subagents --disable-web-search --max-turns 1 --single {quoted_prompt}"
@@ -178,15 +179,15 @@ pub(crate) fn argument_title_generation_command(
 pub(crate) fn stdin_title_generation_command(agent: &str, command: &str) -> Option<String> {
     Some(match agent {
         "codex" => {
-            let command = enforce_required_agent_permission_flag(command, "codex");
+            let command = one_shot_text_job_command(command, "codex");
             format!(
-                "{command} exec --ephemeral --skip-git-repo-check -m gpt-6-luna -c 'model_reasoning_effort=\"low\"'"
+                "{command} exec --sandbox read-only --ephemeral --skip-git-repo-check -m gpt-6-luna -c 'model_reasoning_effort=\"low\"'"
             )
         }
         "claude" => {
-            let command = enforce_required_agent_permission_flag(command, "claude");
+            let command = one_shot_text_job_command(command, "claude");
             // CDXC:SessionTitles 2026-10-08 DECISION: User: "I want you to switch from haiku 4.5 to 5.5 for anything we used haiku for in this app (auto title etc)". The explicit id keeps an older CLI, whose `haiku` alias still means 4.5, from titling with 4.5.
-            format!("{command} -p --model claude-haiku-5-5 --effort low")
+            format!("{command} -p --permission-mode dontAsk --model claude-haiku-5-5 --effort low")
         }
         "empryo" => {
             format!("{command} --headless --quiet --no-genome --marionette-mode none --max-steps 1")
@@ -351,9 +352,26 @@ pub(crate) fn internal_prompt_generation_environment(
         "GHOSTEX_INTERNAL_TITLE_GENERATION".to_string(),
         "1".to_string(),
     );
+    // CDXC:AgentProviders 2026-11-02 WHY: See `AGY_BACKGROUND_AUTO_UPDATE_OFF` (issue #397): these jobs run `agy -p` out of sight.
+    let (key, value) = crate::agent_hooks::probing::AGY_BACKGROUND_AUTO_UPDATE_OFF;
+    environment.insert(key.to_string(), value.to_string());
     environment.into_iter().collect()
 }
 
 pub(crate) fn quote_shell_arg(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+#[cfg(test)]
+mod agy_update_tests {
+    use super::internal_prompt_generation_environment;
+
+    #[test]
+    fn background_prompt_jobs_turn_agy_auto_update_off() {
+        let environment = internal_prompt_generation_environment(std::path::Path::new("/home/x"));
+        assert!(environment.contains(&(
+            "AGY_CLI_DISABLE_AUTO_UPDATE".to_string(),
+            "true".to_string()
+        )));
+    }
 }

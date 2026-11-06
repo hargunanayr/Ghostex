@@ -50,7 +50,7 @@ impl GhostexGpuiApp {
             }
             // A row of a coordinator's Threads panel: that thread's chat, on the same machine.
             // gxserver resumed it first when it was closed (`openCoordinatorThread`). An agent
-            // message card's Go to session opens the other session's chat the same way.
+            // message card's session-name pill opens the other session's chat the same way.
             Some("openCoordinatorThread" | "openAgentSession") => {
                 let text = |key: &str| {
                     message[key]
@@ -60,15 +60,69 @@ impl GhostexGpuiApp {
                 };
                 if let (Some(project_id), Some(session_id)) = (text("projectId"), text("sessionId"))
                 {
+                    // A coordinator's worker on another computer names that computer's gxserver;
+                    // this build streams only its own computer (and Cloud Boxes), so a worker
+                    // elsewhere is not opened as a session of the same ids here.
+                    let on_server = match text("serverId").filter(|id| !id.is_empty()) {
+                        Some(server_id) => {
+                            let machine = self
+                                .gx_store
+                                .core
+                                .presentation()
+                                .machine_for_server_session(&server_id, &project_id, &session_id);
+                            if machine.is_none() {
+                                self.dispatch_gpui_app_modal_toast(
+                                    "warning",
+                                    "Could not open that worker",
+                                    "It runs on another computer this browser can't reach. Open it in the Ghostex app.",
+                                    cx,
+                                );
+                                return;
+                            }
+                            machine
+                        }
+                        None => None,
+                    };
+                    // A Cloud Box start names the box's machine (`cloudbox:<boxId>`) the session is on.
+                    let machine = on_server.unwrap_or_else(|| {
+                        text("machineId")
+                            .map(ghostex_gx_core::MachineId::Remote)
+                            .unwrap_or_else(|| session.machine.clone())
+                    });
                     self.web_open_session_in_work_area(
                         SessionKey {
-                            machine: session.machine.clone(),
+                            machine,
                             project_id,
                             session_id,
                         },
                         false,
                         cx,
                     );
+                }
+            }
+            // A side chat opens in the panel beside the chat (`web_host/side_chat.rs`), the
+            // desktop's side panel tab; a deleted one's panel closes.
+            Some(action @ ("openSideChat" | "sideChatDeleted")) => {
+                let text = |key: &str| {
+                    message[key]
+                        .as_str()
+                        .or_else(|| message["params"][key].as_str())
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_string)
+                };
+                if let (Some(project_id), Some(session_id)) = (text("projectId"), text("sessionId"))
+                {
+                    let side_chat = SessionKey {
+                        machine: session.machine.clone(),
+                        project_id,
+                        session_id,
+                    };
+                    if action == "openSideChat" {
+                        self.web_open_side_chat(side_chat, cx);
+                    } else {
+                        self.web_close_side_chat(Some(&side_chat), cx);
+                    }
                 }
             }
             // A command in a reply: a new terminal in the session's folder that runs it (or only
@@ -138,6 +192,29 @@ impl GhostexGpuiApp {
                 })
                 .detach();
             }
+            // A chat's zoom chord while Interface scale keeps the areas together: it steps Scale
+            // (the desktop's app/interface_scale_zoom.rs). The page cannot save Settings, so it
+            // holds until the page reloads.
+            Some("stepInterfaceScale") => {
+                use ghostex_settings_catalog::interface_scale::{
+                    INTERFACE_SCALE_SETTING, interface_scale_percent,
+                };
+                if let Some(step) = message["step"]
+                    .as_str()
+                    .and_then(crate::app::native_chat::zoom::ZoomStep::from_name)
+                {
+                    let mut settings = crate::shared_settings::shared_sidebar_settings_snapshot()
+                        .object()
+                        .clone();
+                    let next = crate::app::native_chat::zoom::step_zoom_percent(
+                        interface_scale_percent(&settings) as f32,
+                        step,
+                    );
+                    settings.insert(INTERFACE_SCALE_SETTING.into(), f64::from(next).into());
+                    crate::shared_settings::install(settings);
+                    cx.refresh_windows();
+                }
+            }
             // A chat's zoom chords. The page cannot save Settings, so the zoom changes every chat
             // on this page until it reloads.
             Some("setChatZoomPercent") => {
@@ -161,16 +238,6 @@ impl GhostexGpuiApp {
                     && let Some(window) = web_sys::window()
                 {
                     let _ = window.open_with_url_and_target(url, "_blank");
-                }
-            }
-            Some("setSimpleMode") => {
-                if let Some(enabled) = message["enabled"].as_bool() {
-                    let mut settings = crate::shared_settings::shared_sidebar_settings_snapshot()
-                        .object()
-                        .clone();
-                    settings.insert("sessionChatSimpleMode".into(), enabled.into());
-                    crate::shared_settings::install(settings);
-                    cx.refresh_windows();
                 }
             }
             // The model picker's "pick it in the CLI": the terminal, with the desktop's hint.
@@ -214,6 +281,12 @@ impl GhostexGpuiApp {
                 "Save it from the Ghostex app.",
                 cx,
             ),
+            // The chat's Tasks pill: this chat's panel, which lists the tasks.
+            Some("showSessionDetails") => {
+                self.session_details_choices
+                    .set(&session.to_sidebar_session_id(), true);
+                cx.notify();
+            }
             // The Session details panel's card was dismissed (shell.rs): it goes off for this chat
             // once the press that did it has landed, if the chat is still the one on screen
             // (`SessionDetailsChoices::settle`).
@@ -341,7 +414,7 @@ impl GhostexGpuiApp {
                 let (provider, model) = (text("provider"), text("model"));
                 if matches!(
                     provider,
-                    "claude" | "codex" | "cursor" | "grok" | "antigravity"
+                    "claude" | "codex" | "cursor" | "grok" | "antigravity" | "opencode"
                 ) && !model.is_empty()
                 {
                     let effort = text("effort");

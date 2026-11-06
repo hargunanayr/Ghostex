@@ -514,6 +514,8 @@ pub struct GhostexGpuiApp {
     /// The terminal bar's dictation, made the first time the reader presses its Dictate button.
     pub(crate) terminal_dictation:
         Option<crate::app::render::terminal_agent_action_bar::TerminalDictation>,
+    /// The Dictate hotkey's press waiting for its release (tap or hold).
+    pub(crate) dictate_hotkey: crate::app::voice_agent::dictate_hotkey::DictateHotkey,
     /// The manager voice agent's conversation and its panel (the header's Voice button).
     pub(crate) voice_agent: crate::app::voice_agent::VoiceAgent,
     /// A Claude or Codex session's flyout rows while that flyout is open: the sidebar session id
@@ -637,6 +639,8 @@ pub struct GhostexGpuiApp {
     pub(crate) native_automate: Option<Entity<crate::app::native_automate::NativeAutomateView>>,
     /// The Changes view (app/native_changes/), made the first time it is drawn.
     pub(crate) native_changes: Option<Entity<crate::app::native_changes::ChangesView>>,
+    /// The chat views of the view panel's side chat tabs (app/side_chat_panel/), by tab.
+    pub(crate) side_panel_chats: HashMap<SideChatTabId, crate::app::side_chat_panel::SidePanelChat>,
     /// What an entry point asked the Changes view to show when it next draws.
     pub(crate) native_changes_preset: Option<crate::app::native_changes::ChangesPreset>,
     /// The Bot automations feed page, cached like Automate's (`app/native_bot_feed/host.rs`).
@@ -900,6 +904,9 @@ pub struct GhostexGpuiApp {
     pub(crate) agents_terminal_chat_claims: HashMap<TerminalSessionId, GpuiTerminalChatClaimState>,
     /// Windows: the sessions whose terminal was shown most recently, newest first.
     pub(crate) agents_terminal_warm_viewers: std::collections::VecDeque<TerminalSessionId>,
+    /// The grid the latest released Agents viewer was shown at: the spawn size of a viewer whose
+    /// session has none of its own yet (`GpuiTerminalViewerRecipe::grid`).
+    pub(crate) agents_terminal_last_shown_grid: Option<(u16, u16)>,
     pub(crate) terminal_viewer_reconcile_pending: bool,
     pub(crate) retiring_gpui_terminal_viewers:
         HashMap<GpuiTerminalViewerOwner, GpuiRetiringTerminalViewer>,
@@ -965,6 +972,8 @@ pub struct GhostexGpuiApp {
     /// The trailing ⋯ button's last painted bounds. Its menu rows and the Ghostex
     /// Help hotkey both anchor their panels here.
     pub(crate) titlebar_more_button_bounds: Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
+    /// The top bar's update button, which anchors the Updates list (titlebar/updates_menu.rs).
+    pub(crate) titlebar_update_button_bounds: Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
     /// A header dropdown asked to open before its trigger button had painted (a hotkey, a menu row
     /// or the first frame); the trigger's own prepaint opens it once its bounds exist.
     pub(crate) pending_titlebar_popup_open: Option<GpuiTitlebarPopupKind>,
@@ -975,6 +984,8 @@ pub struct GhostexGpuiApp {
     /// Built-in agent ids the sidebar launchers map to; `None` until the first HUD read completes.
     pub(crate) titlebar_tips_sidebar_agent_ids: Option<HashSet<String>>,
     pub(crate) agent_hook_status_request_in_flight: bool,
+    /// A status walk asked for while one was running (`Some(None)` = every agent), run when it ends.
+    pub(crate) agent_hook_status_request_queued: Option<Option<Vec<String>>>,
     pub(crate) native_sidebar: crate::app::native_sidebar::state::NativeSidebarState,
     /// The native Kanban board's state; see app/native_kanban/.
     /// The native Docs view's state; see app/native_docs/.
@@ -1022,6 +1033,10 @@ impl Drop for GhostexGpuiApp {
             unregister_gpui_accessibility_display_options_callback_target();
             unregister_gpui_workspace_power_events_callback_target();
             unregister_gpui_sparkle_updater_callback_target();
+            unregister_gpui_os_integration_callback_target();
+        }
+        #[cfg(not(target_os = "macos"))]
+        if lead {
             unregister_gpui_os_integration_callback_target();
         }
         #[cfg(target_os = "macos")]

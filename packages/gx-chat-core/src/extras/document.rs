@@ -10,8 +10,9 @@ use crate::extras::welcome::{
     welcome_agent_icon, welcome_agent_name,
 };
 use crate::extras::{
-    chat_pills, coordinator_threads, panels, save_markdown, search, subagent, terminal_tail,
-    working_card, working_strip,
+    chat_pills, coordinator_threads, panels, relayed_approvals, save_markdown, search,
+    secret_requests, side_chats,
+    subagent, terminal_tail, working_card, working_strip,
 };
 use crate::state::{ChatContext, ChatState};
 
@@ -33,7 +34,7 @@ pub fn document(state: &ChatState, context: &ChatContext, into: &mut Document) {
         extras.panels.threads_all.as_ref().map(|(_, rows)| rows),
     );
 
-    let working = state.session.server_working || state.session.external_working;
+    let working = crate::session::working::presents_working(state);
     into.working_strip = working_strip::working_strip(state, context, working);
     // Background tasks are the Background pill's menu, not a card on the working strip.
     let background = into
@@ -46,17 +47,57 @@ pub fn document(state: &ChatState, context: &ChatContext, into: &mut Document) {
     if !background.is_null() {
         into.working_strip.presentation = None;
     }
+    // The Session details panel on screen lists the tasks, so the Tasks pill steps aside.
+    let tasks_in_session_details =
+        crate::extras::session_details::settle::enabled(state) && extras.session_details.visible;
     into.chat_pills = chat_pills::chat_pills(
         &into.open_questions,
         &threads_panel,
         &tasks_panel,
         &fleet_strip,
         &background,
+        tasks_in_session_details,
     );
+    // The Board pill leads the core's pills, ahead of Resources (the renderers' ? pill sits
+    // before it).
+    //
+    // CDXC:Coordinators 2026-11-06 DECISION:
+    // User, of the strip reading "Resources 605 · Board · Workers · Stashed": "i asked u to swap the
+    // placement of board and resources pills here, pls do it". Order: ?, Board, Resources, Workers.
+    // This is the one place the order is set, so the desktop, the web build and the phone follow.
+    let board = crate::extras::coordinator_board::project(state, context);
+    if let Some(pill) = crate::extras::coordinator_board::pill(&board) {
+        into.chat_pills.insert(0, pill);
+    }
+    into.coordinator_board = Tri::Value(board);
+    let side_chats_panel = side_chats::project(state.session.side_chats.as_ref());
+    if let Some(pill) = side_chats::pill(&side_chats_panel) {
+        into.chat_pills.insert(0, pill);
+    }
+    // The Approvals pill leads the strip while a thread's relayed card waits on the user.
+    let approvals = relayed_approvals::project(state);
+    if let Some(pill) = relayed_approvals::pill(&approvals) {
+        into.chat_pills.insert(0, pill);
+    }
+    into.relayed_approvals = Tri::Value(approvals);
+    into.chat_pills.extend(chat_pills::stashed_pill(
+        state.composer.chrome.stashed_prompt_count(),
+    ));
+    into.view_chips = chat_pills::view_chips(crate::transcript::view_level::view_level(
+        &state.transcript_view,
+    ));
     into.working_card = working_card::working_card(state, &into.working_strip, &into.chat_pills);
     into.agent_fleet_strip = Tri::Value(fleet_strip);
     into.agent_tasks_panel = Tri::Value(tasks_panel);
     into.coordinator_threads_panel = Tri::Value(threads_panel);
+    into.side_chats_panel = Tri::Value(side_chats_panel);
+    into.secret_requests = Tri::Value(secret_requests::project(state));
+    into.relayed_answer_lines = Tri::Value(relayed_approvals::audit_lines(state));
+    into.side_chat_of = Tri::Value(side_chats::bar(
+        state.session.side_chat_of.as_ref(),
+        &state.identity.project_id,
+        &state.transcript_view.session_directory,
+    ));
     into.background_tasks_panel = Tri::Value(background);
     into.terminal_tail = terminal_tail::project(&extras.terminal_tail);
     into.subagent = Tri::Value(subagent::project(state));
@@ -79,8 +120,15 @@ pub fn document(state: &ChatState, context: &ChatContext, into: &mut Document) {
     `starting` or `empty` transcript greets the user with the agent mark and headline instead of
     falling through to the `emptyState` loading copy.
     */
-    let show_welcome = shows_new_session_welcome(view_kind)
-        || (view_kind == "loading" && state.session.available_agents.is_some());
+    // A sleeping Cloud Box's session is not a new one: with nothing cached it says why the
+    // conversation is not shown, instead of greeting (`session/cloud_box.rs`).
+    let box_asleep = state.session.cloud_box_asleep;
+    if box_asleep {
+        into.empty_state = crate::session::cloud_box::asleep_empty_state();
+    }
+    let show_welcome = !box_asleep
+        && (shows_new_session_welcome(view_kind)
+            || (view_kind == "loading" && state.session.available_agents.is_some()));
     into.new_session_welcome = show_welcome.then(|| {
         let agent_name = welcome_agent_name(state.session.agent.as_deref());
         NewSessionWelcome {

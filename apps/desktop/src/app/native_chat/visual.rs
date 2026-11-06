@@ -536,7 +536,7 @@ impl NativeChatView {
                         .font_family(CHAT_MONO)
                         .text_size(px(12.0 * s))
                         .line_height(px(19.2 * s))
-                        .text_color(p.prose)
+                        .text_color(p.code_text)
                         .children(source.lines().map(|line| {
                             div().child(if line.is_empty() {
                                 " ".to_string()

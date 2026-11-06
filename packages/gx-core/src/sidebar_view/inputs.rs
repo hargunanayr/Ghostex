@@ -27,6 +27,8 @@ pub struct MachineTabInput {
     /// [`LOCAL_MACHINE_ID`], or the saved remote machine's settings id.
     pub machine_id: String,
     pub label: String,
+    /// Its short name for the sidebar's pills (`machine_short_names.rs`); the label's when empty.
+    pub short_name: String,
     /// The host's connection state word (`connected`, `connecting`, `disconnected`, `sshFailed`,
     /// and the rest of the connect ladder). Always `connected` for this computer.
     pub state: String,
@@ -319,6 +321,10 @@ pub struct SidebarSettings {
     pub unified_project_order: Vec<String>,
     /// The Project sidebar leaves out projects with no sessions (`sidebarHideProjectsWithoutSessions`).
     pub hide_projects_without_sessions: bool,
+    /// Settings › Sidebar's Separate by machine (`sidebarSeparateByMachine`): machine tabs and one
+    /// machine's list at a time, as before. Off by default: one list for every machine
+    /// (`sidebar_view/merged.rs`).
+    pub separate_by_machine: bool,
 }
 
 impl Default for SidebarSettings {
@@ -350,6 +356,7 @@ impl Default for SidebarSettings {
             unified_group_by_project: false,
             unified_project_order: Vec::new(),
             hide_projects_without_sessions: false,
+            separate_by_machine: false,
         }
     }
 }
@@ -441,6 +448,7 @@ impl SidebarSettings {
                 "sidebarHideProjectsWithoutSessions",
                 defaults.hide_projects_without_sessions,
             ),
+            separate_by_machine: boolean("sidebarSeparateByMachine", defaults.separate_by_machine),
             // An inverted key like every Official extension switch, hidden unless set to false.
             bots_enabled: !boolean("botsHidden", !defaults.bots_enabled),
             bot_automations_enabled: !boolean(
@@ -577,6 +585,12 @@ pub struct SidebarHostInputs {
     /// The workspaces this window showed before the current one, newest first (saved with the
     /// window). The workspace tile's one-click switch goes back to the first that still exists.
     pub window_recent_workspace_ids: Vec<String>,
+    /// This list is the Project sidebar's own and draws every machine's projects in one list
+    /// (`sidebar_view/merged.rs`): set by the host for that list only, while
+    /// [`SidebarSettings::separate_by_machine`] is off. A list built for one machine (the status
+    /// indicators, the Unified sidebar's lanes, Quick Access, capture targets) leaves it off, or
+    /// it would list the other machines' sessions twice.
+    pub merge_machines: bool,
 }
 
 impl SidebarHostInputs {

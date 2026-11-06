@@ -416,9 +416,6 @@ impl GpuiOnboardingWindow {
             self.get_started.dark_scheme = true;
             notes.push("Switched to Dark appearance so the transparency shows.");
         }
-        if turning_on && cfg!(target_os = "windows") {
-            notes.push("On Windows, turning it on takes effect the next time Ghostex starts.");
-        }
         if !notes.is_empty() {
             self.show_toast(notes.join(" "), cx);
         }
@@ -1169,7 +1166,7 @@ impl GpuiOnboardingWindow {
                 .self_start()
                 .mt(s.px(10.0))
                 .cursor_pointer()
-                .child("More theme options in Settings → Theme ›"),
+                .child("More theme options in Settings → Interface ›"),
             "more-theme-options",
             interact::Ring::new(0.0, 0.0),
             interact::Keys::EnterSpace,

@@ -40,12 +40,11 @@ pub fn browser_command(args: &[String]) -> CliResult<()> {
 pub fn browser_devtools_mcp_command(args: &[String]) -> CliResult<()> {
     let parsed = parse_args(args);
     let flags = parsed.flags;
+    // A portable copy's DevTools port is closed unless debugging mode is on, so it is no longer an
+    // explicit port here: pages are reached through gxserver like any install's (review 2026-11-05).
     let port = normalize_positive_integer_opt(
         flag_json(&flags, "port").or_else(|| env_value("GHOSTEX_CEF_REMOTE_DEBUGGING_PORT")),
-    )
-    .or_else(|| {
-        ghostex_paths::portable::ports().map(|ports| u64::from(ports.cef_remote_debugging))
-    });
+    );
     let target_value = flag_json(&flags, "target")
         .or_else(|| flag_json(&flags, "page"))
         .or_else(|| flag_json(&flags, "pageId"));
@@ -322,9 +321,9 @@ Recommended agent workflow:
   5. Use ghostex_screenshot for visual proof and ghostex_evaluate for focused inspection.
 
 Connection details:
-  The MCP server talks directly to Ghostex's embedded CEF Chrome DevTools Protocol endpoint.
-  It scans the default Ghostex CEF ports automatically. Pass --port or set
-  GHOSTEX_CEF_REMOTE_DEBUGGING_PORT only when the app is using a non-default port.
+  The MCP server reaches Ghostex's embedded CEF pages through the local gxserver, with its token.
+  It scans the CEF DevTools ports only for an older Ghostex whose gxserver lacks that route.
+  Pass --port, or set GHOSTEX_CEF_REMOTE_DEBUGGING_PORT, to use a DevTools port the app was started with.
 
 Legacy aliases:
   browser-devtools-mcp and browser-mcp still run the MCP server.

@@ -421,12 +421,12 @@ EOF
 	# Cargo tracks the whole dependency graph and its warm freshness check takes about 0.2 seconds.
 
 	# CDXC:Build 2026-06-24-20:22: Local start must fail before packaging when server no longer compiles. This function is called outside command substitution so `set -e` can abort on Cargo errors instead of stamping the current source digest and copying a stale daemon binary.
-	# CDXC:Build 2026-09-02: cargo discovers `.cargo/config.toml` from its working directory, not from `--manifest-path`, and `cargo xtask start` runs this script from the repo root. Build from inside the server crate so `server/.cargo/config.toml` (sccache rustc-wrapper) applies; the target dir is still `$GXSERVER_RS_ROOT/target`, so the output paths above are unchanged.
+	# CDXC:Build 2026-09-02: cargo discovers `.cargo/config.toml` from its working directory, not from `--manifest-path`, and `cargo xtask start` runs this script from the repo root. Build from inside the server crate so `server/.cargo/config.toml` (kache rustc-wrapper) applies; the target dir is still `$GXSERVER_RS_ROOT/target`, so the output paths above are unchanged.
 	# CDXC:Build 2026-09-04 WHY:
 	# gxserver is one 168k-line leaf crate, so every local start that touched
 	# server/ paid a full non-incremental release compile (~27s). The per-package
 	# override enables incremental codegen for the gxserver package only;
-	# dependencies keep their profile hash and stay served by sccache, and
+	# dependencies keep their profile hash and stay served by kache, and
 	# release builds (no GHOSTEX_LOCAL_START) keep the plain release profile.
 	# SEE-ALSO: apps/desktop/scripts/build-macos-rust.sh does the same for the desktop crate.
 	local -a cargo_profile_args=()
@@ -545,13 +545,10 @@ package_gxserver_rust_package() {
 	# CDXC:Release 2026-06-22-16:17: Local and release macOS builds no longer keep the deleted gxserver/ TypeScript source tree. Assemble the Rust daemon package directly from server and app-owned tool binaries so `cargo xtask start` never cds into gxserver/ for the default packaged daemon.
 	# CDXC:Build 2026-06-22-23:23: zmx remains required.
 	# CDXC:Release 2026-10-22 WHY: the package no longer ships the TypeScript-era npm package.json, README.md and dist/protocol exports (about 0.2 MB of the download). Nothing reads them: the app, the CLI, `cargo xtask start` and the remote install use only bin/ and build-identity.json, and the Linux remote package dropped the same files on 2026-07-13 (server/package-remote-linux.mjs).
+	# CDXC:RemotePairing 2026-11-04: gxserver and zmx are the main executables of GhostexServer.app and GhostexSessions.app, with bin/ links to them, so macOS keeps their privacy grants across builds (WHY in package-macos-gxserver-bundles.sh).
 	rm -rf "$package_dir"
-	mkdir -p "$package_dir/bin"
-	cp "$rust_bin" "$package_dir/bin/gxserver"
-	# The public ghostex/gx CLI is gxserver started under the name `ghostex` (CDXC:Release 2026-10-23 in server/src/main.rs).
-	ln -s gxserver "$package_dir/bin/ghostex"
-	cp "$WEB_DIR/bin/zmx" "$package_dir/bin/zmx"
-	chmod 755 "$package_dir/bin/gxserver" "$package_dir/bin/zmx"
+	mkdir -p "$package_dir"
+	"$SCRIPT_DIR/package-macos-gxserver-bundles.sh" "$package_dir" "$rust_bin" "$WEB_DIR/bin/zmx" "$package_version"
 	write_gxserver_package_build_identity "$package_dir" "$package_version"
 }
 
@@ -780,11 +777,12 @@ package_gxserver_if_needed() {
 	fi
 	package_version="$(gxserver_rust_package_version)"
 	package_digest="$(fingerprint_inputs \
-		--value "gxserver-package-v9-rust-only" \
+		--value "gxserver-package-v10-app-bundles" \
 		--value "arch=$GHOSTEX_MACOS_ARCH" \
 		--value "version=$package_version" \
 		--value "rust=$(path_identity "$rust_bin")" \
 		--path "$SCRIPT_DIR/prepare-macos-runtime.sh" \
+		--path "$SCRIPT_DIR/package-macos-gxserver-bundles.sh" \
 		--path "$GXSERVER_RS_ROOT/src" \
 		--path "$GXSERVER_RS_ROOT/Cargo.toml" \
 		--path "$GXSERVER_RS_ROOT/Cargo.lock" \

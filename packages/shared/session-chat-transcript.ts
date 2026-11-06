@@ -76,6 +76,11 @@ export interface SessionChatMessage {
   queued?: boolean;
   /** The agent's own record that its API call failed, with the code it recorded (`server_error`, `rate_limit`, ...). */
   apiError?: string;
+  /** On a row OMP wrote as a `custom_message`: its type and, for the types the chat draws as cards or rows, the details OMP recorded. */
+  customMessage?: {
+    customType: string;
+    details?: Record<string, unknown>;
+  };
   /** Client presentation of an accepted send waiting for the terminal, separate from the agent CLI queue. */
   startupDelivery?: {
     promptId: string;
@@ -91,6 +96,8 @@ export interface SessionChatDeferredWork {
   endId: string;
   messageCount: number;
   filePaths: string[];
+  /** Picture files the held-back rows opened from disk (gx-chat-core `read_images.rs`); absent when none. */
+  imagePaths?: string[];
 }
 
 export interface SessionChatHistoryReadParams {

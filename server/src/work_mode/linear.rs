@@ -37,7 +37,7 @@ pub(crate) struct LinearIssueInfo {
     pub(crate) state_name: Option<String>,
     pub(crate) project_name: Option<String>,
     pub(crate) project_url: Option<String>,
-    /// GitHub PRs Linear's GitHub integration attached to the issue.
+    /// GitHub PRs Linear's GitHub integration attached to the issue, canonical.
     pub(crate) pull_request_urls: Vec<String>,
 }
 
@@ -569,12 +569,11 @@ fn parse_issue(identifier: &str, issue: &Value) -> LinearIssueInfo {
             .pointer("/attachments/nodes")
             .and_then(Value::as_array)
             .map(|nodes| {
-                nodes
-                    .iter()
-                    .filter_map(|node| node.get("url").and_then(Value::as_str))
-                    .filter(|url| url.contains("github.com/") && url.contains("/pull/"))
-                    .map(str::to_string)
-                    .collect()
+                super::canonical_github_pull_request_urls(
+                    nodes
+                        .iter()
+                        .filter_map(|node| node.get("url").and_then(Value::as_str)),
+                )
             })
             .unwrap_or_default(),
     }

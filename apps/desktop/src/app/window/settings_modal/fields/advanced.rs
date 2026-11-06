@@ -57,17 +57,5 @@ pub(crate) fn advanced_fold_header<V: SettingsPage>(
                 .text_color(hsla(p.foreground))
                 .child("Advanced"),
         )
-        .child(
-            div()
-                .flex_shrink_0()
-                .text_size(px(13.0))
-                .line_height(px(18.57))
-                .text_color(hsla(p.muted))
-                .child(if open {
-                    "Settings you rarely change"
-                } else {
-                    "Settings you rarely change, folded away"
-                }),
-        )
         .into_any_element()
 }

@@ -139,6 +139,11 @@ pub fn rpc_error(response: Value) -> CliError {
             .unwrap_or("gxserver request failed.")
             .to_string()
     };
+    // The raw error gxserver kept out of a person's toast (`plain_error_message`).
+    let message = match response.get("details").and_then(Value::as_str) {
+        Some(details) if !details.is_empty() => format!("{message} ({details})"),
+        _ => message,
+    };
     CliError::Rpc { message, response }
 }
 
@@ -183,15 +188,29 @@ pub fn is_local_gxserver_target(target: &Target) -> bool {
     if target.kind == "local" {
         return true;
     }
-    let Some(rest) = target
-        .base_url
-        .strip_prefix("http://")
-        .or_else(|| target.base_url.strip_prefix("https://"))
-    else {
+    // A relay target is this computer's address, but the session runs on the other computer.
+    if target.kind == "computer" {
+        return false;
+    }
+    let Ok(url) = url::Url::parse(&target.base_url) else {
         return false;
     };
-    let host = rest.split(['/', ':']).next().unwrap_or("");
-    matches!(host, "127.0.0.1" | "localhost" | "::1" | "[::1]")
+    if !matches!(url.scheme(), "http" | "https") {
+        return false;
+    }
+    match url.host() {
+        Some(url::Host::Domain(domain)) => domain == "localhost",
+        Some(url::Host::Ipv4(address)) => address.is_loopback(),
+        Some(url::Host::Ipv6(address)) => address.is_loopback(),
+        None => false,
+    }
+}
+
+/// Whether `target` is the gxserver of the computer this CLI runs on, so a path relative to this
+/// shell's folder means the same file there. An `ssh` or `tailcat` target reaches another
+/// computer through a forward on this one's loopback, so its URL alone would read as local.
+pub fn targets_this_computer(target: &Target) -> bool {
+    !matches!(target.kind.as_str(), "ssh" | "tailcat") && is_local_gxserver_target(target)
 }
 
 pub fn is_gxserver_global_session_ref(value: &str) -> bool {
@@ -283,6 +302,49 @@ fn request_gxserver_body(
     Ok(Value::Object(merged))
 }
 
+/// CDXC:Coordinators 2026-11-05 DECISION:
+/// User: a thread's approval card relayed to its coordinator's chat is answered only by the user's
+/// own click there, never by the coordinator ("It must never approve on the user's behalf"). The
+/// chat sends that answer with `relayedFrom`; the CLI, which agents run, never sends one, whatever
+/// command or raw RPC asks for it.
+/// SEE-ALSO: server/src/coordinators/relay.rs, server/src/session_chat_send/answer_http.rs.
+fn refuse_relayed_answer(body: &Value) -> CliResult<()> {
+    if body.pointer("/params/relayedFrom").is_some() || body.get("relayedFrom").is_some() {
+        return Err(CliError::Other(
+            "Only the user can answer a thread's approval relayed to a coordinator's chat, with a click on its card in Ghostex. Tell the user it is waiting there.".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// An answer sent from inside an agent session says so (`agentCaller`), so gxserver refuses it
+/// for a thread whose approval card waits on the user in its coordinator's chat
+/// (coordinators/relay.rs `refuse_agent_answer`): the coordinator could otherwise answer the
+/// thread's card directly instead of through the relay.
+fn with_agent_caller(pathname: &str, body: &Value) -> Option<Value> {
+    if pathname != "/api/answerSessionChatPrompt" {
+        return None;
+    }
+    let caller = [
+        "GHOSTEX_GLOBAL_SESSION_REF",
+        "GHOSTEX_NATIVE_SESSION_ID",
+        "GHOSTEX_SESSION_ID",
+        "ZMX_SESSION",
+    ]
+    .into_iter()
+    .find_map(|key| {
+        std::env::var(key)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    })?;
+    let mut body = body.clone();
+    body.get_mut("params")?
+        .as_object_mut()?
+        .insert("agentCaller".to_string(), Value::String(caller));
+    Some(body)
+}
+
 /// The gxserver response envelope (`{ok, result, requestId, ...}`) exactly as the daemon sent it,
 /// for a caller that needs `result` untouched rather than spread into the top level.
 ///
@@ -294,12 +356,18 @@ pub fn request_gxserver_envelope(
     body: &Value,
     flags: &Flags,
 ) -> CliResult<Value> {
+    refuse_relayed_answer(body)?;
+    let marked = with_agent_caller(pathname, body);
+    let body = marked.as_ref().unwrap_or(body);
     let _tunnel = ensure_gxserver_tunnel_for_rpc(target, flags)?;
     let timeout_ms = flags
         .number("timeout")
         .or_else(|| flags.number("timeoutMs"))
         .unwrap_or(15_000.0);
     let body_text = body.to_string();
+    // The token goes only to a listener of this account (ghostex_paths::loopback_owner).
+    ghostex_paths::loopback_owner::check_url(&target.base_url)
+        .map_err(|error| CliError::Other(error.to_string()))?;
     // A gxserver still starting is waited out within the same time limit (packages/gx-protocol/src/starting.rs).
     let outcome = crate::http_client::wait_out_server_starting(
         Instant::now() + Duration::from_millis(timeout_ms.max(0.0) as u64),
@@ -474,7 +542,7 @@ fn js_value_to_string(value: &Value) -> String {
 
 /// CDXC:Cli 2026-10-04 WHY:
 /// A global ref is this machine's when its server id is the one in the local gxserver's `identity.json`, beside the auth token the local target already reads. Deciding it only by a 1-second `/api/health/server` probe failed whenever gxserver answered slowly (just after a restart): `ghostex agents send` then resolved its own sender ref `S8g:…` as a remote server with no connection profile and refused the send. The probe stays for a state folder without the file.
-fn local_gxserver_server_id() -> Option<String> {
+pub(crate) fn local_gxserver_server_id() -> Option<String> {
     let text = std::fs::read_to_string(gxserver_root().join("identity.json")).ok()?;
     let identity = parse_json_value(&text)?;
     identity
@@ -506,6 +574,34 @@ pub fn resolve_gxserver_server_target(flags: &Flags, params: &Value) -> CliResul
     An explicit server now wins; the ref only has to belong to it, which its health check confirms
     when it reports a server id.
     */
+    /*
+    CDXC:RemoteMachines 2026-11-03 WHY:
+    `--computer <name>` and a session ref of a connected computer go to this computer's own gxserver, which relays them over the connection the desktop app already has (connected_computers/relay.rs). The CLI never holds the other computer's token, and every verb that reaches gxserver through here works on the other computer unchanged.
+    */
+    if let Some(wanted) = flags
+        .text("computer")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty() && value != "true")
+    {
+        if server != "local" {
+            return Err(CliError::Other(
+                "Use --computer or --server, not both.".to_string(),
+            ));
+        }
+        let local = resolve_local_gxserver_target()?;
+        let Some(target) = super::computers::computer_flag_target(&local, &wanted)? else {
+            return Ok(local);
+        };
+        if let Some(global_ref) = find_global_ref_candidate(params) {
+            let ref_server = global_ref.split(':').next().unwrap_or_default();
+            if Some(ref_server) != target.server_id.as_deref() {
+                return Err(CliError::Other(format!(
+                    "{global_ref} is a session on another computer than --computer {wanted}; leave out --computer, the ref says where it runs."
+                )));
+            }
+        }
+        return Ok(target);
+    }
     if let Some(global_ref) = find_global_ref_candidate(params) {
         let server_id = global_ref.split(':').next().unwrap_or_default().to_string();
         if server != "local" {
@@ -530,9 +626,12 @@ pub fn resolve_gxserver_server_target(flags: &Flags, params: &Value) -> CliResul
                 return Ok(local);
             }
         }
+        if let Some(target) = super::computers::ref_target(&local, &server_id)? {
+            return Ok(target);
+        }
         let Some(profile) = find_gxserver_connection_profile_by_server_id(&server_id) else {
             return Err(CliError::Other(format!(
-                "Global session ref {global_ref} targets {server_id}, but no gxserver connection profile exists for that server."
+                "{global_ref} is a session on a computer this one isn't connected to. Connect that computer in Settings > Remote > Remote machines, or list its sessions with ghostex sessions --computer <name>."
             )));
         };
         return resolve_gxserver_profile_target(&profile, flags);
@@ -653,6 +752,8 @@ pub fn read_local_gxserver_auth_token() -> CliResult<String> {
 /// The target's health, waiting out a gxserver that is still starting within `timeout_ms`, as a
 /// request in its listen backlog used to.
 pub fn fetch_gxserver_health(target: &Target, timeout_ms: u64) -> CliResult<Option<Value>> {
+    ghostex_paths::loopback_owner::check_url(&target.base_url)
+        .map_err(|error| CliError::Other(error.to_string()))?;
     let outcome = crate::http_client::wait_out_server_starting(
         Instant::now() + Duration::from_millis(timeout_ms),
         |remaining| {
@@ -992,7 +1093,9 @@ pub fn create_cli_ssh_forward_plan(
         "-o".to_string(),
         "ExitOnForwardFailure=yes".to_string(),
         "-L".to_string(),
-        format!("{local_port}:127.0.0.1:{remote_local_port}"),
+        // Bound to 127.0.0.1 explicitly, the address the probe and base_url use, so ssh cannot succeed
+        // on ::1 alone while another account holds 127.0.0.1:<port>.
+        format!("127.0.0.1:{local_port}:127.0.0.1:{remote_local_port}"),
     ];
     port_forward_command.extend(target_args);
     Ok(SshForwardPlan {
@@ -1029,11 +1132,21 @@ fn parse_cli_ssh_url(value: &str) -> CliResult<CliSshUrlTarget> {
     if host.is_empty() {
         return Err(error());
     }
-    Ok(CliSshUrlTarget {
-        host,
-        port,
-        user: user.map(|user| percent_decode(&user)),
-    })
+    let user = user.map(|user| percent_decode(&user));
+    // ssh reads a destination starting with `-` as an option (`ssh://-oProxyCommand=…` would run a
+    // command), and control characters corrupt it: both are refused, as the desktop does
+    // (apps/desktop/src/app/helpers/remote/ssh_exec.rs, review 2026-11-05).
+    let refused = |value: &str| value.starts_with('-') || value.chars().any(char::is_control);
+    if refused(&host)
+        || host.chars().any(char::is_whitespace)
+        || user.as_deref().is_some_and(refused)
+    {
+        return Err(CliError::Other(
+            "An SSH gxserver profile's user and host may not start with '-' or hold control characters."
+                .to_string(),
+        ));
+    }
+    Ok(CliSshUrlTarget { host, port, user })
 }
 
 fn percent_decode(value: &str) -> String {
@@ -1251,7 +1364,7 @@ fn start_gxserver_tailcat_tunnel(
     plan: &TailcatForwardPlan,
     flags: &Flags,
 ) -> CliResult<TailcatTunnel> {
-    let Some(binary_path) = crate::tailcat::resolve_tailcat_binary() else {
+    let Some(binary_path) = crate::tailcat::resolve_client_tailcat_binary() else {
         return Err(tailcat_missing_error(target));
     };
     let tunnel = start_tailcat_tunnel(&binary_path, plan)?;
@@ -1291,8 +1404,9 @@ fn start_gxserver_tailcat_tunnel(
 
 fn tailcat_missing_error(target: &Target) -> CliError {
     CliError::Connection(format!(
-        "Could not set up tailcat gxserver profile{} because the \"tailcat\" executable was not found. Install it with \"go install github.com/tailscale/tailcat/cmd/tailcat@latest\", or point GHOSTEX_TAILCAT_BIN at it.",
-        target.profile_suffix()
+        "Could not set up tailcat gxserver profile{} because no \"tailcat\" {} or newer was found. Install it in Settings › Remote › Easy Connect, or point GHOSTEX_TAILCAT_BIN at one.",
+        target.profile_suffix(),
+        ghostex_paths::tailcat::TAILCAT_MIN_VERSION
     ))
 }
 
@@ -1603,9 +1717,22 @@ mod tests {
                 "-o",
                 "ExitOnForwardFailure=yes",
                 "-L",
-                "58745:127.0.0.1:58744",
+                "127.0.0.1:58745:127.0.0.1:58744",
                 "madda@host"
             ]
         );
+    }
+}
+
+#[cfg(test)]
+mod relayed_answer_tests {
+    use super::*;
+
+    #[test]
+    fn the_cli_never_sends_a_relayed_answer() {
+        let relayed = json!({"params": {"kind": "approval", "relayedFrom": {"key": "k"}}});
+        assert!(refuse_relayed_answer(&relayed).is_err());
+        let own = json!({"params": {"kind": "approval", "approvalSend": "1"}});
+        assert!(refuse_relayed_answer(&own).is_ok());
     }
 }

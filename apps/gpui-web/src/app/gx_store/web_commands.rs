@@ -132,6 +132,10 @@ impl GhostexGpuiApp {
         if !self.gx_store_sidebar_list_ready() {
             return;
         }
+        // The desktop's question before a Close that would stop a coordinator or a busy agent.
+        if self.gx_store_ask_before_sidebar_close(&command, cx) {
+            return;
+        }
         if self.web_answer_session_menu(&command, cx)
             || self.gx_store_run_unified_sidebar_command(&command, cx)
             || self.gx_store_run_sidebar_accounts(&command, cx)
@@ -295,6 +299,10 @@ impl GhostexGpuiApp {
         session: ghostex_gx_core::SessionKey,
         cx: &mut gpui::Context<Self>,
     ) {
+        // A side chat belongs to the session it was opened from, so another session closes it.
+        if self.open_session.as_ref() != Some(&session) {
+            self.side_chat_open = None;
+        }
         self.open_session = Some(session.clone());
         self.web_report_shown_sessions(cx);
         let chat_view_unavailable =

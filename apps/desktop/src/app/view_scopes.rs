@@ -52,6 +52,7 @@ pub(crate) fn titlebar_mode_official_extension_id(mode: TitlebarMode) -> Option<
         | TitlebarMode::BotFeed
         | TitlebarMode::GhostOverview
         | TitlebarMode::Work
+        | TitlebarMode::SideChat
         | TitlebarMode::Extension(_) => None,
     }
 }

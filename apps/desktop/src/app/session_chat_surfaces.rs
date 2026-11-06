@@ -77,16 +77,11 @@ impl GhostexGpuiApp {
         &self,
         session_id: TerminalSessionId,
     ) -> Option<GpuiRemoteAttachSessionKey> {
-        let scoped_project_id = self.agents_workspace_project_id.as_deref()?;
-        let remote_project = gpui_remote_project_reference_from_project_id(scoped_project_id)?;
-        self.remote_attach_sessions
-            .iter()
-            .find_map(|(key, mapped)| {
-                (*mapped == session_id
-                    && key.remote_machine_id == remote_project.remote_machine_id
-                    && key.project_id == remote_project.project_id)
-                    .then(|| key.clone())
-            })
+        gpui_remote_attach_key_for_workarea_session(
+            &self.remote_attach_sessions,
+            self.agents_workspace_project_id.as_deref(),
+            session_id,
+        )
     }
 
     /*
@@ -753,6 +748,7 @@ impl GhostexGpuiApp {
         self.reconcile_claude_cloud_chat_pages(&visible_session_ids, cx);
         self.resume_visible_native_chat_runtimes(cx);
         self.schedule_native_chat_prewarm(cx);
+        self.reconcile_side_panel_chats(cx);
     }
 
     #[track_caller]

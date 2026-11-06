@@ -90,7 +90,7 @@ tree-sitter = "0.26"
 tree-sitter-containerfile = "0.9"
 tree-sitter-hcl = "1.1"
 tree-sitter-powershell = "0.26"
-image = { version = "0.25", default-features = false, features = ["png", "webp"] }
+image = { version = "0.25", default-features = false, features = ["png", "webp", "jpeg", "gif", "bmp", "tiff"] }
 # CDXC:SessionTitles 2026-09-15 WHY: the native Rename Session dialog ports `normalizeSessionRenameTitle` (NFKC + a Unicode-class glyph filter); both crates were already in the graph through gpui and url, so this is a direct-dependency promotion, not a new download.
 icu_normalizer = "2"
 libc = "0.2"
@@ -177,6 +177,8 @@ windows-sys = { version = "0.61", features = [
     "Win32_Security_Cryptography",
     "Win32_Security_Credentials",
     "Win32_Storage_FileSystem",
+    # ConnectNamedPipe takes an OVERLAPPED: a running Ghostex's session link pipe (windows_single_instance.rs).
+    "Win32_System_IO",
     "Win32_System_LibraryLoader",
     # The attach control pipe of a Windows terminal viewer (terminal_model/zmx_control.rs).
     "Win32_System_Pipes",
@@ -209,6 +211,8 @@ sum_tree = { path = "../../.dependencies/zed/crates/sum_tree" }
 blob-decoder = { path = "../../.dependencies/blob-decoder" }
 async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
 async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }
+# Matches .dependencies/zed's oo7 fork rev; keep in sync whenever bumping .dependencies/zed.
+oo7 = { git = "https://github.com/zed-industries/oo7", rev = "731c1215edb6905876c6137ab300428c7b8d7c13" }
 
 # Native regression probe: a real Metal window, no effect textures allocated.
 [[test]]

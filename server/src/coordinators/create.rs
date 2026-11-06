@@ -80,6 +80,7 @@ pub fn register_created_coordinator(
         &request.goal,
         &request.instructions,
     )?;
+    super::playbook::mark_new_coordinator(db, &(text("projectId"), text("sessionId")))?;
     Ok(true)
 }
 
@@ -95,6 +96,7 @@ fn row_text<'a>(row: &'a Value, key: &str) -> &'a str {
 
 /// The orchestrator family of a launcher row from `/api/readSidebarHud`
 /// (`COORDINATOR_AGENT_FAMILIES`): by its icon, its agent id, or the executable its command runs.
+/// SEE-ALSO: packages/gx-core/src/session_create/agents.rs (`coordinator_launcher_family`, the clients' copy a handoff reads).
 pub fn coordinator_launcher_family(row: &Value) -> Option<&'static str> {
     let by_icon =
         crate::agents::default_agent_icon_to_id(row_text(row, "icon")).map(str::to_string);
@@ -174,7 +176,7 @@ pub fn coordinator_create_params(launch: CoordinatorLaunch<'_>) -> Value {
         "runtimeSettings": { "titleSource": title_source },
         "coordinator": { "goal": launch.goal, "firstRequest": launch.task },
     });
-    // CDXC:Coordinators 2026-10-17 SEE-ALSO: packages/gx-chat-core/src/menus/orchestrator_effort.rs (the user's Medium/High/XHigh decision, 2026-10-29); without an effort an orchestrator starts on High where its launch takes an effort. ZCode takes no effort choice; its model rides agentModel and gxserver queues it as a `/model` line ahead of the first message.
+    // CDXC:Coordinators 2026-10-17 SEE-ALSO: packages/gx-chat-core/src/menus/orchestrator_effort.rs (the user's Low/Medium/High/XHigh decision, 2026-10-31); without an effort an orchestrator starts on High where its launch takes an effort. ZCode takes no effort choice; its model rides agentModel and gxserver queues it as a `/model` line ahead of the first message.
     let effort = launch.effort.or_else(|| {
         family
             .and_then(super::default_orchestrator_effort)

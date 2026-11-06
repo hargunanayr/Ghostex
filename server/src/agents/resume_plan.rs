@@ -201,6 +201,27 @@ fn codex_rollout_written(input: &AgentResumeInput, id: &str) -> bool {
         || crate::agent_transcripts::find_codex_transcript(id).is_some()
 }
 
+/// CDXC:AgentProviders 2026-10-31 WHY:
+/// Whether a wake of this Claude or Codex session resumes a conversation the agent wrote (`Some(true)`) or starts the agent fresh because nobody ever prompted it (`Some(false)`): the same transcript checks `account_switch_resume_command` and `build_agent_resume_plan` use. `None` for any other agent, which has no such rule here. Account recovery asks it before typing its "Continue the unfinished task" prompt (accounts/recovery.rs): the agent publishes its session id at launch, so the id alone says nothing about a conversation.
+pub(crate) fn agent_conversation_written(
+    project: &Value,
+    session: &Value,
+    settings: &Map<String, Value>,
+) -> Option<bool> {
+    let input = to_agent_resume_input(project, session, settings);
+    match input.agent_id.as_deref()? {
+        "claude" => {
+            let id = get_claude_session_id(get_claude_session_reference(&input).as_deref())?;
+            Some(claude_transcript_written(&input, &id))
+        }
+        "codex" => {
+            let id = get_codex_session_reference(&input)?;
+            Some(codex_rollout_written(&input, &id))
+        }
+        _ => None,
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct AgentResumeInput {
     agent_command: Option<String>,
@@ -308,9 +329,22 @@ pub(crate) fn to_agent_resume_input(
             })
         })
         .or_else(|| base_command.clone());
+    // A side chat wakes in ask-before-edits as it started (CDXC:SideChats 2026-11-02 in
+    // server/src/side_chats/launch.rs).
+    let runtime_command = match (agent_id.as_deref(), crate::side_chats::parent_of(session)) {
+        (Some(agent_id), Some(_)) => runtime_command
+            .map(|command| crate::side_chats::ask_before_edits_command(&command, agent_id)),
+        _ => runtime_command,
+    };
     // The workspace's own gh and gws sign-ins (crate::connectors), on this run only.
     let runtime_command = runtime_command.map(|command| {
-        crate::connectors::with_project_cli_env_for_resume(project, agent_id.as_deref(), command)
+        let command = crate::connectors::with_project_cli_env_for_resume(
+            project,
+            agent_id.as_deref(),
+            command,
+        );
+        // Claude's Bypass Permissions warning, consented to for a bypass resume (bypass_consent.rs).
+        super::with_claude_bypass_consent(agent_id.as_deref(), &command)
     });
     let runtime_command = match agent_id.as_deref() {
         Some("dsh") => runtime_command.map(|command| with_dsh_launch_env(&command)),

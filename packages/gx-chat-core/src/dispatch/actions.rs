@@ -69,6 +69,9 @@ pub fn owner(kind: &ActionKind) -> Option<Family> {
         | ActionKind::FormSend
         | ActionKind::FormSkipAll
         | ActionKind::FormToggle
+        | ActionKind::InlineAnswer
+        | ActionKind::InlineAnswerChange
+        | ActionKind::InlineAnswerText
         | ActionKind::PreviousQuestion
         | ActionKind::JumpToQuestion
         | ActionKind::QuestionForLater
@@ -155,6 +158,8 @@ pub fn owner(kind: &ActionKind) -> Option<Family> {
         | ActionKind::SwitchDraftAgent
         | ActionKind::SwitchDraftRunLocation
         | ActionKind::SetDraftWorktree
+        | ActionKind::SetDraftCloudBox
+        | ActionKind::OpenCloudBoxSettings
         | ActionKind::SwitchToTerminal
         | ActionKind::SelectForkBranch
         | ActionKind::ContextEdit
@@ -171,8 +176,18 @@ pub fn owner(kind: &ActionKind) -> Option<Family> {
         | ActionKind::ToggleAgentTasks
         | ActionKind::ToggleAgentTasksCompleted
         | ActionKind::ToggleCoordinatorThreadsMore
+        | ActionKind::ToggleCoordinatorBoardGroup
+        | ActionKind::CoordinatorBoardMore
+        | ActionKind::CoordinatorBoardChange
+        | ActionKind::CoordinatorBoardAnswer
+        | ActionKind::InsertBoardReference
         | ActionKind::ToggleBackgroundTasks
         | ActionKind::OpenCoordinatorThread
+        | ActionKind::OpenSideChat
+        | ActionKind::BringBackSideChat
+        | ActionKind::DeleteSideChat
+        | ActionKind::AnswerSecretRequest
+        | ActionKind::AnswerRelayedApproval
         | ActionKind::SearchOpen
         | ActionKind::SearchClose
         | ActionKind::SearchQuery
@@ -306,8 +321,18 @@ fn clears_error(kind: &ActionKind) -> bool {
             | ActionKind::ToggleAgentTasks
             | ActionKind::ToggleAgentTasksCompleted
             | ActionKind::ToggleCoordinatorThreadsMore
+            | ActionKind::ToggleCoordinatorBoardGroup
+            | ActionKind::CoordinatorBoardMore
+            | ActionKind::CoordinatorBoardChange
+            | ActionKind::CoordinatorBoardAnswer
+            | ActionKind::InsertBoardReference
             | ActionKind::ToggleBackgroundTasks
             | ActionKind::OpenCoordinatorThread
+            | ActionKind::OpenSideChat
+            | ActionKind::BringBackSideChat
+            | ActionKind::DeleteSideChat
+            | ActionKind::AnswerSecretRequest
+            | ActionKind::AnswerRelayedApproval
             | ActionKind::SearchOpen
             | ActionKind::SearchClose
             | ActionKind::SearchQuery
@@ -359,8 +384,18 @@ fn publishes_at_once(kind: &ActionKind) -> bool {
             | ActionKind::ToggleAgentTasks
             | ActionKind::ToggleAgentTasksCompleted
             | ActionKind::ToggleCoordinatorThreadsMore
+            | ActionKind::ToggleCoordinatorBoardGroup
+            | ActionKind::CoordinatorBoardMore
+            | ActionKind::CoordinatorBoardChange
+            | ActionKind::CoordinatorBoardAnswer
+            | ActionKind::InsertBoardReference
             | ActionKind::ToggleBackgroundTasks
             | ActionKind::OpenCoordinatorThread
+            | ActionKind::OpenSideChat
+            | ActionKind::BringBackSideChat
+            | ActionKind::DeleteSideChat
+            | ActionKind::AnswerSecretRequest
+            | ActionKind::AnswerRelayedApproval
             | ActionKind::SearchOpen
             | ActionKind::SearchClose
             | ActionKind::SearchQuery

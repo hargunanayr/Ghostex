@@ -1,7 +1,9 @@
 mod ancestor_session;
 pub mod api;
+mod chat_channel_source;
 mod claude_daemon;
 pub(crate) mod claude_retention;
+mod claude_session_record;
 pub(crate) mod codex_status_line;
 pub(crate) mod codex_trust;
 pub mod config;
@@ -19,17 +21,24 @@ mod probe_cache;
 pub mod probing;
 pub mod resolution;
 pub mod statusline;
+#[cfg(windows)]
+mod statusline_launch_windows;
 #[cfg(test)]
 mod tests;
 #[cfg(windows)]
 pub(crate) mod windows;
+#[cfg(any(windows, test))]
+mod wmx_pane;
 mod zcode;
 
 pub(crate) use ancestor_session::adopt_ancestor_session_routing;
+pub(crate) use ancestor_session::zmx_session_owning_agent;
 pub use api::{
     install_agent_hooks, read_agent_hook_status, repair_installed_agent_hook_paths,
     uninstall_agent_hooks,
 };
+pub(crate) use claude_session_record::claude_session_record_live;
+pub(crate) use hook_store::write_claude_surface_record;
 pub use notify_runtime::run_notify_hook;
 pub(crate) use resolution::read_claude_hook_surface_records;
 pub(crate) use resolution::read_codex_hook_session_identities;

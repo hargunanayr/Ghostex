@@ -57,6 +57,8 @@ pub enum ReferenceKind {
     Comment,
     /// Another agent session, `[<title>](<Global Ref>)` (`transcript/session_mentions.rs`).
     Session,
+    /// A coordinator board item, `[<title>](board:B4)` (`extras/coordinator_board.rs`).
+    Board,
 }
 
 impl ReferenceKind {
@@ -71,6 +73,7 @@ impl ReferenceKind {
             Self::SideChat => "sideChat",
             Self::Comment => "comment",
             Self::Session => "session",
+            Self::Board => "board",
         }
     }
 }
@@ -191,13 +194,15 @@ pub fn path_noun(path: &str) -> &'static str {
     }
 }
 
-/// `/(?:^|[\\/])SKILL\.md$/i`.
+/// `/(?:^|[\\/])SKILL\.md$/i`, or a Claude Code command `/[\\/]commands[\\/][^\\/]+\.md$/i`.
 fn is_skill_file(path: &str) -> bool {
     let lowered = crate::transcript::jsstr::ascii_lower(path);
     if lowered == "skill.md" {
         return true;
     }
-    lowered.ends_with("/skill.md") || lowered.ends_with("\\skill.md")
+    lowered.ends_with("/skill.md")
+        || lowered.ends_with("\\skill.md")
+        || (lowered.ends_with(".md") && lowered.rsplit(['/', '\\']).nth(1) == Some("commands"))
 }
 
 /// `/^https?:\/\//i`.
@@ -310,16 +315,9 @@ pub fn reference_display_label(label: &str, path: &str, kind: ReferenceKind) -> 
     if kind == ReferenceKind::Skill || kind == ReferenceKind::Comment {
         return label.to_string();
     }
-    if kind == ReferenceKind::Session {
-        let shown = crate::transcript::session_mentions::pill_label(label);
-        let characters: Vec<char> = shown.chars().collect();
-        if characters.len() <= REFERENCE_PILL_MAX_LABEL_CHARACTERS {
-            return shown;
-        }
-        let out: String = characters[..REFERENCE_PILL_MAX_LABEL_CHARACTERS - 1]
-            .iter()
-            .collect();
-        return format!("{}\u{2026}", out.trim_end());
+    // CDXC:SessionChat 2026-11-02 DECISION: User: a session mentioned in the chat box shows its full name, as the sent message's pill does ("Restoring lost Main Coordinator thread", not "Restoring lost Ma…"). Only the chat box's own width may wrap it, never the 18-character cap other pills keep.
+    if kind == ReferenceKind::Session || kind == ReferenceKind::Board {
+        return crate::transcript::session_mentions::pill_label(label);
     }
     let path_label = reference_path_label(label, path, kind);
     let shown = path_label.as_deref().unwrap_or(label);
@@ -702,6 +700,18 @@ pub fn composer_references(text: &str) -> Vec<ComposerReference> {
             });
             continue;
         }
+        // A board item (a card's click puts it here) is the board's pill.
+        if crate::extras::coordinator_board::board_item(&destination.path).is_some() {
+            references.push(ComposerReference {
+                end: indexed.offset(destination.end),
+                identity: format!("board:{}", destination.path.trim()),
+                kind: ReferenceKind::Board,
+                label,
+                path: destination.path.trim().to_string(),
+                start: indexed.offset(start),
+            });
+            continue;
+        }
         let bare = path_without_coordinates(&destination.path);
         if destination.path.starts_with('#')
             || (has_uri_scheme(bare)
@@ -742,11 +752,11 @@ mod session_chip_tests {
         );
         assert_eq!(
             reference_display_label(
-                "Model and effort inventory",
+                "Restoring lost Main Coordinator thread",
                 "S90:P3lv0:G1",
                 ReferenceKind::Session
             ),
-            "Model and effort\u{2026}"
+            "Restoring lost Main Coordinator thread"
         );
     }
 }

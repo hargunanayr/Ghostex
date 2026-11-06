@@ -11,7 +11,7 @@ use super::records::{
     ThreadRecord, COORDINATOR_GOAL_MAX_CHARS, COORDINATOR_INSTRUCTIONS_MAX_CHARS,
     COORDINATOR_MEMORY_MAX_NOTES, COORDINATOR_MEMORY_NOTE_MAX_CHARS,
 };
-use super::state::{classify_thread_session, ThreadProgress, ThreadState};
+use super::state::{ThreadProgress, ThreadState};
 use crate::domain::{DomainRepository, DomainStateError};
 use crate::ids::create_global_session_ref;
 use crate::presentation::{
@@ -35,6 +35,7 @@ pub const COORDINATOR_ENDPOINTS: &[&str] = &[
     "/api/renameCoordinatorThread",
     "/api/coordinatorThreadTitleReminder",
     "/api/checkAgentSessionWrite",
+    "/api/coordinatorBoard",
 ];
 
 fn text(params: &Map<String, Value>, key: &str) -> Option<String> {
@@ -74,6 +75,17 @@ pub fn handle_coordinator_endpoint(
                 changed_sessions: Vec::new(),
             })
         }
+        // The board: read it, or add, move, note, mark done or drop an item (board.rs).
+        "/api/coordinatorBoard" => {
+            let key = required_ids(params, "projectId", "sessionId")?;
+            resolve_coordinator(db, &key)?;
+            let threads = super::panel::cached_thread_rows(&key);
+            let (result, _) = super::board::handle_board_request(db, &key, &threads, params)?;
+            Ok(CoordinatorEndpointOutput {
+                result,
+                changed_sessions: Vec::new(),
+            })
+        }
         "/api/readCoordinatorThreads" => Ok(CoordinatorEndpointOutput {
             result: super::panel::read_coordinator_threads(&required_ids(
                 params,
@@ -105,11 +117,10 @@ pub fn handle_coordinator_endpoint(
                 {
                     let thread_session =
                         repository.get_session(&thread.project_id, &thread.session_id)?;
-                    let state = classify_thread_session(
+                    let state = super::live::classify_thread_live(
                         thread_session.as_ref(),
                         ThreadProgress::of(thread),
                         &now_iso(),
-                        false,
                     );
                     let count = counts.entry(state.as_str().to_string()).or_insert(json!(0));
                     *count = json!(count.as_u64().unwrap_or(0) + 1);
@@ -328,7 +339,7 @@ fn refuse_closing_unfinished(
         resolved: false,
         ..ThreadProgress::of(thread)
     };
-    match classify_thread_session(session.as_ref(), progress, &now_iso(), false) {
+    match super::live::classify_thread_live(session.as_ref(), progress, &now_iso()) {
         ThreadState::Working => Err(DomainStateError::bad_request(
             "The thread is still working, so its session was not closed. Wait for its report, or pass --keep-open to only mark it done.",
         )),
@@ -500,11 +511,10 @@ pub fn thread_view(
 ) -> Result<Value, DomainStateError> {
     let session = repository.get_session(&thread.project_id, &thread.session_id)?;
     let generated_at = now_iso();
-    let state = classify_thread_session(
+    let state = super::live::classify_thread_live(
         session.as_ref(),
         ThreadProgress::of(thread),
         &generated_at,
-        false,
     );
     let mut view = json!({
         "globalRef": create_global_session_ref(repository.server_id.as_str(), &thread.project_id, &thread.session_id),
@@ -531,6 +541,28 @@ pub fn thread_view(
                 view["waitingFor"] = json!(prompt.summary);
             }
         }
+        // Times to judge a long step by (issue #427): when this working stint began, when its
+        // transcript or screen last changed, and whether it has been quiet long enough to report.
+        if state == ThreadState::Working {
+            if let Some(started) =
+                crate::presentation::session_effective_working_started_at(session, &generated_at)
+            {
+                view["workingStartedAt"] = json!(started);
+            }
+            if let Some(quiet) = super::stall::session_quiet(&thread.project_id, &thread.session_id)
+            {
+                if let Some(at) = quiet.last_output_at.and_then(super::stall::iso_from_ms) {
+                    view["lastOutputAt"] = json!(at);
+                }
+                if quiet.stalled {
+                    view["stalled"] = json!(true);
+                    view["quietSince"] = json!(super::stall::iso_from_ms(quiet.quiet_since));
+                }
+                if quiet.stuck {
+                    view["stuck"] = json!(true);
+                }
+            }
+        }
     }
     Ok(view)
 }
@@ -546,11 +578,16 @@ pub fn coordinator_view(
         .iter()
         .map(|thread| thread_view(repository, thread))
         .collect::<Result<Vec<_>, _>>()?;
+    threads.extend(
+        super::remote_threads::list_remote_threads_for(db, &coordinator.key())?
+            .iter()
+            .map(super::remote_threads::remote_thread_view),
+    );
     let order = |state: &str| match state {
         "waiting" => ThreadState::Waiting.order(),
         "finished" => ThreadState::Finished.order(),
         "working" => ThreadState::Working.order(),
-        "sleeping" => ThreadState::Sleeping.order(),
+        "sleeping" | "unreachable" => ThreadState::Sleeping.order(),
         "closed" => ThreadState::Closed.order(),
         _ => ThreadState::Done.order(),
     };

@@ -13,11 +13,16 @@ use crate::domain::DomainStateError;
 use crate::platform::shell::command_shell;
 
 use super::config::GXSERVER_AGENT_HOOK_COLOR_DISABLING_ENVIRONMENT_KEYS;
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "macos")))]
 use super::plugin_sources::shell_quote;
 use super::probe_cache::{
     cached_resolve_command_path, login_shell_path_entries, refresh_resolved_command_path,
 };
+
+/// CDXC:AgentProviders 2026-11-02 WHY:
+/// Antigravity's `agy` starts its own detached updater whenever its last update check is 15 minutes old, whatever the command (even `agy models` or `agy --version`), and on Windows that updater runs `agy --version` in a new visible console, so the lineup probe popped a Windows Terminal window every ~20 minutes (issue #397). gxserver sets this on every background `agy` it runs (the lineup read, the Agents Hub version and update checks, title, commit-message and catch-up jobs), never on a session the user starts, so agy keeps updating itself there. agy reads only the value `true` (`1` is ignored).
+pub(crate) const AGY_BACKGROUND_AUTO_UPDATE_OFF: (&str, &str) =
+    ("AGY_CLI_DISABLE_AUTO_UPDATE", "true");
 
 pub(crate) fn parse_global_session_ref(value: &str) -> (Option<String>, Option<String>) {
     let parts = value.trim().split(':').collect::<Vec<_>>();
@@ -156,6 +161,42 @@ pub(crate) fn cli_presence(command: &str, home_dir: &Path) -> CliPresence {
     )
 }
 
+/// CDXC:AgentHooks 2026-11-06 WHY:
+/// Discord report (Faris Radifan A, 31 Oct): an agent installed during onboarding showed "Install" again when the Install guide was reopened. The install state (`agent_cli::process::resolve_agent`) finds a CLI on PATH or in the folders its own installer uses (`~/.amp/bin`, `~/.grok/bin`, `~/.empryo/bin`, …), but this scan only looked on PATH, so an agent in its installer's folder that no shell had put on PATH yet read as installed in one place and missing in the other, and the scan (which decides what a reopened window lists) won. The scan now accepts the same folders, with the same install-on-demand rule as `cli_presence`. `fresh` re-probes PATH now (the hook install gate) instead of using the 60 second cache.
+pub(crate) fn agent_cli_presence(
+    agent_id: &str,
+    command: &str,
+    home_dir: &Path,
+    fresh: bool,
+) -> CliPresence {
+    let resolved = if fresh {
+        refresh_resolved_command_path(command, home_dir)
+    } else {
+        cached_resolve_command_path(command, home_dir)
+    };
+    let on_path = cli_presence_with(resolved.as_deref(), |path| {
+        super::on_demand::probe_target(path, command, home_dir)
+    });
+    if on_path != CliPresence::Missing {
+        return on_path;
+    }
+    let Some(definition) = crate::agent_cli::catalog::CATALOG
+        .iter()
+        .find(|definition| definition.agent_id == agent_id)
+    else {
+        return on_path;
+    };
+    let found =
+        crate::platform::live_path::find_in(&definition.binary, &definition.install_dirs(home_dir))
+            .map(|path| path.to_string_lossy().into_owned())
+            .and_then(|path| super::on_demand::probe_target(&path, &definition.binary, home_dir));
+    if found.is_some() {
+        CliPresence::Installed
+    } else {
+        on_path
+    }
+}
+
 /// `cli_presence` with the resolved PATH entry and the probe rule passed in.
 pub(crate) fn cli_presence_with(
     resolved: Option<&str>,
@@ -204,7 +245,40 @@ pub(super) fn resolve_command_path(command: &str, _home_dir: &Path) -> Option<St
     super::windows::resolve_command(command)
 }
 
-#[cfg(not(windows))]
+/// CDXC:AgentHooks 2026-11-04 WHY:
+/// macOS looked each CLI up with `zsh -lc "command -v <cli>"`: a login shell per lookup, which ran the user's `.zprofile` (`brew shellenv`, `path_helper`) every time, four processes and about 24 ms of CPU, 14 times in five minutes on a working Mac (measured 2026-11-04, issues-1027/macos-perf). The login shell's PATH is already part of the normalized PATH (`login_shell_path_entries`, probed once per process), so the lookup is the same `command -v` search done in-process: the first executable `<dir>/<cli>` on that PATH, or the path itself when it names one. Linux keeps the shell probe.
+#[cfg(target_os = "macos")]
+pub(super) fn resolve_command_path(command: &str, home_dir: &Path) -> Option<String> {
+    let path_value =
+        normalize_gxserver_process_path(std::env::var("PATH").ok().as_deref(), home_dir);
+    resolve_command_on_path(command, &path_value)
+}
+
+/// `command -v <command>` for an executable, against `path_value`.
+#[cfg(target_os = "macos")]
+pub(super) fn resolve_command_on_path(command: &str, path_value: &str) -> Option<String> {
+    let command = command.trim();
+    if command.is_empty() {
+        return None;
+    }
+    if command.contains('/') {
+        let path = Path::new(command);
+        return crate::platform::live_path::find_in(
+            path.file_name()?.to_str()?,
+            &[path.parent()?.to_path_buf()],
+        )
+        .map(|_| command.to_string());
+    }
+    let directories = split_path(Some(path_value))
+        .into_iter()
+        .filter(|entry| entry.starts_with('/'))
+        .map(std::path::PathBuf::from)
+        .collect::<Vec<_>>();
+    crate::platform::live_path::find_in(command, &directories)
+        .map(|path| path.to_string_lossy().into_owned())
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
 pub(super) fn resolve_command_path(command: &str, home_dir: &Path) -> Option<String> {
     /*
     CDXC:AgentHooks 2026-06-23-07:52:
@@ -387,5 +461,51 @@ pub(crate) fn io_error(error: std::io::Error) -> DomainStateError {
     DomainStateError {
         code: "internalError",
         message: format!("Agent hook file operation failed: {error}"),
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod command_lookup_tests {
+    use super::resolve_command_on_path;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn write(path: &std::path::Path, mode: u32) {
+        std::fs::write(path, "#!/bin/sh\n").expect("write");
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).expect("chmod");
+    }
+
+    #[test]
+    fn the_first_executable_on_path_wins_like_command_v() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let (first, second) = (root.path().join("first"), root.path().join("second"));
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        write(&first.join("agent"), 0o644);
+        write(&second.join("agent"), 0o755);
+        std::fs::create_dir_all(first.join("folder")).unwrap();
+        let path = format!("relative:{}:{}", first.display(), second.display());
+        assert_eq!(
+            resolve_command_on_path("agent", &path).as_deref(),
+            Some(second.join("agent").to_str().unwrap())
+        );
+        write(&first.join("agent"), 0o755);
+        assert_eq!(
+            resolve_command_on_path("agent", &path).as_deref(),
+            Some(first.join("agent").to_str().unwrap())
+        );
+        assert_eq!(resolve_command_on_path("folder", &path), None);
+        assert_eq!(resolve_command_on_path("missing", &path), None);
+        assert_eq!(resolve_command_on_path("  ", &path), None);
+    }
+
+    #[test]
+    fn a_path_names_itself_when_it_is_executable() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let tool = root.path().join("tool");
+        write(&tool, 0o755);
+        let text = tool.to_str().unwrap();
+        assert_eq!(resolve_command_on_path(text, "").as_deref(), Some(text));
+        write(&tool, 0o644);
+        assert_eq!(resolve_command_on_path(text, ""), None);
     }
 }

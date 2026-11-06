@@ -12,13 +12,17 @@ While a terminal has the keyboard, the Terminal focused binding applies instead 
 | Focus Chat Box | unassigned |  | none |  | Move the keyboard to the chat box of the chat session you are in. | `focusChatComposer` |
 | Copy Last Code Block | `cmd+shift+;` |  | none |  | Copy the last code block the agent wrote in the chat session you are in. | `copyLastChatCodeBlock` |
 | Copy Last Reply | `cmd+shift+c` |  | none |  | Copy the agent's last reply in the chat session you are in. | `copyLastChatReply` |
-| Toggle Summary Mode | `ctrl+alt+s` | `cmd+alt+shift+s` | none |  | Turn Summary mode on or off in the chat session you are in. | `toggleChatSummaryMode` |
+| Toggle Summary Mode | `ctrl+alt+s` | `cmd+alt+shift+s` | none |  | Turn Summary view on in the chat session you are in, or off again to Normal view. | `toggleChatSummaryMode` |
 | Maximize Chat Box | `ctrl+alt+m` | `cmd+alt+shift+m` | none |  | Maximize the chat box of the chat session you are in, or restore it. | `toggleChatComposerMaximized` |
 | Files and Links | `ctrl+alt+l` | `cmd+alt+shift+l` | none |  | Show or hide the files and links mentioned in the chat session you are in. | `toggleChatFilesLinks` |
+| New Chat: Project | `alt+o` |  | none |  | While a new chat's message box has focus, open the project search in the bar above it. It takes Option+O from the message box on a Mac (no ø there): if your keyboard types a letter with Option+O, pick another key. | `newChatPickProject` |
+| New Chat: Computer | `alt+m` |  | none |  | While a new chat's message box has focus, open the computers that have the project, in the bar above it. It takes Option+M from the message box on a Mac (no µ there): if your keyboard types a letter with Option+M, pick another key. | `newChatPickComputer` |
+| New Chat: Where It Runs | `alt+w` |  | none |  | While a new chat's message box has focus, open where it runs (This folder, New worktree, Existing, Cloud Box) in the bar above it; 1 to 4 pick. It takes Option+W from the message box on a Mac (no ∑ there): if your keyboard types a letter with Option+W, pick another key. | `newChatPickWhere` |
+| New Chat: Branch | `alt+b` |  | none |  | While a new chat's message box has focus, open the last part of the bar above it: a new worktree's base branch, the existing worktree, or the Cloud Box pick. It takes Option+B from the message box on a Mac (no ∫ there): if your keyboard types a letter with Option+B, pick another key. | `newChatPickBranch` |
 | Toggle Voice Agent | `ctrl+alt+v` | `cmd+alt+shift+v` | `ctrl+alt+v` | `cmd+alt+shift+v` | Start a spoken conversation with the voice agent, or end the one that is running. | `toggleVoiceAgent` |
 | Voice Call About This Session | unassigned |  | unassigned |  | Start a voice call about the session you are looking at, or move the open call to it. | `voiceCallAboutSession` |
 | Hold to Talk | unassigned |  | unassigned |  | During a voice call, hold to talk to the voice agent and let go to send; in a muted Regular call, hold to unmute. Works even while you're typing. | `holdToTalk` |
-| Dictate | `ctrl+alt+d` | `cmd+alt+shift+d` | none |  | Start dictating into the chat box of the chat session you are in; press again to stop and type what you said. | `toggleDictation` |
+| Dictate | `ctrl+alt+space` |  | none |  | Dictate into the chat box of the chat session you are in. Tap to start and tap again to stop, or hold it and it stops when you let go (Settings > Voice > Hotkey mode). | `toggleDictation` |
 | Read Last Reply Aloud | unassigned |  | none |  | Read the agent's newest reply in the chat you are looking at aloud, from the start. | `readAloudLastReply` |
 | Stop Reading | unassigned |  | unassigned |  | Stop Read aloud, whichever reply it is reading. | `readAloudStop` |
 | New Agent Session | `cmd+shift+o` |  | `cmd+shift+o` | `cmd+shift+d` | Start your last-used agent in the active project, in your default interface. | `createAgentSession` |
@@ -27,7 +31,7 @@ While a terminal has the keyboard, the Terminal focused binding applies instead 
 | Open Quick Access: Recent Sessions | `cmd+p` |  | `cmd+p` | `cmd+alt+shift+p` | Open Ghostex Quick Access on Recent Sessions. | `openSessionSearchPalette` |
 | Open Quick Access: Recent Projects | `cmd+alt+shift+o` |  | `cmd+alt+shift+o` |  | Open Ghostex Quick Access on Recent Projects. | `openProjectSearchPalette` |
 | Open Quick Access: Files | `cmd+o` |  | `cmd+o` | `cmd+shift+y` | Open Ghostex Quick Access on Files to find a file in your projects and open it. | `openQuickAccessFiles` |
-| New Thread in Active Project | `cmd+n` |  | `cmd+n` | `cmd+alt+shift+n` | Pick an agent, Browser, or Terminal to start in the active project. | `openNewThreadPalette` |
+| New Thread in Active Project | `cmd+n` |  | `cmd+n` | `cmd+alt+shift+n` | Pick an agent, Browser, or Terminal to start in the active project. Press it again in the picker to choose another project. | `openNewThreadPalette` |
 | Open Commands Panel | `cmd+j` | `f12` | `cmd+j` | `f12` | Open the project command terminal panel (F12 always works too). When the pane is already focused, hide it; press again to show it. | `openCommandsPanel` |
 | Open Commands Panel (Second Key) | `shift+escape` |  | `shift+escape` |  | A second key that opens or hides the Commands panel, like Open Commands Panel. | `openCommandsPanelSecondKey` |
 | Open Settings | `cmd+,` |  | `cmd+,` |  | Open app settings. | `openSettings` |
@@ -136,9 +140,9 @@ While a terminal has the keyboard, the Terminal focused binding applies instead 
 | Find | `cmd+f` |  | `cmd+f` | `cmd+shift+f` | Find text in the focused terminal, browser page, chat or file. On Windows and Linux, Ctrl+F also finds anywhere but in a terminal. | `findInFocusedView` |
 | Find Next | `cmd+g` |  | none |  | Go to the next match of Find in a browser page. | `findNextInBrowser` |
 | Find Previous | `cmd+shift+g` |  | none |  | Go to the previous match of Find in a browser page. | `findPreviousInBrowser` |
-| Zoom In | `cmd+=` |  | `cmd+=` |  | Make the focused terminal, browser page or picture bigger. | `zoomInFocusedView` |
-| Zoom Out | `cmd+-` |  | `cmd+-` |  | Make the focused terminal, browser page or picture smaller. | `zoomOutFocusedView` |
-| Reset Zoom | `cmd+0` |  | `cmd+0` |  | Return the focused terminal, browser page or picture to its normal size. | `resetFocusedViewZoom` |
+| Zoom In | `cmd+=` |  | `cmd+=` |  | Make everything Interface scale sizes bigger (the sidebar, chats, Files and terminal text), or with Scale areas separately on, just the focused one. A browser page or picture zooms by itself. | `zoomInFocusedView` |
+| Zoom Out | `cmd+-` |  | `cmd+-` |  | Make everything Interface scale sizes smaller (the sidebar, chats, Files and terminal text), or with Scale areas separately on, just the focused one. A browser page or picture zooms by itself. | `zoomOutFocusedView` |
+| Reset Zoom | `cmd+0` |  | `cmd+0` |  | Set Interface scale back to 100%, or with Scale areas separately on, return the focused area to its normal size. A browser page or picture resets by itself. | `resetFocusedViewZoom` |
 | Close Tab | `cmd+w` |  | `cmd+w` | `cmd+shift+w` | Close the focused terminal tab, browser tab or view tab. | `closeFocusedSurface` |
 | New Window | `cmd+shift+n` |  | `cmd+shift+n` |  | Open another Ghostex window. | `openNewWindow` |
 | Focus Mode | `cmd+ctrl+f` |  | `cmd+ctrl+f` |  | Show only the focused pane of the Agents view, or bring the other panes back. | `toggleAgentsFocusMode` |

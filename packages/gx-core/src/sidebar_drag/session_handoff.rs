@@ -2,8 +2,8 @@
 //! everywhere by `projectId:sessionId`), so that drop hands it over to a new session there.
 //!
 //! CDXC:Sidebar 2026-10-31 DECISION:
-//! User: Sam on Discord starts chats outside a project and makes the project later, and "I can handover when you drag... after a message to confirm". User (Q865): dragging stays a Project sidebar feature; the Unified sidebar reaches the same thing through Advanced Handoff in a card's menu. This check runs BEFORE `plan_session_move`, whose refusals (`pinnedAcrossGroups`, `targetOfAnotherProject`) would otherwise answer first and a pinned row could never hand over. A drop inside the row's own project is not this file's and keeps every rule it had.
-//! Only a session that has a conversation hands over: a draft has none, a terminal has no agent, and a coordinator and its threads belong to their tree. A row on another computer is not picked up in this sidebar at all (`can_drag` in native_sidebar/sessions.rs), and a project on another computer is not on screen here, so both stay out; Advanced Handoff covers them.
+//! User: Sam on Discord starts chats outside a project and makes the project later, and "I can handover when you drag... after a message to confirm". User (Q865): dragging stays a Project sidebar feature; the Unified sidebar reaches the same thing through Handoff / Export in a card's menu. This check runs BEFORE `plan_session_move`, whose refusals (`pinnedAcrossGroups`, `targetOfAnotherProject`) would otherwise answer first and a pinned row could never hand over. A drop inside the row's own project is not this file's and keeps every rule it had.
+//! Only a session that has a conversation hands over: a draft has none, a terminal has no agent, and a coordinator and its threads belong to their tree. A row on another computer is not picked up in this sidebar at all (`can_drag` in native_sidebar/sessions.rs), and a project on another computer is not on screen here, so both stay out; Handoff / Export covers them.
 //!
 //! SEE-ALSO: packages/gx-core/src/sidebar_drag/session_drop.rs (the caller),
 //! packages/gx-core/src/session_handoff.rs (the steps and the draft),

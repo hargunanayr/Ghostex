@@ -1,5 +1,5 @@
-//! Advanced Handoff: Handoff / Export's second mode, which starts the follow-up session in another
-//! project, on this computer or another one.
+//! A handoff to somewhere else: Handoff to an agent with another destination picked, which starts the
+//! follow-up session in another project, on this computer or another one.
 //!
 //! The transcript is written where the session runs (that computer's gxserver), its text comes
 //! back with the export (`includeMarkdown`), and this app saves it on the target computer
@@ -10,7 +10,13 @@
 //!
 //! CDXC:TranscriptExport 2026-10-25 DECISION:
 //! User (Q546): only the transcript travels for now; (Q548): the old session is kept as it is, with no option to sleep it.
-//! TODO(Advanced Handoff): carry the chat's attached images and files to the target computer too, next to the transcript, with its links pointing at the copies (user, Q546: "later").
+//!
+//! CDXC:TranscriptExport 2026-11-06 WHY:
+//! The files the transcript links to travel with it now (Discord, 2026-11-04: the new session
+//! could not open what the old agent saved in its own folders). gxserver copies them next to the
+//! transcript and answers their bytes with the text (`files`); each is saved on the target
+//! computer first and the transcript's links are pointed at those copies before it is saved
+//! there. A file that fails to save keeps its old link rather than failing the handoff.
 //!
 //! SEE-ALSO: apps/desktop/src/app/window/export_transcript_modal.rs (the dialog),
 //! packages/gx-core/src/handoff_target.rs (project ranking and the branch notice),
@@ -40,7 +46,7 @@ const LOCAL_MACHINE_ID: &str = "local";
 /// `saveSessionChatAttachment`'s own limit (`SESSION_CHAT_ATTACHMENT_MAX_BYTES`).
 const ATTACHMENT_MAX_BYTES: usize = 32 * 1024 * 1024;
 
-/// A project Add Project registered while Advanced Handoff waited on it.
+/// A project Add Project registered while the dialog waited on it.
 #[derive(Clone, Debug)]
 pub(crate) struct AddedProject {
     project_id: String,
@@ -48,7 +54,7 @@ pub(crate) struct AddedProject {
     path: Option<String>,
 }
 
-/// Add Project opened from Advanced Handoff.
+/// Add Project opened from a handoff's destination.
 #[derive(Clone, Debug)]
 pub(crate) struct HandoffAddProject {
     machine_id: String,
@@ -106,8 +112,8 @@ impl GhostexGpuiApp {
         )
     }
 
-    /// The computers Advanced Handoff offers: the session's own first, with its other projects,
-    /// then every other connected one, each with its projects ranked for this session.
+    /// The computers a handoff can go to: the session's own first, starting on this project, then
+    /// every other connected one, each with its projects ranked for this session.
     pub(crate) fn git_export_handoff_computers(&self) -> Vec<ExportTranscriptComputer> {
         let Some(source_project) = self
             .gx_store
@@ -198,6 +204,7 @@ impl GhostexGpuiApp {
                             title: choice.title,
                             path: choice.path,
                             same_repo: choice.same_repo,
+                            is_own: choice.is_own,
                         })
                         .collect(),
                     preferred_project_id: ranking.preferred_project_id,
@@ -293,7 +300,7 @@ impl GhostexGpuiApp {
         self.open_gpui_add_project_modal(&message, cx);
     }
 
-    /// Add Project is open for Advanced Handoff: the project it registers is not activated (the
+    /// Add Project is open for a handoff's destination: the project it registers is not activated (the
     /// handoff opens its own session there).
     pub(crate) fn git_export_add_project_waiting(&self) -> bool {
         self.gx_store
@@ -304,7 +311,7 @@ impl GhostexGpuiApp {
             .is_some_and(|add| add.waiting)
     }
 
-    /// Add Project's `add` answer while Advanced Handoff waits on it.
+    /// Add Project's `add` answer while the dialog waits on it.
     pub(crate) fn git_export_note_added_project(&mut self, machine_id: &str, answer: &Value) {
         let Some(add) = self
             .gx_store
@@ -334,7 +341,7 @@ impl GhostexGpuiApp {
         });
     }
 
-    /// Add Project closed: Handoff / Export comes back on Advanced Handoff, as the user left it,
+    /// Add Project closed: Handoff / Export comes back with its destination, as the user left it,
     /// with the new project picked when one was added (cloned or opened).
     pub(crate) fn git_export_add_project_closed(&mut self, cx: &mut gpui::Context<Self>) {
         let host = &mut self.gx_store.git.export;
@@ -360,7 +367,7 @@ impl GhostexGpuiApp {
         self.open_app_modal_from_bridge(open_message, cx);
     }
 
-    /// Start for Advanced Handoff: on the session's own computer the transcript is already there;
+    /// Start for a handoff to somewhere else: on the session's own computer the transcript is already there;
     /// on another one it is saved there first. Then the session starts in the picked project.
     pub(super) fn git_start_remote_handoff(
         &mut self,
@@ -430,7 +437,26 @@ impl GhostexGpuiApp {
             projectless: false,
         });
         let file_name = folder_title(&exported.path);
+        // Longest first, so a path that begins another one never rewrites part of it.
+        let mut files = exported.files.clone();
+        files.sort_by_key(|file| std::cmp::Reverse(file.path.len()));
         cx.spawn(async move |this, cx| {
+            let mut markdown = markdown;
+            for file in files {
+                let saved = calls::call(
+                    remote.clone(),
+                    "/api/saveSessionChatAttachment",
+                    json!({
+                        "base64Data": file.base64,
+                        "suggestedName": folder_title(&file.path),
+                    }),
+                    Some(std::time::Duration::from_secs(60)),
+                )
+                .await;
+                if let Some(copy) = saved.ok().and_then(|answer| text(&answer, "path")) {
+                    markdown = markdown.replace(&file.path, &copy);
+                }
+            }
             let saved = calls::call(
                 remote,
                 "/api/saveSessionChatAttachment",

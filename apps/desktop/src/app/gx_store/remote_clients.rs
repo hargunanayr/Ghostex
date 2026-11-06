@@ -300,7 +300,10 @@ impl GhostexGpuiApp {
             .collect();
         // A machine is fed while its tunnel is up and the connect funnel says connected: those two
         // are what make a loopback port and a token exist at all.
-        let connected: BTreeMap<String, (u16, String)> = enabled
+        // A box's hidden machine is fed while home gxserver says it is reachable and its address is
+        // known (gx_store/cloud_boxes.rs); it has no tab and is never in the settings.
+        self.gx_store_sync_cloud_box_links(cx);
+        let mut connected: BTreeMap<String, (u16, String)> = enabled
             .keys()
             .filter(|machine_id| {
                 self.remote_machine_connect_states
@@ -314,6 +317,7 @@ impl GhostexGpuiApp {
                 Some(((*machine_id).to_string(), (target.local_port, target.token)))
             })
             .collect();
+        connected.extend(super::cloud_boxes::connected_cloud_box_targets());
 
         // Stop what is no longer connected, and forget a machine the user disabled or removed.
         let held: Vec<String> = self.gx_store.remote.clients.keys().cloned().collect();
@@ -354,9 +358,10 @@ impl GhostexGpuiApp {
             .machines()
             .map(|(machine, _)| machine.clone())
             .filter(|machine| {
-                machine
-                    .remote_id()
-                    .is_some_and(|machine_id| !enabled.contains_key(machine_id))
+                machine.remote_id().is_some_and(|machine_id| {
+                    !enabled.contains_key(machine_id)
+                        && !super::cloud_boxes::cloud_box_machine_known(machine_id)
+                })
             })
             .collect();
         for machine in forget {
@@ -562,22 +567,26 @@ impl GhostexGpuiApp {
         cx: &mut gpui::Context<Self>,
     ) {
         let selected = self.gx_store.sidebar_ui.selected_machine_id();
+        // The one-list sidebar shows every machine from this computer's list (gx-core
+        // `sidebar_view/merged.rs`), so a remote tab left selected from Separate by machine goes.
+        let merged = self.gx_store.sidebar_list.last_inputs.host.merge_machines;
         if selected == ghostex_gx_core::LOCAL_MACHINE_ID
             || !self.gx_store.sidebar_ui.restored()
-            || !self
-                .gx_store
-                .remote
-                .tabs
-                .iter()
-                .any(|machine| machine.machine_id == selected)
-            || self
-                .gx_store
-                .sidebar_list
-                .last_inputs
-                .host
-                .machines
-                .iter()
-                .any(|machine| machine.machine_id == selected)
+            || (!merged
+                && (!self
+                    .gx_store
+                    .remote
+                    .tabs
+                    .iter()
+                    .any(|machine| machine.machine_id == selected)
+                    || self
+                        .gx_store
+                        .sidebar_list
+                        .last_inputs
+                        .host
+                        .machines
+                        .iter()
+                        .any(|machine| machine.machine_id == selected)))
         {
             return;
         }
@@ -591,9 +600,13 @@ impl GhostexGpuiApp {
 
     /// The machine tabs: this computer, then every machine the user has enabled, in settings order.
     fn remote_machine_tabs(&self, ordered: &[(String, String)]) -> Vec<MachineTabInput> {
+        let short_names = super::machine_short_names::machine_short_names_by_id();
+        let short_name =
+            |machine_id: &str| short_names.get(machine_id).cloned().unwrap_or_default();
         let mut tabs = vec![MachineTabInput {
             machine_id: ghostex_gx_core::LOCAL_MACHINE_ID.to_string(),
             label: "Local".to_string(),
+            short_name: short_name(ghostex_gx_core::LOCAL_MACHINE_ID),
             state: MACHINE_STATE_CONNECTED.to_string(),
             message: None,
             fed: true,
@@ -603,6 +616,7 @@ impl GhostexGpuiApp {
             tabs.push(MachineTabInput {
                 machine_id: machine_id.clone(),
                 label: label.clone(),
+                short_name: short_name(machine_id),
                 state: self
                     .remote_machine_connect_states
                     .get(machine_id.as_str())
@@ -776,6 +790,7 @@ impl GhostexGpuiApp {
             // is offline, so every frame that moves them owes the stored key an update
             // (`remote_last_seen.rs`, which debounces and skips a payload that is already stored).
             self.gx_store_note_last_seen_change(machine_id, cx);
+            self.gx_store_note_cloud_box_sessions(machine_id, cx);
         }
         thread_ended
     }

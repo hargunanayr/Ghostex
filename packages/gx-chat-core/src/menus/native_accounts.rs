@@ -120,6 +120,26 @@ pub fn panel_usage_bars(account: &Account, now_ms: i64) -> Vec<PanelUsageBar> {
         .collect()
 }
 
+/// Every account's compact usage columns from an `agentAccounts` answer, without a chat.
+///
+/// Rows keep the answer's order and carry only its account id and the panel's existing bars.
+/// No selected account, provider filter, switch eligibility or session policy is applied.
+pub fn account_usage_columns(answer: &Value, now_ms: i64) -> Value {
+    Value::Array(
+        answer
+            .get("accounts")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .map(|entry| {
+                let account = Account::from_value(entry);
+                let usage = panel_usage_bars(&account, now_ms);
+                serde_json::json!({ "id": account.id, "usage": usage })
+            })
+            .collect(),
+    )
+}
+
 /// What is wrong with the account the session is on, on its row in the panel.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -149,7 +169,7 @@ fn current_account_problem(account: &Account, now_ms: i64) -> Option<PanelProble
             if let Some(reason) = &account.disabled_reason {
                 problem(reason.clone(), None)
             } else if let Some(error) = &account.usage_error {
-                problem(error.clone(), None)
+                problem(error.clone(), asks_to_sign_in(error).then_some("Reconnect"))
             } else {
                 let limited = limited_windows(account, now_ms);
                 if limited.is_empty() {
@@ -164,9 +184,7 @@ fn current_account_problem(account: &Account, now_ms: i64) -> Option<PanelProble
                 "identityChanged" => {
                     "The saved login belongs to a different account. Reconnect this account."
                 }
-                "unavailable" => {
-                    "The helper could not find this saved login. Refresh or reconnect it."
-                }
+                "unavailable" => "This account isn't signed in on this computer. Reconnect it.",
                 _ => "This account needs to sign in again. Reconnect it.",
             };
             problem(
@@ -178,6 +196,18 @@ fn current_account_problem(account: &Account, now_ms: i64) -> Option<PanelProble
             )
         }
     }
+}
+
+/// A ready account's usage error that says signing in again fixes it. gxserver keeps a Codex login
+/// whose usage read failed this way as ready, so the words are all that says so.
+fn asks_to_sign_in(error: &str) -> bool {
+    error.contains("Reconnect") || error.contains("Sign in again")
+}
+
+/// `current_account_problem` for an account as `/api/agentAccounts` lists it, for a surface drawing
+/// one account outside this panel (the sidebar's usage panel).
+pub fn account_problem(account: &Value, now_ms: i64) -> Option<PanelProblem> {
+    current_account_problem(&Account::from_value(account), now_ms)
 }
 
 /// The compact names of the account's used-up main windows that have not reset yet.
@@ -247,6 +277,8 @@ pub struct PanelSession {
     pub current: Option<AccountIdentity>,
     pub name: String,
     pub email: Option<String>,
+    /// The account's id, for the Reconnect that starts its sign-in.
+    pub account_id: Option<String>,
     /// "Active" beside the name when the session is on a known account.
     pub active_label: Option<String>,
     pub problem: Option<PanelProblem>,
@@ -275,6 +307,35 @@ pub struct PanelBody {
     pub error: Option<String>,
     pub message: Option<String>,
     pub session: Option<PanelSession>,
+    /// The Cursor, Gemini and Copilot accounts' usage, under the session's own accounts.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub other_usage: Vec<PanelOtherUsage>,
+}
+
+/// One usage-only account in the panel: its name over its usage columns.
+///
+/// CDXC:AgentProviders 2026-11-05 DECISION:
+/// User, for the phone: show the new providers' accounts and usage (Cursor, Gemini, Copilot) and nothing else for now. The chat's Accounts & limits panel no longer lists them (CDXC:AgentProviders 2026-11-06 in the desktop option_menu/accounts.rs: only the session agent's own accounts there); `otherUsage` keeps their compact columns for other views (Cursor's and Copilot's month window reads `Mo`, Gemini's 5h and 7d), and are never offered as an account to switch to.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PanelOtherUsage {
+    #[serde(flatten)]
+    pub identity: AccountIdentity,
+    pub id: Option<String>,
+    pub name: String,
+    /// "Cursor", "Gemini" or "Copilot".
+    pub provider_label: String,
+    pub usage_error: Option<String>,
+    pub usage: Vec<PanelUsageBar>,
+}
+
+fn usage_provider_label(provider: Option<&str>) -> &'static str {
+    match provider {
+        Some("cursor") => "Cursor",
+        Some("gemini") => "Gemini",
+        Some("copilot") => "Copilot",
+        _ => "",
+    }
 }
 
 /// `nativeAccountPanel`.
@@ -299,6 +360,20 @@ pub fn native_account_panel(
         }
     }
     let error_text = error.filter(|error| !error.is_empty()).map(text);
+    let other_usage: Vec<PanelOtherUsage> = data
+        .map(|data| data.usage_accounts.as_slice())
+        .unwrap_or_default()
+        .iter()
+        .filter(|account| !account.user_disabled)
+        .map(|account| PanelOtherUsage {
+            identity: identity(account),
+            id: account.id.clone(),
+            name: text(&account.name),
+            provider_label: usage_provider_label(account.provider.as_deref()).to_string(),
+            usage_error: account.usage_error.as_deref().map(text),
+            usage: panel_usage_bars(account, now_ms),
+        })
+        .collect();
     let body = |message: Option<String>, session: Option<PanelSession>| {
         AccountPanel::Panel(Box::new(PanelBody {
             kind: "panel",
@@ -306,6 +381,7 @@ pub fn native_account_panel(
             error: error_text.clone(),
             message,
             session,
+            other_usage: other_usage.clone(),
         }))
     };
     let Some(data) = data else {
@@ -394,6 +470,7 @@ pub fn native_account_panel(
                     .filter(|email| !email.is_empty() && *email != account.name)
                     .map(text)
             }),
+            account_id: current.and_then(|account| account.id.clone()),
             active_label: current.map(|_| "Active".to_string()),
             problem: current
                 .and_then(|account| current_account_problem(account, now_ms))
@@ -610,6 +687,62 @@ mod tests {
     }
 
     #[test]
+    fn account_usage_columns_match_the_panel_without_a_chat() {
+        let fixture = json!({
+            "accounts": [
+                {
+                    "id": "claude-1", "provider": "claude", "registered": true,
+                    "usage": [
+                        { "id": "fiveHour", "usedPercent": 16.5,
+                          "resetsAt": crate::menus::time::iso_from_millis(NOW + 9_360_000) },
+                        { "id": "sevenDay", "usedPercent": 140.0 },
+                        { "model": "Fable", "usedPercent": -2.5,
+                          "resetsAt": crate::menus::time::iso_from_millis(NOW - 1) },
+                        { "model": "Sonnet", "limitWindowSeconds": 604_800, "usedPercent": 3,
+                          "resetsAt": "not a date" }
+                    ]
+                },
+                {
+                    "id": "codex-1", "provider": "codex", "registered": true,
+                    "userDisabled": true,
+                    "usage": [
+                        { "model": "Spark", "limitWindowSeconds": 18_000, "usedPercent": 12 },
+                        { "label": "Extra usage" }
+                    ]
+                },
+                { "id": "no-usage", "registered": false }
+            ]
+        });
+        let columns = account_usage_columns(&fixture, NOW);
+        let accounts = AccountsState::from_value(&fixture);
+        for (index, account) in accounts.accounts.iter().enumerate() {
+            assert_eq!(columns[index]["id"], json!(account.id));
+            assert_eq!(
+                columns[index]["usage"],
+                serde_json::to_value(panel_usage_bars(account, NOW)).unwrap()
+            );
+        }
+        assert_eq!(columns.as_array().unwrap().len(), 3);
+        assert_eq!(columns[0]["usage"][0]["value"], "17%");
+        assert_eq!(columns[0]["usage"][0]["resetIn"], "2h 36m");
+        assert_eq!(columns[0]["usage"][1]["percent"], 100);
+        assert_eq!(columns[0]["usage"][2]["name"], "Fable");
+        assert_eq!(columns[0]["usage"][2]["percent"], 0);
+        assert_eq!(columns[0]["usage"][2]["resetIn"], "due");
+        assert_eq!(columns[0]["usage"][3]["name"], "Sonnet");
+        assert_eq!(columns[0]["usage"][3]["resetIn"], Value::Null);
+        assert_eq!(columns[1]["usage"][0]["name"], "Spark 5h");
+        assert_eq!(columns[1]["usage"][1]["value"], "NaN%");
+        assert_eq!(columns[1]["usage"][1]["percent"], Value::Null);
+        assert_eq!(columns[2]["usage"], json!([]));
+
+        let mut with_session = fixture;
+        with_session["session"] = json!({ "provider": "claude", "accountId": "claude-1" });
+        assert_eq!(account_usage_columns(&with_session, NOW), columns);
+        assert_eq!(account_usage_columns(&json!({}), NOW), json!([]));
+    }
+
+    #[test]
     fn a_model_window_other_than_7d_keeps_its_duration() {
         let spark = window("codexSpark", Some("Spark"), 18_000.0, 12.0, None);
         assert_eq!(compact_usage_label(&spark), "Spark 5h");
@@ -635,6 +768,7 @@ mod tests {
                 account_id: Some("claude-1".into()),
                 ..Default::default()
             }),
+            ..Default::default()
         };
         let panel = native_account_panel(
             Some(&accounts),
@@ -691,8 +825,8 @@ mod tests {
             ),
             (
                 "unavailable",
-                Some("The helper could not find this saved login. Refresh or reconnect it."),
-                "The helper could not find this saved login. Refresh or reconnect it.",
+                Some("This account isn't signed in on this computer. Reconnect it."),
+                "This account isn't signed in on this computer. Reconnect it.",
             ),
         ];
         for (status, error, message) in cases {
@@ -720,6 +854,36 @@ mod tests {
                 "action": null,
             })
         );
+    }
+
+    /// Codex reports these with the account still ready, and each asks for a sign-in.
+    #[test]
+    fn a_ready_account_whose_error_asks_for_a_sign_in_gets_reconnect() {
+        for error in [
+            "Sign in again to read usage.",
+            "This account's login identity changed. Reconnect it.",
+        ] {
+            let mut account = current("ready");
+            account.usage_error = Some(error.to_string());
+            assert_eq!(
+                panel(account)["problem"],
+                json!({"message": error, "action": "Reconnect"})
+            );
+        }
+    }
+
+    #[test]
+    fn the_usage_panel_reads_the_same_problem_from_the_listed_account() {
+        let problem = account_problem(
+            &json!({"status": "unavailable", "usageError": "This account isn't signed in on this computer. Reconnect it."}),
+            NOW,
+        )
+        .unwrap();
+        assert_eq!(problem.action.as_deref(), Some("Reconnect"));
+        let turned_off = account_problem(&json!({"status": "disabled"}), NOW).unwrap();
+        assert_eq!(turned_off.action.as_deref(), Some("Open Settings"));
+        assert_eq!(account_problem(&json!({"status": "ready"}), NOW), None);
+        assert_eq!(account_problem(&json!({"status": "loading"}), NOW), None);
     }
 
     #[test]

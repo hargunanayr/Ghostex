@@ -1197,6 +1197,25 @@ pub(crate) async fn handle_select_session_chat_model_http(
     } else {
         select_session_chat_model(state, &params).await
     };
+    if let Err(error) = &result {
+        // A pick the queue is not carrying (`ghostex select-session-chat-model`): the queued ones
+        // remember theirs in session_chat_model_selection.rs.
+        let (project_id, session_id) = (
+            read_trimmed(&params, "projectId"),
+            read_trimmed(&params, "sessionId"),
+        );
+        crate::session_chat_mode_availability::remember_refusal(
+            state,
+            &project_id,
+            &session_id,
+            &error.message,
+        );
+        crate::session_chat_queue_runtime::broadcast_session_chat_queue_state(
+            state,
+            &project_id,
+            &session_id,
+        );
+    }
     match result {
         Ok(result) => routed_json(
             Some(endpoint_path),
@@ -1320,12 +1339,23 @@ pub(crate) async fn select_session_chat_model(
     let target = resolve_session_chat_send_target(state, params, "selectSessionChatModel")?;
     let agent = crate::session_chat_follower::session_chat_agent_for_session(&target.session);
     if agent.as_deref() == Some("opencode") {
-        let id = crate::session_chat_opencode::session_id(&target.session)?;
+        // A chat's model can be picked before its first message, so the conversation may not exist yet.
+        let conversation = crate::session_chat_opencode::chat_conversation(
+            state,
+            &target.project_id,
+            &target.session_id,
+            &target.session,
+        )?;
         let args = params.clone();
-        let result =
-            tokio::task::spawn_blocking(move || crate::session_chat_opencode::select(&id, &args))
-                .await
-                .map_err(|_| invalid_params("OpenCode model operation failed."))??;
+        let result = tokio::task::spawn_blocking(move || {
+            crate::session_chat_opencode::ensure_conversation(
+                &conversation.id,
+                conversation.directory.as_deref(),
+            )?;
+            crate::session_chat_opencode::select(&conversation.id, &args)
+        })
+        .await
+        .map_err(|_| invalid_params("OpenCode model operation failed."))??;
         crate::session_chat_options::schedule_session_chat_option_redetect(
             state,
             &target.project_id,

@@ -129,6 +129,7 @@ impl GhostexGpuiApp {
         selectors: &NativeSidebarSnapshot,
         frame: &TwoColumnFrame,
         appearance: &SidebarAppearance,
+        window: &gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
         let scale = appearance.scale;
@@ -245,6 +246,7 @@ impl GhostexGpuiApp {
                             vertical: frame.rail,
                         },
                         appearance,
+                        window,
                         cx,
                     )),
             )

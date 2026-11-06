@@ -11,7 +11,9 @@ mod choices;
 mod fixture_tests;
 mod grouping;
 mod lanes;
-mod repo;
+mod machines;
+pub(crate) mod repo;
+mod reveal;
 mod saved;
 #[cfg(test)]
 mod scale_tests;
@@ -20,18 +22,27 @@ mod spaces;
 mod tests;
 
 pub use build::{
-    build_unified_sidebar, came_back_ms, is_unified_draft, repo_of_project, space_filter_key,
-    unified_shelf, unified_status, UnifiedFilter, UnifiedFilterOption, UnifiedFilterOptions,
-    UnifiedMachineInput, UnifiedRow, UnifiedSettings, UnifiedShelf, UnifiedSidebarView,
-    UnifiedStatus,
+    build_unified_sidebar, build_unified_sidebar_scoped, came_back_ms, is_unified_draft,
+    repo_of_project, space_filter_key, unified_shelf, unified_space_of_project, unified_status,
+    UnifiedFilter, UnifiedFilterOption, UnifiedFilterOptions, UnifiedMachineInput, UnifiedRow,
+    UnifiedSettings, UnifiedShelf, UnifiedSidebarView, UnifiedStatus,
 };
 pub use choices::{
-    filter_project_choices, move_project_choice_machine, unified_new_session_target,
-    unified_project_choices, ProjectChoiceInput, UnifiedChoiceMachine, UnifiedChoiceMachineInput,
-    UnifiedNewSessionTarget, UnifiedProjectChoice,
+    default_machine, filter_project_choices, move_project_choice_machine, project_query_match,
+    session_activity_ms, unified_new_session_target, unified_project_choices,
+    widen_filter_for_new_session, ActiveProject, ProjectChoiceInput, UnifiedChoiceMachine,
+    UnifiedChoiceMachineInput, UnifiedNewSessionTarget, UnifiedProjectChoice,
 };
 pub use grouping::{group_unified_sidebar, move_unified_project, ordered_repo_keys, UnifiedGroup};
-pub use lanes::unified_lane_inputs;
-pub use repo::{normalize_git_remote, repo_identity, RepoIdentity};
-pub use saved::{UnifiedSavedState, UNIFIED_SAVED_STATE_KEY};
-pub use spaces::unified_machine_spaces;
+pub use lanes::{unified_lane_inputs, unified_lane_menu_inputs};
+pub use machines::{unified_branch_line, unified_shows_machine, UnifiedBranchLine};
+pub use repo::{
+    merge_repo_identities, normalize_git_remote, origin_keys_of, repo_identity,
+    resolve_repo_identity, RepoIdentity,
+};
+pub use reveal::{
+    find_unified_row, open_unified_reveal, unified_shelf_key, unified_shelf_label,
+    unified_shelf_open, UnifiedRevealSpot,
+};
+pub use saved::{UnifiedSavedState, RECENT_REPOS_MAX, UNIFIED_SAVED_STATE_KEY};
+pub use spaces::{unified_machine_spaces, unified_space_scope, UnifiedSpaceScope};

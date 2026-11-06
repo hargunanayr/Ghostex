@@ -8,10 +8,13 @@ mod help;
 mod http;
 mod isolated;
 mod mobile_chat_wasm;
+mod rebuild;
 mod remote_build;
 mod start;
 mod start_server;
 mod tasks;
+#[cfg(unix)]
+mod test_server;
 mod util;
 
 const USAGE: &str = "Usage: cargo xtask <command> [arguments]
@@ -21,6 +24,10 @@ Desktop app
                           build, install and launch the desktop app (a fast dev build; --optimized for performance work;
                           --debug-info builds with symbols for crash debugging, off by default;
                           --install-only installs the already staged build on Linux and Windows)
+  rebuild [--dry-run] [--allow-dirty] [--no-health-check] [--wait[=<minutes>]] [--log-dir <dir>] [--optimized]
+                          macOS, for a coordinator's background shell: start from committed code only, into a numbered
+                          log (~/.local/share/agent-work/Ghostex/rebuilds), retrying kache's known flake once, then
+                          print a short summary (result, time, gxserver and app pids, a health check a minute later, log, last errors)
   remote-start [--repo <owner/name>] [--build-only]
                           Linux x64: build the desktop app on a Blacksmith machine, then install and launch it here
                           (setup: tooling/remote-build/README.md)
@@ -30,6 +37,11 @@ Desktop app
   gx-isolated [--isolated=<variant>] [--print | <ghostex arguments>]
                           run an isolated variant's ghostex CLI
   setup-windows           Windows: install the build prerequisites and prepare sources
+
+Testing
+  test-server start [--name <n>] [--projects <path>...] [--port <p>] [--no-build] [--dry-run] | env <name> | stop <name> | remove <name> | list
+                          a throwaway gxserver on its own GHOSTEX_HOME and port for agents to test against
+                          (~/.local/share/agent-work/Ghostex/test-servers/<name>); prints the env lines for the ghostex CLI
 
 Web build
   web-build [--debug]     build apps/gpui-web into apps/gpui-web/www/dist
@@ -77,10 +89,17 @@ fn main() {
     let result = match name.as_str() {
         "start" => start::run(&args),
         "start-server" => start_server::run(&args),
+        "rebuild" => rebuild::run(&args),
         "remote-start" => remote_build::run(&args),
         "remote-build-pack" => remote_build::pack(&args),
         "build" => tasks::build(&args),
         "gx-isolated" => isolated::run_cli(&args),
+        #[cfg(unix)]
+        "test-server" => test_server::run(&args),
+        #[cfg(not(unix))]
+        "test-server" => {
+            Err("test-server runs on macOS and Linux (gxserver's zmx sessions).".into())
+        }
         "setup-windows" => tasks::setup_windows(&args),
         "web-build" => tasks::web_build(&args),
         "web-dev" => tasks::web_dev(&args),

@@ -78,6 +78,37 @@ pub fn handle(state: &mut ChatState, action: &UserAction, context: &ChatContext)
                 _ => crate::questions::forms::send(state, context, &id),
             });
         }
+        ActionKind::InlineAnswer => {
+            let id = action
+                .param("form")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let choice = action
+                .param("choice")
+                .and_then(Value::as_u64)
+                .unwrap_or(u64::MAX) as usize;
+            effects.extend(crate::questions::inline_answers::pick(
+                state, context, &id, choice,
+            ));
+        }
+        ActionKind::InlineAnswerChange => {
+            let id = action
+                .param("form")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            crate::questions::inline_answers::toggle_change(state, id);
+        }
+        ActionKind::InlineAnswerText => {
+            let text = |key: &str| action.param(key).and_then(Value::as_str);
+            effects.extend(crate::questions::inline_answers::answer_text(
+                state,
+                context,
+                text("form"),
+                text("tag"),
+                text("text").unwrap_or_default(),
+            ));
+        }
         ActionKind::PreviousQuestion => {
             effects.extend(crate::questions::open_questions::previous(state, context));
         }
@@ -102,7 +133,9 @@ pub fn handle(state: &mut ChatState, action: &UserAction, context: &ChatContext)
                 .param("id")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            effects.extend(crate::questions::open_questions::open_resource(state, context, id));
+            effects.extend(crate::questions::open_questions::open_resource(
+                state, context, id,
+            ));
         }
         ActionKind::CloseResource => crate::questions::resource_modal::close(state),
         ActionKind::GoToResource => {
@@ -307,11 +340,20 @@ fn dismiss_notice(
     let dismissed = dismissed_notice_state(notice, context.now_millis());
     let value = serde_json::to_string(&dismissed).ok();
     state.questions.dismissed_notice = Some(dismissed);
-    vec![Effect::WriteStorage {
+    let mut effects = vec![Effect::WriteStorage {
         key: notice_key(&state.identity.session_key),
         value,
         durable: true,
-    }]
+    }];
+    // Closing a failed send's card deals with it, on every client, so gxserver hears of it: the
+    // sidebar's dot and the notification go too (server/src/session_chat_send_failure.rs).
+    if notice.send_failure.is_some() {
+        effects.extend(answer_prompt(
+            state,
+            &serde_json::json!({ "kind": "restartAgent", "actionId": "dismissSendFailure" }),
+        ));
+    }
+    effects
 }
 
 /// What the notice card's primary or secondary button sends.
@@ -393,6 +435,7 @@ fn answer_prompt(state: &mut ChatState, answer: &Value) -> Vec<Effect> {
     }
     let restore_dismissed =
         matches!(kind.as_str(), "question" | "approval").then(|| dismiss_answered_prompt(state));
+    let answer = with_shown_approval(state, &kind, answer);
     let request_id = allocate(state);
     state.questions.answer_request = Some(AnswerRequest {
         request_id,
@@ -662,22 +705,52 @@ fn async_submit(
     }]
 }
 
+/// The approval card's Allow, naming the approval it showed (its tool and summary), so gxserver
+/// refuses it when the session asks for something else by then (CDXC:SessionChat 2026-11-05 in
+/// server/src/session_chat_send/answer_http.rs). Deny, and a notice's key action (which names its
+/// notice), go as they are.
+fn with_shown_approval(state: &ChatState, kind: &str, answer: &Value) -> Value {
+    let mut answer = answer.clone();
+    let allows = answer
+        .get("approvalSend")
+        .and_then(Value::as_str)
+        .is_some_and(|send| !send.is_empty());
+    if kind != "approval" || !allows || answer.get("noticeDetectedAt").is_some() {
+        return answer;
+    }
+    let Some(prompt) = state
+        .session
+        .prompt
+        .as_ref()
+        .filter(|prompt| prompt.get("kind").and_then(Value::as_str) == Some("approval"))
+    else {
+        return answer;
+    };
+    answer["promptTool"] = prompt.get("tool").cloned().unwrap_or(Value::Null);
+    if let Some(summary) = prompt.get("summary").filter(|summary| summary.is_string()) {
+        answer["promptSummary"] = summary.clone();
+    }
+    answer
+}
+
 /// Every gxserver call carries the session it is about.
 fn with_identity(state: &ChatState, params: Value) -> Value {
     let mut object = match params {
         Value::Object(object) => object,
         _ => Map::new(),
     };
-    if state.session.agent.as_deref() == Some("opencode") {
-        if let Some(id) = state
-            .session
-            .prompt
-            .as_ref()
-            .and_then(|p| p.get("toolUseId"))
-            .and_then(Value::as_str)
-        {
-            object.insert("toolUseId".into(), json!(id));
-        }
+    // The asking call the card showed, so gxserver refuses an answer meant for a prompt that has
+    // since been replaced (OpenCode's prompts, Connectors cards; CDXC:SessionChat 2026-11-05 in
+    // server/src/session_chat_send/answer_http.rs). It used to ride only OpenCode's answers, so a late
+    // answer to one Connectors card approved the card that replaced it.
+    if let Some(id) = state
+        .session
+        .prompt
+        .as_ref()
+        .and_then(|p| p.get("toolUseId"))
+        .and_then(Value::as_str)
+    {
+        object.entry("toolUseId").or_insert_with(|| json!(id));
     }
     object.insert(
         "projectId".to_string(),

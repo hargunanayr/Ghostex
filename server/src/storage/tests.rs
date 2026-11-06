@@ -31,11 +31,11 @@ fn initializes_sqlite_with_current_migrations_and_schema_layout() {
         .query_row("PRAGMA journal_mode", [], |row| row.get(0))
         .expect("journal_mode");
     // The fork's 0048_session_completed_at and 0049_ghosts run before upstream's
-    // 0048_session_chat_resources, whose `PRAGMA user_version = 48` runs last.
-    assert_eq!(user_version, 48);
+    // 0048_session_chat_resources..0059, whose last `PRAGMA user_version = 59` runs last.
+    assert_eq!(user_version, 59);
     assert_eq!(foreign_keys, 1);
     assert_eq!(journal_mode, "wal");
-    assert_eq!(schema_migration_count(&db), 50);
+    assert_eq!(schema_migration_count(&db), 61);
     assert_eq!(
         explicit_index_names(&db),
         vec![
@@ -45,6 +45,7 @@ fn initializes_sqlite_with_current_migrations_and_schema_layout() {
             "idx_automation_runs_project_created".to_string(),
             "idx_automations_due".to_string(),
             "idx_automations_project_updated".to_string(),
+            "idx_coordinator_remote_threads_coordinator".to_string(),
             "idx_coordinator_threads_coordinator".to_string(),
             "idx_delayed_sends_due".to_string(),
             "idx_ghosts_home".to_string(),

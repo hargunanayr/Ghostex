@@ -153,6 +153,66 @@ pub(super) async fn paste_already_recorded(session: &Value, text: &str, since_ms
         == Some(true)
 }
 
+/// The note to re-read its playbook that goes under this message to an orchestrator, with the
+/// guide version it is about (CDXC:Coordinators 2026-11-05 in coordinators/playbook.rs). Only
+/// messages someone sent (the chat box, thread reports, `ghostex agents send`, queued rows) carry
+/// it, never a slash or shell command, whose text the agent runs instead of reading.
+fn coordinator_playbook_note(
+    state: &AppState,
+    project_id: &str,
+    session_id: &str,
+    text: &str,
+    source: SessionChatMessageSource,
+) -> Option<(String, String)> {
+    if !matches!(
+        source,
+        SessionChatMessageSource::Composer
+            | SessionChatMessageSource::AutomaticQueue
+            | SessionChatMessageSource::ManualQueue
+    ) {
+        return None;
+    }
+    let first = text.trim_start().chars().next()?;
+    if first == '/' || first == '!' {
+        return None;
+    }
+    let db = open_gxserver_database(&state.paths).ok()?;
+    let repository = crate::domain::DomainRepository::new(&db, state.metadata.server_id.as_str());
+    crate::coordinators::playbook_update_note(
+        &db,
+        &repository,
+        &(project_id.to_string(), session_id.to_string()),
+    )
+    .ok()
+    .flatten()
+}
+
+fn record_coordinator_playbook_note(
+    state: &AppState,
+    project_id: &str,
+    session_id: &str,
+    note: Option<&(String, String)>,
+) {
+    let Some((_, version)) = note else {
+        return;
+    };
+    if let Ok(db) = open_gxserver_database(&state.paths) {
+        let _ = crate::coordinators::record_playbook_update_note(
+            &db,
+            &(project_id.to_string(), session_id.to_string()),
+            version,
+        );
+    }
+}
+
+fn with_playbook_note(text: &str, note: Option<&(String, String)>) -> String {
+    match note {
+        // The chat core reads the recorded turn without it again, so the user's echo still matches.
+        Some((note, _)) => ghostex_gx_chat_core::session::appended_notes::with_note(text, note),
+        None => text.to_string(),
+    }
+}
+
 pub(crate) async fn send_session_chat_message_with_draft(
     state: &AppState,
     project_id: &str,
@@ -245,9 +305,17 @@ pub(crate) async fn send_session_chat_message_with_draft(
         crate::session_chat_composer::session_chat_composer_agent_id(&target.session)
             .or_else(|| agent.clone());
     if agent.as_deref() == Some("opencode") {
-        let id = crate::session_chat_opencode::session_id(&target.session)?;
+        let conversation = crate::session_chat_opencode::chat_conversation(
+            state,
+            &target.project_id,
+            &target.session_id,
+            &target.session,
+        )?;
+        let id = conversation.id.clone();
         let send_id = id.clone();
-        let message = text.to_string();
+        let directory = conversation.directory;
+        let playbook_note = coordinator_playbook_note(state, project_id, session_id, text, source);
+        let message = with_playbook_note(text, playbook_note.as_ref());
         let images = image_paths.to_vec();
         let session = target.session.clone();
         let message_id = draft_version.map(|version| {
@@ -267,15 +335,12 @@ pub(crate) async fn send_session_chat_message_with_draft(
                     command, &session,
                 );
             }
+            let client =
+                crate::session_chat_opencode::ensure_conversation(&send_id, directory.as_deref())?;
             if interrupt {
                 crate::session_chat_opencode::interrupt(&send_id, None)?;
             }
-            crate::session_chat_opencode::Client::discover()?.send(
-                &send_id,
-                &message,
-                &images,
-                message_id.as_deref(),
-            )?;
+            client.send(&send_id, &message, &images, message_id.as_deref())?;
             Ok::<_, DomainStateError>(archive)
         })
         .await
@@ -286,6 +351,7 @@ pub(crate) async fn send_session_chat_message_with_draft(
             );
         }
         crate::session_chat_opencode::invalidate(&id);
+        record_coordinator_playbook_note(state, project_id, session_id, playbook_note.as_ref());
         promote_draft_session_after_send(state, project_id, session_id);
         unpark_session_after_send(state, project_id, session_id);
         crate::session_chat_returned_prompt::record_session_chat_send_submitted(
@@ -324,7 +390,83 @@ pub(crate) async fn send_session_chat_message_with_draft(
             std::borrow::Cow::Owned(pictured) => std::borrow::Cow::Owned(pictured),
             std::borrow::Cow::Borrowed(_) => agent_text,
         };
-    let text = agent_text.as_ref();
+    let playbook_note = coordinator_playbook_note(
+        state,
+        &target.project_id,
+        &target.session_id,
+        &agent_text,
+        source,
+    );
+    let noted_text = playbook_note
+        .as_ref()
+        .map(|note| with_playbook_note(&agent_text, Some(note)));
+    let text = noted_text.as_deref().unwrap_or(agent_text.as_ref());
+    // A Pi or OMP whose Ghostex extension has its chat channel open takes the message through Pi's
+    // own API, without the screen checks and typing below (CDXC:PiChatChannel 2026-11-05).
+    if matches!(terminal_agent.as_deref(), Some("pi" | "omp")) {
+        if let Some(sent) = super::pi_channel_send::send_pi_channel_message(
+            state,
+            &target,
+            text,
+            image_paths,
+            interrupt,
+            source,
+            drafted_text,
+            draft_before_send.as_ref(),
+            draft_version,
+        )
+        .await
+        {
+            if sent.is_ok() {
+                record_coordinator_playbook_note(
+                    state,
+                    &target.project_id,
+                    &target.session_id,
+                    playbook_note.as_ref(),
+                );
+            }
+            return sent;
+        }
+    }
+    // DeepSeek Harness takes it through Ghostex's dsh-tui plugin or dsh-tui's inject socket
+    // (CDXC:DshChatChannel 2026-11-05 in dsh_chat_plugin.rs).
+    if terminal_agent.as_deref() == Some("dsh") {
+        if let Some(sent) = super::dsh_channel_send::send_dsh_channel_message(
+            state,
+            &target,
+            text,
+            image_paths,
+            interrupt,
+            source,
+            drafted_text,
+            draft_before_send.as_ref(),
+            draft_version,
+        )
+        .await
+        {
+            if sent.is_ok() {
+                record_coordinator_playbook_note(
+                    state,
+                    &target.project_id,
+                    &target.session_id,
+                    playbook_note.as_ref(),
+                );
+            }
+            return sent;
+        }
+    }
+    // Everything below reads and types through zmx (CDXC:Zmx 2026-11-05 in send_heal.rs).
+    if let Some(held) = super::send_heal::hold_while_gxserver_tools_missing(
+        state,
+        &target,
+        source,
+        drafted_text,
+        image_paths,
+    )
+    .await
+    {
+        return held;
+    }
     /*
     CDXC:AgentScreenDetection 2026-08-19:
     Sample where the transcript ends BEFORE the message is enqueued: everything
@@ -745,6 +887,8 @@ pub(crate) async fn send_session_chat_message_with_draft(
         }
     }
     let mut agent_restarting = false;
+    let mut tools_missing = false;
+    let mut heal_gave_up: Option<String> = None;
     if let (Err(error), Some(heal_steps)) = (&sent, heal_steps) {
         if heals_refused_send(error, source, terminal_agent.as_deref()) {
             match super::send_heal::heal_refused_send(
@@ -761,7 +905,8 @@ pub(crate) async fn send_session_chat_message_with_draft(
             {
                 super::send_heal::SendHeal::Delivered => sent = Ok(()),
                 super::send_heal::SendHeal::Restarting => agent_restarting = true,
-                super::send_heal::SendHeal::GaveUp => {}
+                super::send_heal::SendHeal::ToolsMissing => tools_missing = true,
+                super::send_heal::SendHeal::GaveUp(reason) => heal_gave_up = reason,
             }
         }
     }
@@ -774,6 +919,22 @@ pub(crate) async fn send_session_chat_message_with_draft(
             );
         }
         return hold_for_restarted_agent(state, &target, source, drafted_text, image_paths);
+    }
+    if tools_missing {
+        if let Some(id) = durable_id.as_deref() {
+            crate::session_chat_app_command::discard_local_command(
+                &target.project_id,
+                &target.session_id,
+                id,
+            );
+        }
+        return super::send_heal::hold_while_tools_missing(
+            state,
+            &target,
+            source,
+            drafted_text,
+            image_paths,
+        );
     }
     if let Err(error) = sent {
         if let Some(id) = durable_id.as_deref() {
@@ -830,15 +991,19 @@ pub(crate) async fn send_session_chat_message_with_draft(
                 message: error.message,
             });
         }
+        let reason = crate::session_chat_send_failure::send_failure_reason(
+            &error.message,
+            heal_gave_up.as_deref(),
+        );
         if error.failure == crate::session_chat_send::SessionChatSendFailure::ComposerNotCleared {
             return Err(DomainStateError {
                 code: "composerNotCleared",
-                message: error.message,
+                message: reason,
             });
         }
         return Err(DomainStateError {
             code: "dependencyUnavailable",
-            message: error.message,
+            message: reason,
         });
     }
     if let Some(command) = archive_command {
@@ -857,6 +1022,16 @@ pub(crate) async fn send_session_chat_message_with_draft(
         &target.project_id,
         &target.session_id,
     );
+    // The user sent something new and the agent took it, so an older failure's card and dot are
+    // dealt with; its row keeps its own reason, Retry and Remove. A row the queue sent on its own
+    // says nothing about what the user has seen.
+    if source == SessionChatMessageSource::Composer {
+        crate::session_chat_send_failure::clear_send_failure(
+            state,
+            &target.project_id,
+            &target.session_id,
+        );
+    }
     /*
     CDXC:AgentScreenDetection 2026-08-19:
     The bytes reached zmx, which says nothing about the agent having received
@@ -903,6 +1078,12 @@ pub(crate) async fn send_session_chat_message_with_draft(
             | SessionChatMessageSource::AccountSwitch(_)
             | SessionChatMessageSource::ManualQueue => "queue",
         },
+    );
+    record_coordinator_playbook_note(
+        state,
+        &target.project_id,
+        &target.session_id,
+        playbook_note.as_ref(),
     );
     /*
     An option command changes what the statusline reports: read it back. It is

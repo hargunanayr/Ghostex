@@ -67,6 +67,8 @@ fn state_in(temp: &tempfile::TempDir, live: bool) -> Arc<AppState> {
         } else {
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()
         },
+        device_api_tokens: crate::auth::DeviceApiTokens::default(),
+        cef_devtools: Default::default(),
         automation_runtime: crate::automations::AutomationRuntime::new(
             paths.clone(),
             metadata.server_id.clone(),
@@ -118,6 +120,7 @@ fn session(project: &str, id: &str, title: &str) -> SessionInfo {
         has_chat: true,
         thread_of: None,
         threads: None,
+        computer: None,
     }
 }
 
@@ -316,6 +319,7 @@ fn announcement(reference: &str, kind: &'static str, text: &str) -> Announcement
         kind,
         project_id: project_id.to_string(),
         session_id: session_id.to_string(),
+        server_id: None,
         model_text: None,
     }
 }
@@ -730,15 +734,15 @@ fn a_missing_key_on_another_computer_is_said_in_general_words() {
     use super::socket::{bad_key_message, no_key_message};
     assert_eq!(
         no_key_message(Provider::Xai, true),
-        "The computer this session runs on has no xAI API key for the voice agent. Add it in Ghostex Settings > Extensions > Voice agent on that computer."
+        "The computer this session runs on has no xAI API key for the voice agent. Add it in Ghostex Settings > Voice on that computer."
     );
     assert_eq!(
         bad_key_message(Provider::OpenAi, true),
-        "The OpenAI API key on the computer this session runs on was refused by OpenAI. Check it in Ghostex Settings > Extensions > Voice agent on that computer."
+        "The OpenAI API key on the computer this session runs on was refused by OpenAI. Check it in Ghostex Settings > Voice on that computer."
     );
     assert_eq!(
         no_key_message(Provider::Xai, false),
-        "Add your xAI API key in Settings > Extensions > Voice agent."
+        "Add your xAI API key in Settings > Voice."
     );
 }
 

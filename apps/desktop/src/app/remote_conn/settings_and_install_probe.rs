@@ -106,6 +106,12 @@ impl GhostexGpuiApp {
             write_result.snapshot.object(),
             cx,
         );
+        if super::connected_computers::gpui_remote_machine_agent_access_changed(
+            &previous_settings_object,
+            write_result.snapshot.object(),
+        ) {
+            self.renew_connected_computers(true, cx);
+        }
         for remote_machine_id in gpui_remote_machines_with_changed_connection(
             &previous_settings_object,
             write_result.snapshot.object(),
@@ -218,7 +224,7 @@ impl GhostexGpuiApp {
             self.dispatch_gpui_app_modal_toast(
                 "warning",
                 "SSH password not saved",
-                "GPUI could not save the SSH password for this remote machine.",
+                "Ghostex couldn't save the SSH password for this remote machine.",
                 cx,
             );
             return;
@@ -231,7 +237,7 @@ impl GhostexGpuiApp {
             self.dispatch_gpui_app_modal_toast(
                 "warning",
                 "SSH password not saved",
-                "GPUI could not save the SSH password for this remote machine.",
+                "Ghostex couldn't save the SSH password for this remote machine.",
                 cx,
             );
             return;

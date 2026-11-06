@@ -75,6 +75,9 @@ pub fn apply_state_frame(
     if let Some(ids) = frame.state.later_question_ids.clone() {
         state.session.later_question_ids = ids;
     }
+    if let Some(modes) = frame.state.unavailable_modes.clone() {
+        state.session.unavailable_modes = modes;
+    }
     if let Some(ids) = frame.state.removed_question_ids.clone() {
         state.session.removed_question_ids = ids;
     }
@@ -101,6 +104,19 @@ pub fn apply_state_frame(
     }
     if let Some(threads) = frame.state.coordinator_threads.clone() {
         state.session.coordinator_threads = Some(threads);
+        crate::extras::relayed_approvals::receive(state);
+    }
+    if let Some(side_chats) = frame.state.side_chats.clone() {
+        state.session.side_chats = Some(side_chats);
+    }
+    if let Some(parent) = frame.state.side_chat_of.clone() {
+        state.session.side_chat_of = Some(parent);
+    }
+    if let Some(requests) = frame.state.secret_requests.clone() {
+        crate::extras::secret_requests::receive(state, requests);
+    }
+    if let Some(answers) = frame.state.relayed_answers.clone() {
+        state.session.relayed_answers = Some(answers);
     }
     if let Some(deliveries) = frame.state.agent_message_deliveries.clone() {
         state.session.agent_message_deliveries = Some(deliveries);
@@ -147,6 +163,7 @@ pub fn apply_agent_identity(state: &mut ChatState, patch: &AgentIdentity) {
         session.forked_at = None;
         session.retired_async_question_ids = Vec::new();
         session.later_question_ids = Vec::new();
+        session.unavailable_modes = Vec::new();
         session.removed_question_ids = Vec::new();
         session.resource_index = Vec::new();
     }
@@ -273,12 +290,18 @@ pub fn apply_draft_agent_carriage(state: &mut ChatState, result: &ReadSessionCha
     if let Some(send_on_pick) = result.send_on_pick {
         state.core.send_on_pick_enabled = send_on_pick;
     }
+    if let Some(wait) = result.answers_wait_for_idle {
+        state.core.answers_wait_for_idle = wait;
+    }
     if let Some(all_efforts) = result.all_orchestrator_efforts {
         state.core.all_orchestrator_efforts_enabled = all_efforts;
     }
     if let Some(strength) = result.marked_heading_strength {
         state.core.marked_heading_strength =
             crate::transcript::marked_sections::heading_strength(strength);
+    }
+    if let Some(strength) = result.chat_text_strength {
+        state.core.chat_text_strength = crate::transcript::text_strength::text_strength(strength);
     }
 }
 
@@ -287,10 +310,15 @@ pub fn apply_draft_agent_carriage(state: &mut ChatState, result: &ReadSessionCha
 ///
 /// `restore_presentation` is false only when the identity the host had cached disagrees with the
 /// one the snapshot carries, which is the case a stale presentation cache must not win.
+///
+/// CDXC:SessionChat 2026-11-05 WHY:
+/// A retained transcript can still carry a question, an approval or the terminal card of a screen dialog that was answered elsewhere.
+/// `restore_blocking` is false for retained folds: keep the current prompt and terminal notice until a live frame or tail read confirms what is still open, without rolling back a live prompt or notice that arrived first.
 pub fn apply_authoritative(
     state: &mut ChatState,
     result: &ReadSessionChatResult,
     restore_presentation: bool,
+    restore_blocking: bool,
     context: &crate::state::ChatContext,
 ) {
     // A detail-mode history prefix survives a re-read of the same epoch when the window still
@@ -383,7 +411,10 @@ pub fn apply_authoritative(
     if let Some(working) = result.working {
         state.session.session_activity_working = working;
     }
-    state.session.prompt = result.state.prompt.clone();
+    if restore_blocking {
+        state.session.prompt = result.state.prompt.clone();
+        state.session.terminal_notice = result.state.terminal_notice.clone();
+    }
     if restore_presentation {
         apply_agent_identity(
             state,
@@ -411,13 +442,15 @@ pub fn apply_authoritative(
     if let Some(ids) = result.state.later_question_ids.clone() {
         state.session.later_question_ids = ids;
     }
+    if let Some(modes) = result.state.unavailable_modes.clone() {
+        state.session.unavailable_modes = modes;
+    }
     if let Some(ids) = result.state.removed_question_ids.clone() {
         state.session.removed_question_ids = ids;
     }
     if let Some(index) = result.state.resource_index.clone() {
         state.session.resource_index = index;
     }
-    state.session.terminal_notice = result.state.terminal_notice.clone();
     // The status machine decides whether this becomes the working strip's activity, a transient
     // status row, the streaming bubble or the pending tool row.
     crate::session::terminal::apply_terminal_activity(
@@ -438,6 +471,19 @@ pub fn apply_authoritative(
     }
     if let Some(threads) = result.state.coordinator_threads.clone() {
         state.session.coordinator_threads = Some(threads);
+        crate::extras::relayed_approvals::receive(state);
+    }
+    if let Some(side_chats) = result.state.side_chats.clone() {
+        state.session.side_chats = Some(side_chats);
+    }
+    if let Some(parent) = result.state.side_chat_of.clone() {
+        state.session.side_chat_of = Some(parent);
+    }
+    if let Some(requests) = result.state.secret_requests.clone() {
+        crate::extras::secret_requests::receive(state, requests);
+    }
+    if let Some(answers) = result.state.relayed_answers.clone() {
+        state.session.relayed_answers = Some(answers);
     }
     if let Some(deliveries) = result.state.agent_message_deliveries.clone() {
         state.session.agent_message_deliveries = Some(deliveries);
@@ -472,7 +518,9 @@ pub fn apply_authoritative(
     let cursor = state.messages.before_offset;
     if let Some(request) = state.messages.load_earlier_request.clone() {
         // A jump read asks for its own offset, so the cursor never matches it.
-        if request.epoch != Some(result.epoch) || (!request.island && request.before_offset != cursor) {
+        if request.epoch != Some(result.epoch)
+            || (!request.island && request.before_offset != cursor)
+        {
             state.messages.load_earlier_request = None;
             state.messages.boundary_attempt = None;
             state.messages.loading_earlier = false;

@@ -65,6 +65,10 @@ pub(crate) enum TitlebarMode {
     /// A Ghost's Overview: its threads, documents and habits beside its chat, app-wide, drawn by
     /// GPUI, opened from the Ghost's row in the sidebar. See `app/native_ghost/`.
     GhostOverview,
+    /// One of the project's side chats (forked sessions hidden from the sidebar), drawn by GPUI.
+    /// Like `Browser`, this one mode stands for many strip tabs: which side chat is on screen is
+    /// `GpuiViewStripLayout::active_side_chat`. See `app/side_chat_panel/`.
+    SideChat,
     Extension(ExtensionId),
 }
 
@@ -85,6 +89,7 @@ impl TitlebarMode {
             "bot-feed" => Some(Self::BotFeed),
             "work" => Some(Self::Work),
             "ghost-overview" => Some(Self::GhostOverview),
+            "side-chat" => Some(Self::SideChat),
             value if value.starts_with("extension:") => {
                 ExtensionId::new(value.trim_start_matches("extension:")).map(Self::Extension)
             }
@@ -105,6 +110,7 @@ impl TitlebarMode {
             Self::BotFeed => "bot-feed".to_string(),
             Self::Work => "work".to_string(),
             Self::GhostOverview => "ghost-overview".to_string(),
+            Self::SideChat => "side-chat".to_string(),
             Self::Extension(id) => format!("extension:{}", id.as_str()),
         }
     }
@@ -126,6 +132,7 @@ impl TitlebarMode {
             Self::BotFeed => "Automations",
             Self::Work => "Issues",
             Self::GhostOverview => "Overview",
+            Self::SideChat => "Side chat",
             Self::Extension(id) => id.as_str(),
         }
     }
@@ -167,6 +174,7 @@ impl TitlebarMode {
             Self::BotFeed => TITLEBAR_ICON_MESSAGES,
             Self::Work => "titlebar/briefcase.svg",
             Self::GhostOverview => TITLEBAR_ICON_LAYOUT_COLUMNS,
+            Self::SideChat => "titlebar/message-circle.svg",
             Self::Extension(_) => TITLEBAR_ICON_EXTENSIONS,
         }
     }
@@ -215,6 +223,7 @@ impl TitlebarMode {
             Self::Extension(_) => 9,
             Self::Agents => 10,
             Self::Changes => 11,
+            Self::SideChat => 12,
         }
     }
 
@@ -231,6 +240,7 @@ impl TitlebarMode {
             Self::Work => 8,
             Self::GhostOverview => 9,
             Self::Changes => 10,
+            Self::SideChat => 11,
             Self::Extension(id) => {
                 id.as_str()
                     .bytes()
@@ -258,6 +268,7 @@ impl TitlebarMode {
             Self::BotFeed => "",
             Self::GhostOverview => "",
             Self::Work => "Issues shows your tickets once a Linear key is set or gh is signed in.",
+            Self::SideChat => "",
             Self::Extension(_) => "This extension is unavailable for the current project context.",
         }
     }

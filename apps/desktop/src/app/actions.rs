@@ -252,6 +252,16 @@ pub(crate) struct ClaudeCloudMenuPicked {
     pub(crate) account_id: Option<String>,
 }
 
+/// A row of the header's box chip menu (render/workarea_header/box_chip.rs) for the Cloud Box the
+/// work area's session ran on when the menu opened.
+#[derive(Clone, Debug, PartialEq, Eq, Action)]
+#[action(namespace = ghostex_gpui, no_json)]
+pub(crate) struct CloudBoxMenuPicked {
+    pub(crate) shell_session_id: u64,
+    pub(crate) box_id: String,
+    pub(crate) pick: &'static str,
+}
+
 /// The header headset arrow's "This session: <title>": a call about the session the work area
 /// showed when the menu opened (raw ids of its computer; `remote_machine` names a connected one).
 #[derive(Clone, Debug, PartialEq, Eq, Action)]
@@ -390,6 +400,25 @@ pub(crate) struct ToggleGpuiViewStripTabPinned {
     pub(crate) browser_tab_id: Option<u64>,
 }
 
+/// A side chat tab's right-click rows (`app/side_chat_panel/`). `tab_id` is its `SideChatTabId`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Action)]
+#[action(namespace = ghostex_gpui, no_json)]
+pub(crate) struct BringBackGpuiSideChatTab {
+    pub(crate) tab_id: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Action)]
+#[action(namespace = ghostex_gpui, no_json)]
+pub(crate) struct DeleteGpuiSideChatTab {
+    pub(crate) tab_id: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Action)]
+#[action(namespace = ghostex_gpui, no_json)]
+pub(crate) struct CloseGpuiSideChatTab {
+    pub(crate) tab_id: u64,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Action)]
 #[action(namespace = ghostex_gpui, no_json)]
 pub(crate) struct PopOutGpuiViewTab {
@@ -476,6 +505,13 @@ pub(crate) struct RunGpuiTitlebarTip {
 #[action(namespace = ghostex_gpui, no_json)]
 pub(crate) struct RunGpuiTitlebarHelpQuestion {
     pub(crate) question_index: u64,
+}
+
+/// A row of the top bar's Updates list: Update all, or open Settings > Updates.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Action)]
+#[action(namespace = ghostex_gpui, no_json)]
+pub(crate) struct RunGpuiTitlebarUpdates {
+    pub(crate) update_all: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Action)]

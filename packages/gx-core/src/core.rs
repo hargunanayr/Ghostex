@@ -106,6 +106,11 @@ pub enum Intent {
         project: ProjectKey,
         session_ids: Vec<String>,
     },
+    /// The `sidebarOrder` each session takes from a Unified sidebar pinned reorder, written
+    /// locally before the pin calls are awaited so the cards move under the user's finger.
+    SetSessionSidebarOrders {
+        orders: Vec<(SessionKey, i64)>,
+    },
 }
 
 /// An input to the core.
@@ -140,6 +145,12 @@ pub enum Event {
     Intent(Intent),
     /// Time passed. The host decides how often; the core only compares deadlines to `now_ms`.
     Tick,
+    /// Home gxserver's `/api/cloudBoxes` `list` answer: the whole box registry
+    /// (`cloud_boxes.rs`). Read on this computer's first connect and whenever a
+    /// `cloudBoxesChanged` frame without a row asks for it ([`Effect::RefetchCloudBoxes`]).
+    CloudBoxesListed {
+        boxes: Vec<ghostex_gx_protocol::cloud_box::CloudBox>,
+    },
 }
 
 /// Why the host must subscribe to a machine's presentation again.
@@ -171,8 +182,14 @@ pub enum Effect {
     RefetchSidebarHud { machine: MachineId },
     /// `notificationFeedChanged` carries no payload: read `/api/readNotificationFeed`.
     RefetchNotificationFeed { machine: MachineId },
+    /// A `cloudBoxesChanged` frame without a row: read this computer's `/api/cloudBoxes` `list`
+    /// again and hand it back as [`Event::CloudBoxesListed`].
+    RefetchCloudBoxes,
     /// `connectorsChanged`: an open Settings › Connectors page reads `/api/readConnectors` again.
     ConnectorsChanged { machine: MachineId },
+    /// `settingsSyncNote` from this computer's gxserver: a synced setting changed on two computers
+    /// apart and the later edit won (the "changed on X · Undo" note; `note` as gxserver sends it).
+    SettingsSyncNote { note: Value },
     /// The machine's stream just went live: a first connect, or back after a loss, when the
     /// payload-less announcements above may have been missed. Read the HUD, the recent projects
     /// and the notification feed again (`refetch.rs`).
@@ -203,6 +220,9 @@ pub enum Effect {
     /// A live delta moved a session of this computer into unacknowledged attention: play the
     /// completion sound unless the user turned it off.
     SessionAttentionRaised { session: SessionKey },
+    /// A live delta showed a session of this computer newly stuck (gxserver's `stuckSince`): play
+    /// the not-moving sound and show a banner unless the user turned those off.
+    SessionStuckRaised { session: SessionKey },
     /// Persist the user's last selected session of a project (it must survive restarts, and the
     /// project being closed and reopened).
     ///
@@ -236,6 +256,7 @@ pub struct Output {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Core {
     presentation: PresentationStore,
+    cloud_boxes: crate::cloud_boxes::CloudBoxes,
     focus: FocusState,
     tabs_generation: u64,
     attention: crate::attention::AttentionTracker,
@@ -252,6 +273,11 @@ impl Core {
 
     pub fn focus(&self) -> &FocusState {
         &self.focus
+    }
+
+    /// Home gxserver's Cloud Boxes registry, as this client last read it.
+    pub fn cloud_boxes(&self) -> &crate::cloud_boxes::CloudBoxes {
+        &self.cloud_boxes
     }
 
     /// Seeds focus from persisted state before anything else happens (startup restore). Does not
@@ -382,6 +408,9 @@ impl Core {
             }
             Event::Intent(intent) => self.handle_intent(intent, now_ms, &mut output),
             Event::Tick => output.changes = self.presentation.expire_patches(now_ms),
+            Event::CloudBoxesListed { boxes } => {
+                output.changes.cloud_boxes_changed = self.cloud_boxes.replace_all(boxes);
+            }
         }
         self.settle_after_change(&mut output);
         self.attention.observe(
@@ -524,11 +553,31 @@ impl Core {
                     machine: machine.clone(),
                 });
             }
+            // Each computer tells its own clients about its own notes.
+            ServerEvent::SettingsSyncNote(frame) if machine.is_local() => {
+                output
+                    .effects
+                    .push(Effect::SettingsSyncNote { note: frame.note });
+            }
+            // Only this computer's gxserver is home to boxes; a box's own gxserver or a remote
+            // computer announcing one is not this client's registry.
+            ServerEvent::CloudBoxesChanged(frame) if machine.is_local() => {
+                let (moved, refetch) = self.cloud_boxes.apply_frame(&frame);
+                output.changes.cloud_boxes_changed = moved;
+                if refetch {
+                    output.effects.push(Effect::RefetchCloudBoxes);
+                }
+                if !moved && !refetch {
+                    output.changes = ChangeSummary::ignored(IgnoredReason::NotOwnedYet);
+                }
+            }
             ServerEvent::EventStreamReady(_)
             | ServerEvent::ServerStarted(_)
             | ServerEvent::ServerStopping(_)
             | ServerEvent::ApiRequestHandled(_)
             | ServerEvent::RendererCommand(_)
+            | ServerEvent::CloudBoxesChanged(_)
+            | ServerEvent::SettingsSyncNote(_)
             | ServerEvent::SessionChatSnapshot(_)
             | ServerEvent::SessionChatReplaced(_)
             | ServerEvent::SessionChatAppended(_)
@@ -698,6 +747,9 @@ impl Core {
                 output.changes = self
                     .presentation
                     .reorder_project_sessions(&project, &session_ids);
+            }
+            Intent::SetSessionSidebarOrders { orders } => {
+                output.changes = self.presentation.set_session_sidebar_orders(&orders);
             }
         }
     }

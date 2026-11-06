@@ -169,17 +169,22 @@ pub fn thread_brief(coordinator: &BriefContext<'_>, task: &str) -> String {
 - End your turn with a final report: what you did, where (files, branch, pull request), how you verified it, and anything left or blocked. Ghostex forwards your final message to the coordinator automatically. Your final message is the only way to report: never message or type into the coordinator's session yourself (`ghostex agents send`, `send-session-chat-message`, `send-text` and the like), not even for a progress update or a patch that is ready; Ghostex refuses it.\n\
 - When a message gives you several tasks, finish them all and then end your turn with one report on all of them, unless it asks you to report after each one; then end your turn after the first with its report, and wait for the coordinator to tell you to go on.\n\
 - If you need a decision you cannot make, ask it plainly in your final message and stop. The coordinator answers in this chat.\n\
-- The user talks only to the coordinator. Never ask the user directly or publish a page for them (`ghostex show`): put questions, mockups and the path of any page file in your final report, and the coordinator shows them to the user and sends you the answers.\n\
+- The user talks only to the coordinator. Never ask the user directly or publish a page for them (`ghostex show`): put questions, mockups and the path of any page file in your final report, and the coordinator shows them to the user and sends you the answers. Link what each question is about (a PR, issue, file, page or commit: a Markdown link with the full URL, or a file path link) so the user can check it.\n\
 - Do not merge, push, or delete anything unless this brief asks for it.",
     );
     brief.push_str(
-        "\n- Your final report is a handover: start each relevant section of it with one of the markers ❓ Needs you, ✅ Done, ⚠️ Read this, 🛫 Kicked off, 🔄 In progress, 🧪 Untested, 🚀 Shipped or 🛑 Blocked. Start every bullet and sub-bullet with a capital letter, even when it continues a lead-in sentence.",
+        "\n- Never end your turn mid-task to wait for something you can wait on in the background (a build, a test run, a job). If you do end your turn while a background job still runs, say so plainly in your last line, so the coordinator does not take it as finished.\n- Your final report is a handover: start each relevant section of it with one of the markers, only for sections that have something. Status sections first: ✅ Done, 🚀 Shipped, 📣 Comms, 🛫 Kicked off, 🔄 In progress, ⏸️ Parked, 📦 Held for release, 🧪 Untested. Actionable sections last: ⚠️ Read this, 🛑 Blocked, 💡 Suggestions, then ❓ Needs you at the very end. Start every bullet and sub-bullet with a capital letter, even when it continues a lead-in sentence.",
     );
     brief
 }
 
 pub enum ThreadReport<'a> {
     Finished {
+        message: Option<&'a str>,
+    },
+    /// Its session went to sleep (or its agent stopped) while its turn was still running, so the
+    /// turn did not finish: `message` is the last thing it said.
+    CutOff {
         message: Option<&'a str>,
     },
     Waiting {
@@ -192,6 +197,64 @@ pub enum ThreadReport<'a> {
         /// What its chat or screen shows about the send, when anything does.
         evidence: Option<&'a str>,
     },
+    /// It is working, but neither its transcript nor its screen has changed for this long
+    /// (stall.rs).
+    Stalled {
+        quiet_minutes: i64,
+        /// When its last output was seen, as an RFC 3339 time.
+        quiet_since: &'a str,
+        last_row: Option<&'a str>,
+        nudge: StallNudge<'a>,
+        /// Quiet past the nudge's round: the user now sees it as not moving and was notified.
+        stuck: bool,
+    },
+    /// It ended its turn and has started no new one for this long, although something waits for
+    /// it (idle_wait.rs).
+    IdleWaiting {
+        idle_minutes: i64,
+        /// When its last turn ended, as an RFC 3339 time.
+        idle_since: &'a str,
+        reason: IdleReportReason,
+        nudge: StallNudge<'a>,
+        /// Idle past the nudge's round: the user now sees it as not moving and was notified.
+        stuck: bool,
+    },
+}
+
+/// Why an idle thread's report was sent (idle_wait.rs).
+pub enum IdleReportReason {
+    /// Its agent queued this many task notifications and never took them.
+    Queued(usize),
+    /// Its last message said it waits on a background job, which no longer shows as running.
+    SaidWaiting,
+    /// Its last message ended saying what it does next, but it started no new turn.
+    SaidCarryingOn,
+    /// Its newest turn never ended: it was put to sleep, died or was restarted mid-turn.
+    TurnCutOff,
+}
+
+impl From<super::idle_wait::IdleWaitReason> for IdleReportReason {
+    fn from(reason: super::idle_wait::IdleWaitReason) -> Self {
+        use super::idle_wait::IdleWaitReason;
+        match reason {
+            IdleWaitReason::Queued(count) => Self::Queued(count),
+            IdleWaitReason::SaidWaiting => Self::SaidWaiting,
+            IdleWaitReason::SaidCarryingOn => Self::SaidCarryingOn,
+            IdleWaitReason::TurnCutOff => Self::TurnCutOff,
+            // Never reported (idle_wait.rs); worded like a job it waits on if it ever were.
+            IdleWaitReason::JobRunning => Self::SaidWaiting,
+        }
+    }
+}
+
+/// What Ghostex did about a quiet thread before reporting it.
+pub enum StallNudge<'a> {
+    /// The first report: Ghostex sent it `nudge_message()`.
+    Sent,
+    /// The first report, but the nudge could not be sent.
+    Failed(&'a str),
+    /// A later report: the nudge went out with the first one.
+    Earlier,
 }
 
 /// The body of one report; the sender header names the thread.
@@ -208,6 +271,18 @@ pub fn report_body(report: &ThreadReport<'_>, thread_ref: &str) -> String {
             } else {
                 body.push_str(message);
             }
+            body
+        }
+        ThreadReport::CutOff { message } => {
+            let mut body = String::from("Ghostex thread report: it stopped before its turn ended: its session was put to sleep, or its agent stopped, while it was still working, so its task is not done.");
+            if let Some(message) = message.map(str::trim).filter(|message| !message.is_empty()) {
+                body.push_str("\n\nThe last thing it said:\n\n");
+                body.extend(message.chars().take(COORDINATOR_REPORT_MAX_CHARS));
+            }
+            body.push_str(&format!(
+                "\n\nTell it to carry on (ghostex agents send {thread_ref} \"carry on\"), which wakes it. If you don't, Ghostex nudges it in {} minutes.",
+                super::stall::minutes_of(super::idle_wait::idle_round_ms())
+            ));
             body
         }
         ThreadReport::Finished { message: None } => format!(
@@ -239,6 +314,89 @@ Read its chat (ghostex read-session-chat {thread_ref} --last 2 --format text), t
             ));
             body
         }
+        ThreadReport::Stalled {
+            quiet_minutes,
+            quiet_since,
+            last_row,
+            nudge,
+            stuck,
+        } => {
+            let mut body = if *stuck {
+                format!(
+                    "Ghostex thread report: still not moving: no new output for {quiet_minutes} minutes (quiet since {quiet_since}), even after Ghostex nudged it. The user now sees it as not moving (a red dot on its row) and was notified."
+                )
+            } else {
+                format!(
+                    "Ghostex thread report: still working, but no new output for {quiet_minutes} minutes (quiet since {quiet_since}). Its transcript has no new row and its screen has not changed in that time, so it may be stuck (a hung command, a lost connection) or on a long silent step."
+                )
+            };
+            match nudge {
+                StallNudge::Sent => body.push_str(&format!(
+                    "\n\nGhostex nudged it: \"{}\"",
+                    super::stall::nudge_message()
+                )),
+                StallNudge::Failed(error) => body.push_str(&format!(
+                    "\n\nGhostex could not nudge it: {}",
+                    error.trim()
+                )),
+                StallNudge::Earlier => {}
+            }
+            if let Some(row) = last_row.map(str::trim).filter(|row| !row.is_empty()) {
+                body.push_str(&format!("\n\nIts last row: {row}"));
+            }
+            body.push_str(&format!(
+                "\n\nHeal it: read its chat (ghostex read-session-chat {thread_ref} --last 2 --format text) and screen (ghostex read-text {thread_ref}). If a command hangs or it sits without moving, interrupt it (ghostex interrupt-session-chat {thread_ref}) and tell it to carry on (ghostex agents send {thread_ref} \"carry on\"); if it takes no input, reload it (ghostex agents reload {thread_ref}). A long silent build or test is not stuck: leave it. Ghostex never interrupts or reloads on its own. Tell the user only if healing fails. You hear again every {} minutes until it moves.",
+                super::stall::minutes_of(super::stall::quiet_round_ms())
+            ));
+            body
+        }
+        ThreadReport::IdleWaiting {
+            idle_minutes,
+            idle_since,
+            reason,
+            nudge,
+            stuck,
+        } => {
+            let why = match reason {
+                IdleReportReason::Queued(1) => "its agent queued a background-job notification it never took".to_string(),
+                IdleReportReason::Queued(count) => format!("its agent queued {count} background-job notifications it never took"),
+                IdleReportReason::SaidWaiting => "it ended its turn saying it waits on a background job, which no longer shows as running".to_string(),
+                IdleReportReason::SaidCarryingOn => "its last message ends saying what it does next, so it stopped before its task was done".to_string(),
+                IdleReportReason::TurnCutOff => "its last turn never ended: it was put to sleep, or its agent stopped or restarted, mid-turn".to_string(),
+            };
+            let nudge_message = match reason {
+                IdleReportReason::Queued(_) | IdleReportReason::SaidWaiting => {
+                    super::idle_wait::IDLE_NUDGE_MESSAGE
+                }
+                IdleReportReason::SaidCarryingOn | IdleReportReason::TurnCutOff => {
+                    super::idle_wait::IDLE_CARRY_ON_MESSAGE
+                }
+            };
+            let mut body = if *stuck {
+                format!(
+                    "Ghostex thread report: still idle: no new turn for {idle_minutes} minutes (since {idle_since}), even after Ghostex nudged it, though {why}. The user now sees it as not moving (a red dot on its row) and was notified."
+                )
+            } else {
+                format!(
+                    "Ghostex thread report: idle for {idle_minutes} minutes (since {idle_since}), though {why}."
+                )
+            };
+            match nudge {
+                StallNudge::Sent => {
+                    body.push_str(&format!("\n\nGhostex nudged it: \"{nudge_message}\""))
+                }
+                StallNudge::Failed(error) => body.push_str(&format!(
+                    "\n\nGhostex could not nudge it: {}",
+                    error.trim()
+                )),
+                StallNudge::Earlier => {}
+            }
+            body.push_str(&format!(
+                "\n\nHeal it: read its chat (ghostex read-session-chat {thread_ref} --last 2 --format text) and screen (ghostex read-text {thread_ref}), then tell it to read its background job's result and carry on (ghostex agents send {thread_ref} \"carry on\"); if it takes no input, reload it (ghostex agents reload {thread_ref}). A job that is really still running is not stuck: leave it. Tell the user only if healing fails. You hear again every {} minutes until it starts a new turn.",
+                super::stall::minutes_of(super::idle_wait::idle_round_ms())
+            ));
+            body
+        }
     }
 }
 
@@ -253,11 +411,13 @@ pub fn report_headline(text: &str, max: usize) -> String {
             .trim()
             .to_string()
     };
+    // A marked section's label (`✅ **Done:**`) is a heading too: judged after its bold is gone.
     let is_heading = |line: &str| {
         let trimmed = line.trim();
         trimmed.starts_with('#')
             || (trimmed.starts_with("**") && trimmed.ends_with("**"))
             || trimmed.ends_with(':')
+            || clean(line).ends_with(':')
     };
     let lines = text.lines().filter(|line| !clean(line).is_empty());
     let line = lines

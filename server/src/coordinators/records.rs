@@ -66,6 +66,8 @@ pub struct ThreadRecord {
     pub pending_message: Option<String>,
     /// When that message was sent.
     pub pending_message_at: Option<String>,
+    /// When closing its coordinator closed it too; restoring the coordinator restores it.
+    pub closed_with_coordinator_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -145,6 +147,7 @@ fn thread_from_row(row: &Row<'_>) -> rusqlite::Result<ThreadRecord> {
         last_report: row.get("lastReport")?,
         pending_message: row.get("pendingMessage")?,
         pending_message_at: row.get("pendingMessageAt")?,
+        closed_with_coordinator_at: row.get("closedWithCoordinatorAt")?,
         created_at: row.get("createdAt")?,
         updated_at: row.get("updatedAt")?,
     })
@@ -152,7 +155,7 @@ fn thread_from_row(row: &Row<'_>) -> rusqlite::Result<ThreadRecord> {
 
 const COORDINATOR_COLUMNS: &str =
     "projectId, sessionId, goal, instructions, memoryJson, createdAt, updatedAt";
-const THREAD_COLUMNS: &str = "projectId, sessionId, coordinatorProjectId, coordinatorSessionId, task, resolvedAt, observedWorking, reportedAt, reportedPromptKey, lastReport, pendingMessage, pendingMessageAt, createdAt, updatedAt";
+const THREAD_COLUMNS: &str = "projectId, sessionId, coordinatorProjectId, coordinatorSessionId, task, resolvedAt, observedWorking, reportedAt, reportedPromptKey, lastReport, pendingMessage, pendingMessageAt, closedWithCoordinatorAt, createdAt, updatedAt";
 
 pub fn read_coordinator(
     db: &Connection,
@@ -372,6 +375,25 @@ pub fn set_thread_observed_working(
         UPDATE coordinator_threads
         SET observedWorking = 1, updatedAt = ?3
         WHERE projectId = ?1 AND sessionId = ?2 AND observedWorking = 0
+        "#,
+        params![project_id, session_id, now_iso()],
+    )
+    .map_err(sql_error)?;
+    Ok(())
+}
+
+/// Forgets that the thread was seen working, without a report: after its session stopped
+/// unexpectedly and was restarted (session_self_heal.rs), its cut-off turn is not a finished one.
+pub fn clear_thread_observed_working(
+    db: &Connection,
+    project_id: &str,
+    session_id: &str,
+) -> Result<(), DomainStateError> {
+    db.execute(
+        r#"
+        UPDATE coordinator_threads
+        SET observedWorking = 0, updatedAt = ?3
+        WHERE projectId = ?1 AND sessionId = ?2 AND observedWorking = 1
         "#,
         params![project_id, session_id, now_iso()],
     )

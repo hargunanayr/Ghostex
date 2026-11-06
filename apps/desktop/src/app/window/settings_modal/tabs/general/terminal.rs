@@ -4,13 +4,14 @@ use super::super::super::super::native_modal_kit::hsla;
 use super::super::super::catalog::{SettingOption, module, settings_catalog};
 use super::super::super::fields::toggle_field_with;
 use super::super::super::fields::{
-    ButtonVariant, SliderBinding, SliderSaver, card_inset, color_field, reset_key, select_field,
-    settings_button, settings_section, slider_number_field_with, text_field, tooltip_text,
+    ButtonVariant, RowSpec, SliderBinding, SliderSaver, card_inset, color_field, reset_key,
+    select_field, setting_row, settings_button, settings_section, slider_number_field_with,
+    text_field, tooltip_text,
 };
+use super::super::super::model::SettingsTabId;
 use super::super::super::page::PageBlock;
 use super::super::super::palette::SettingsPalette;
 use super::super::super::store::SettingsStore;
-use super::terminal_font::normalize_ghostty_font_family;
 use super::{GeneralCx, GeneralTab, save};
 use gpui::{
     AnyElement, App, ClickEvent, Context, Entity, InteractiveElement as _, IntoElement as _,
@@ -88,6 +89,67 @@ fn ghostty_preset(page: &mut GeneralTab, recommended: bool, cx: &mut Context<Gen
         };
         store.post_message(json!({ "type": action }), cx);
     });
+}
+
+/// CDXC:Settings 2026-10-31 DECISION:
+/// User: the Terminal page gets a link row to the moved Monospace font, which jumps to it on the Interface page. The font itself lives once, beside the App font and the chat preview (`theme/font.rs`).
+fn monospace_font_link(p: &SettingsPalette, cx: &mut Context<GeneralTab>) -> AnyElement {
+    let button = settings_button(
+        p,
+        "terminal-monospace-font-link",
+        "Open",
+        None,
+        ButtonVariant::Outline,
+        false,
+        None,
+        |page: &mut GeneralTab, _window, cx| {
+            let store = page.store.clone();
+            store.update(cx, |store, cx| {
+                store.scroll_to_section(SettingsTabId::Theme, "font", cx);
+            });
+        },
+        cx,
+    );
+    setting_row(
+        p,
+        "terminal-monospace-font-link-row",
+        RowSpec::new("Monospace font")
+            .description("The terminal's font is set on the Interface page, with the App font."),
+        None,
+        button,
+        cx,
+    )
+}
+
+/// The terminal's font size is one of the Interface scale areas (CDXC:Settings 2026-11-05 in the
+/// settings catalog's `interface_scale.rs`), so it lives on the Interface page.
+fn font_size_link(p: &SettingsPalette, cx: &mut Context<GeneralTab>) -> AnyElement {
+    let button = settings_button(
+        p,
+        "terminal-font-size-link",
+        "Open",
+        None,
+        ButtonVariant::Outline,
+        false,
+        None,
+        |page: &mut GeneralTab, _window, cx| {
+            let store = page.store.clone();
+            store.update(cx, |store, cx| {
+                store.scroll_to_section(SettingsTabId::Theme, "interfaceScale", cx);
+            });
+        },
+        cx,
+    );
+    setting_row(
+        p,
+        "terminal-font-size-link-row",
+        RowSpec::new("Font size").description(
+            "The terminal's text size is set on the Interface page, under Interface scale, with the sidebar, chat and Files sizes.",
+        ),
+        None,
+        button,
+        cx,
+    )
 }
 
 fn post(page: &mut GeneralTab, message: Value, cx: &mut Context<GeneralTab>) {
@@ -405,40 +467,10 @@ fn terminal_section(
             cx,
         ));
     }
-    if g.visible(s, "terminalFontFamily") {
-        let spec = g.spec(
-            "terminalFontFamily",
-            "Font family",
-            "Type a Ghostty font-family name. Leave blank to use Ghostex's terminal config or the platform default.",
-        );
-        // The draft React shows is `normalizeghostexSettings(settings)`, so a legacy preset name
-        // reads as the family it saves as.
-        let value = normalize_ghostty_font_family(&g.values.string("terminalFontFamily"));
-        rows.push(text_field(
-            page,
-            &p,
-            "terminalFontFamily",
-            spec,
-            Some(reset_key::<GeneralTab>("terminalFontFamily")),
-            &value,
-            Some("Ghostty default"),
-            Some(normalize_ghostty_font_family),
-            None,
-            window,
-            cx,
-        ));
+    if !g.search.is_searching() {
+        rows.push(monospace_font_link(&p, cx));
+        rows.push(font_size_link(&p, cx));
     }
-    rows.extend(page.slider(
-        g,
-        s,
-        "terminalFontSize",
-        "Font size",
-        "Set terminal text size.",
-        (8.0, 32.0, 0.5),
-        false,
-        window,
-        cx,
-    ));
     rows.extend(page.slider(
         g,
         s,

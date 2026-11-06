@@ -37,15 +37,15 @@ use crate::{
     agents::{
         agent_metadata_title_revision, apply_created_session_identity,
         apply_live_process_session_identity, create_agent_session_params_for_project,
-        default_agent_command, dispatch_agent_endpoint, enforce_required_agent_permission_flag,
-        get_visible_terminal_title, is_terminal_auto_working_directory_title,
-        normalize_agent_hook_event_activity, read_agent_settings, read_first_user_input_draft,
+        default_agent_command, dispatch_agent_endpoint, get_visible_terminal_title,
+        is_terminal_auto_working_directory_title, normalize_agent_hook_event_activity,
+        one_shot_text_job_command, read_agent_settings, read_first_user_input_draft,
         read_text_from_map, reconcile_agent_metadata_title_for_session,
         resolve_project_agent_config, terminal_title_indicates_agent_identity, AgentEndpointError,
         FIRST_PROMPT_AUTO_TITLE_ATTEMPT_ID_KEY, FIRST_USER_INPUT_DRAFT_STATUS_KEY,
         FIRST_USER_INPUT_DRAFT_UPDATED_AT_KEY,
     },
-    auth::{is_authorized_headers, is_expected_gxserver_auth_token},
+    auth::{is_authorized_client_headers, is_authorized_client_token},
     automations::handle_automation_endpoint,
     config::GxserverConfig,
     constants::{
@@ -124,9 +124,12 @@ mod app_state;
 pub mod background_tasks;
 mod bot_sync;
 mod browser_tcp;
+mod cef_devtools;
 mod close_after_done_runtime;
 pub mod commit_message_generation;
+mod coordinator_close;
 mod coordinator_open_http;
+mod coordinator_remote_runtime;
 mod coordinator_resolve;
 mod coordinator_runtime;
 mod empty_session_cleanup_runtime;
@@ -136,8 +139,11 @@ mod http_dispatch;
 pub mod http_endpoints;
 pub mod http_infra;
 pub(crate) mod machine_integrations_http;
+#[cfg(target_os = "macos")]
+pub(crate) mod macos_login_recovery;
 pub(crate) mod managed_tools_http;
 mod open_conversation_http;
+mod peer_http;
 pub mod presentation_delta;
 mod previous_session_restore_http;
 mod project_docs_http;
@@ -145,11 +151,16 @@ pub mod project_paths;
 mod route_http;
 mod session_auto_sleep_sweep;
 mod session_links_sync;
+mod session_remove;
+mod session_self_heal_runtime;
+mod session_stall_runtime;
 pub mod session_state_sync;
 mod shutdown_bounds;
+mod side_chat_http;
 mod sidebar_spaces_switch;
 mod stale_server_takeover;
 mod startup_gate;
+mod storage_cleanup_sweep;
 pub mod telemetry_http;
 pub mod telemetry_tasks;
 #[cfg(test)]
@@ -169,6 +180,7 @@ pub use app_state::*;
 pub(crate) use background_tasks::*;
 pub(crate) use commit_message_generation::*;
 pub(crate) use coordinator_runtime::queue_session_chat_prompt;
+pub(crate) use coordinator_runtime::republish_session_chat;
 pub use foreground::*;
 use http_dispatch::*;
 pub(crate) use http_endpoints::*;
@@ -176,7 +188,9 @@ pub(crate) use http_infra::*;
 pub(crate) use presentation_delta::*;
 pub(crate) use project_paths::*;
 use route_http::*;
+pub(crate) use session_remove::remove_session_row;
 pub(crate) use session_state_sync::*;
+pub(crate) use side_chat_http::{after_side_chat_start, handle_side_chat_http};
 use stale_server_takeover::*;
 use startup_gate::*;
 pub(crate) use telemetry_http::*;

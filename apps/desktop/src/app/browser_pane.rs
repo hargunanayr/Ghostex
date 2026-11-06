@@ -309,7 +309,8 @@ impl GhostexGpuiApp {
                     | TitlebarMode::Terminal
                     | TitlebarMode::BotFeed
                     | TitlebarMode::GhostOverview
-                    | TitlebarMode::Changes => {
+                    | TitlebarMode::Changes
+                    | TitlebarMode::SideChat => {
                         return false;
                     }
                 };
@@ -342,6 +343,16 @@ impl GhostexGpuiApp {
         the size derived from its most recently applied terminal config.
         */
         if self.perform_focused_cef_pane_zoom(command, cx) {
+            return true;
+        }
+        // Interface scale with areas together (CDXC:Settings 2026-11-05 in the settings catalog):
+        // anywhere but a web page, the chord steps Scale, the terminal font with the other areas.
+        let step = match command {
+            GpuiFocusedSurfaceZoomCommand::In => crate::app::native_chat::zoom::ZoomStep::In,
+            GpuiFocusedSurfaceZoomCommand::Out => crate::app::native_chat::zoom::ZoomStep::Out,
+            GpuiFocusedSurfaceZoomCommand::Reset => crate::app::native_chat::zoom::ZoomStep::Reset,
+        };
+        if self.step_interface_scale(step, cx) {
             return true;
         }
 

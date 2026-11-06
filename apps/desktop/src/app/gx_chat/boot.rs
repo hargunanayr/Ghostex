@@ -125,13 +125,22 @@ pub(super) fn chat_settings() -> ChatSettings {
             )
         }),
         send_on_pick: object.get("chatSendOnPick").and_then(Value::as_bool),
+        answers_wait_for_idle: object
+            .get("chatAnswersWaitForIdle")
+            .and_then(Value::as_bool),
         all_orchestrator_efforts: object
             .get("orchestratorAllEfforts")
             .and_then(Value::as_bool),
         marked_heading_strength: object
             .get("markedHandoversHeadingStrength")
             .and_then(Value::as_f64),
+        chat_text_strength: object
+            .get("sessionChatTextStrengthPercent")
+            .and_then(Value::as_f64),
         tool_cards: object.get("chatToolCallCards").and_then(Value::as_bool),
+        detailed_default: object
+            .get("sessionChatDetailedView")
+            .and_then(Value::as_bool),
     }
 }
 

@@ -12,6 +12,17 @@ use std::{
 /// Two causes: the lookup joined the bare name, so it never matched `xswap.exe`; and a long-running gxserver keeps the PATH it started with, so an installer that appends to the user PATH (codex-swap's install.ps1) stays invisible until the app restarts.
 /// `platform::live_path` resolves PATHEXT spellings over the live registry PATH; this adds the helpers' own install directories.
 /// SEE-ALSO: server/src/accounts/launch.rs, server/src/agent_hooks/windows.rs.
+/// The account tools under the names Settings > Accounts shows them by.
+pub(crate) fn tool_label(name: &str) -> &str {
+    match name {
+        "cswap" => "Claude Swap",
+        "xswap" => "Codex Swap",
+        other => other,
+    }
+}
+
+const COULD_NOT_READ_ACCOUNTS: &str = "Could not read your accounts. Try refreshing.";
+
 pub(crate) fn executable(home: &Path, name: &str) -> Option<PathBuf> {
     // Windows: a cswap started while its install is being switched would hold the files mid-move.
     if name == Provider::Claude.helper() {
@@ -60,8 +71,8 @@ fn json_command_env(
     args: &[&str],
     envs: &[(&str, &Path)],
 ) -> Result<Value, String> {
-    let binary =
-        executable(home, name).ok_or_else(|| format!("Install {name} on this computer first."))?;
+    let binary = executable(home, name)
+        .ok_or_else(|| format!("Install {} in Settings > Accounts first.", tool_label(name)))?;
     let mut command = crate::platform::process::background_command(binary);
     command.args(args).env("HOME", home);
     command.envs(envs.iter().copied());
@@ -73,11 +84,8 @@ fn json_command_env(
         .stderr(Stdio::null())
         .stdin(Stdio::null())
         .spawn()
-        .map_err(|_| format!("Could not start {name}."))?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or("Account helper output is unavailable.")?;
+        .map_err(|_| format!("Could not start {}.", tool_label(name)))?;
+    let stdout = child.stdout.take().ok_or(COULD_NOT_READ_ACCOUNTS)?;
     let reader = std::thread::spawn(move || {
         let mut bytes = Vec::new();
         stdout
@@ -94,22 +102,28 @@ fn json_command_env(
                 let _ = child.kill();
                 let _ = child.wait();
                 break Err(format!(
-                    "{name} did not finish reading accounts. Try refreshing."
+                    "{} did not finish reading your accounts. Try refreshing.",
+                    tool_label(name)
                 ));
             }
         }
     }?;
     if !status.success() {
         return Err(format!(
-            "{name} could not read accounts. Run {name} list in a terminal for details."
+            "{} could not read your accounts. Try refreshing, or update it in Settings > Accounts.",
+            tool_label(name)
         ));
     }
     let bytes = reader
         .join()
-        .map_err(|_| "Account helper output failed.")?
-        .map_err(|_| "Account helper output could not be read.")?;
-    let data: Value = serde_json::from_slice(&bytes)
-        .map_err(|_| format!("{name} did not return valid JSON. Update the helper."))?;
+        .map_err(|_| COULD_NOT_READ_ACCOUNTS)?
+        .map_err(|_| COULD_NOT_READ_ACCOUNTS)?;
+    let data: Value = serde_json::from_slice(&bytes).map_err(|_| {
+        format!(
+            "{} sent an answer Ghostex can't read. Update it in Settings > Accounts.",
+            tool_label(name)
+        )
+    })?;
     if data.get("schemaVersion").and_then(Value::as_u64) != Some(1) {
         return Err(format!(
             "Update {name}; its account interface is unsupported."
@@ -192,7 +206,7 @@ fn claude_usage_notice(
         "keychain_unavailable" => {
             "The saved login could not be read from the Keychain. Unlock it and refresh.".into()
         }
-        other => format!("Usage could not be read (helper status: {other}). Ghostex keeps trying."),
+        _ => "Usage could not be read. Ghostex keeps trying.".into(),
     })
 }
 fn age_text(seconds: f64) -> String {
@@ -220,11 +234,20 @@ pub(crate) fn discover(home: &Path, provider: Provider) -> Result<Vec<Discovered
     let mut data = json_command(home, provider.helper(), &["list", "--json"])?;
     if provider == Provider::Claude {
         reread_signed_out_default_account(home, &mut data);
+        // A slot whose login was put back from this computer's newer copy lists again (restore.rs).
+        if super::restore::heal_listed(home, &data) {
+            if let Ok(listed) = json_command(home, provider.helper(), &["list", "--json"]) {
+                data = listed;
+                reread_signed_out_default_account(home, &mut data);
+            }
+        }
+    } else {
+        fill_codex_members(&mut data);
     }
     let rows = data
         .get("accounts")
         .and_then(Value::as_array)
-        .ok_or("The helper account list is missing.")?;
+        .ok_or(COULD_NOT_READ_ACCOUNTS)?;
     // CDXC:AgentProviders 2026-10-01 WHY:
     // Each Codex account reads its usage and reset credits from chatgpt.com, and each Claude account may read its reset credits, so reading the accounts one after another made a forced refresh (Settings > Accounts on open) take about 5 seconds with eight accounts. Every account is read at the same time instead.
     Ok(std::thread::scope(|scope| {
@@ -238,16 +261,52 @@ pub(crate) fn discover(home: &Path, provider: Provider) -> Result<Vec<Discovered
             .collect()
     }))
 }
+/// CDXC:AgentProviders 2026-10-31 WHY:
+/// User, of "The helper could not find this saved login": `ghostex accounts` listed every Codex login twice, once "ready, not added in Settings" and once "needs sign-in", the second being the default. An account's id hashes its identity, and since 2026-10-26 a Codex identity names the member (`userId`), which Codex Swap 0.3.2 and later list. An older xswap earlier on the PATH (`~/.local/bin` 0.3.1 ahead of Homebrew's 0.3.5 on the user's computer) lists no member, so each login read as a new workspace-only id and its saved account read as missing. The member is in the login itself, so a row without one takes it from the row's `auth.json` the way codex-swap does, and one login keeps one id whichever xswap answers.
+fn fill_codex_members(data: &mut Value) {
+    let Some(rows) = data.get_mut("accounts").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for row in rows {
+        if !text(row, "userId").trim().is_empty() {
+            continue;
+        }
+        let member = ["home", "savedHome"]
+            .iter()
+            .map(|key| text(row, key))
+            .filter(|home| !home.is_empty())
+            .find_map(|home| {
+                let raw = std::fs::read(Path::new(&home).join("auth.json")).ok()?;
+                let auth: Value = serde_json::from_slice(&raw).ok()?;
+                super::codex_identity::codex_auth_user(&auth)
+            });
+        if let Some(member) = member {
+            row["userId"] = Value::String(member);
+        }
+    }
+}
+
 /// CDXC:AgentProviders 2026-10-14 WHY:
 /// cswap marks the account the default `claude` profile (`~/.claude.json`) names as `active` and judges that row by the default profile's own live login instead of the slot's saved one. With the default profile signed out, that row read `no_credentials` however often the account signed in again (the sign-in refreshes only the saved login, from a temporary profile), so "Sign in again" ended with "Sign in to this account before adding it." Ghostex starts every account from its saved login (`cswap run`), so that one row is read again with an empty Claude profile, where no slot is active and cswap judges it by its saved login. Only a signed-out default profile is read again: with a live default login the saved and live tokens can share one refresh-token family, and only cswap's active path refreshes that safely.
+/// CDXC:AgentProviders 2026-11-01 WHY:
+/// A default login cswap quarantined (`relogin_required`) is read again too when the slot's saved copy is a newer generation than it (restore.rs): starts then run in the slot's own profile seeded from that copy (default_login.rs), so the row says what those starts will meet, and the dead default login has no family left to protect.
 fn reread_signed_out_default_account(home: &Path, data: &mut Value) {
     let Some(rows) = data.get_mut("accounts").and_then(Value::as_array_mut) else {
         return;
     };
-    let Some(row) = rows
-        .iter_mut()
-        .find(|row| row["active"] == true && row["usageStatus"] == "no_credentials")
-    else {
+    let Some(row) = rows.iter_mut().find(|row| {
+        row["active"] == true
+            && (row["usageStatus"] == "no_credentials"
+                || row["usageStatus"] == "relogin_required"
+                    && row["number"]
+                        .as_u64()
+                        .and_then(|number| {
+                            super::claude_resets::ClaudeSlot::read(home, &number.to_string()).ok()
+                        })
+                        .is_some_and(|slot| {
+                            super::restore::saved_copy_newer_than_default(home, &slot)
+                        }))
+    }) else {
         return;
     };
     let Ok(profile) = tempfile::Builder::new().prefix("ghostex-cswap-").tempdir() else {
@@ -338,6 +397,17 @@ fn discover_row(home: &Path, provider: Provider, row: &Value) -> Option<Discover
         {
             account.status = "loginRequired".into();
             account.usage_error = Some(super::login_expired::NOTICE.into());
+        }
+        // Whether this computer held a copy of the login to restore (restore.rs).
+        if account.status == "loginRequired" {
+            if let Some(sentence) =
+                super::restore::last_plan(&account.selector).and_then(super::restore::notice)
+            {
+                account.usage_error = Some(match account.usage_error.take() {
+                    Some(notice) => format!("{notice} {sentence}"),
+                    None => sentence.to_string(),
+                });
+            }
         }
         account.usage_stale = !row["usage"].is_object() && usage.is_object();
         if let Some(w) = window("fiveHour", "5h", &usage["fiveHour"], "pct", None) {
@@ -442,11 +512,11 @@ pub(crate) fn codex_request<B>(
 ) -> Result<ureq::RequestBuilder<B>, String> {
     let home = PathBuf::from(text(row, "home"));
     if !home.is_absolute() {
-        return Err("Invalid Codex account home.".into());
+        return Err("The saved login's folder can't be found. Reconnect this account.".into());
     }
     let raw = std::fs::read(home.join("auth.json")).map_err(|_| "Sign in again to read usage.")?;
-    let auth: Value =
-        serde_json::from_slice(&raw).map_err(|_| "Codex credentials are unreadable.")?;
+    let auth: Value = serde_json::from_slice(&raw)
+        .map_err(|_| "The saved login can't be read. Reconnect this account.")?;
     let expected = text(row, "accountId");
     // The member is checked too: a slot whose login moved to another member of the same Business workspace keeps the workspace's `account_id`.
     let saved = super::codex_identity::codex_identity(&expected, Some(&text(row, "userId")));
@@ -491,7 +561,7 @@ fn codex_usage(row: &Value) -> Result<(Vec<UsageWindow>, Option<u64>), String> {
         }
     }
     if windows.is_empty() {
-        return Err("No usage windows were returned for this account.".into());
+        return Err("Codex reported no usage limits for this account.".into());
     }
     let reset_credits = value
         .pointer("/rate_limit_reset_credits/available_count")
@@ -529,5 +599,92 @@ fn codex_windows(out: &mut Vec<UsageWindow>, model: &str, value: &Value) {
             resets_at: reset,
             model: (!model.is_empty()).then(|| model.to_string()),
         });
+    }
+}
+
+#[cfg(test)]
+mod account_message_tests {
+    use super::*;
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    use serde_json::json;
+
+    #[test]
+    fn usage_notices_use_no_internal_words() {
+        for status in [
+            "unavailable",
+            "token_expired",
+            "relogin_required",
+            "no_credentials",
+            "foreign_credential",
+            "api_key",
+            "keychain_unavailable",
+            "some_new_status",
+        ] {
+            for (has_last_good, age) in [(false, None), (true, None), (true, Some(90.0))] {
+                let notice = claude_usage_notice(status, has_last_good, age).unwrap();
+                for word in ["helper", "status", "some_new_status", "cswap", "xswap"] {
+                    assert!(!notice.contains(word), "{status}: {notice}");
+                }
+            }
+        }
+        assert_eq!(claude_usage_notice("ok", true, None), None);
+    }
+
+    #[test]
+    fn the_tools_go_by_their_settings_names() {
+        assert_eq!(tool_label("cswap"), "Claude Swap");
+        assert_eq!(tool_label("xswap"), "Codex Swap");
+    }
+
+    fn auth_with_member(member: &str) -> Value {
+        let claims = json!({"https://api.openai.com/auth": {"chatgpt_user_id": member}});
+        let token = format!(
+            "e30.{}.sig",
+            URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap())
+        );
+        json!({"tokens": {"account_id": "workspace", "id_token": token}})
+    }
+
+    /// An older xswap lists no `userId`. The login must keep the id its saved account has.
+    #[test]
+    fn a_login_keeps_one_id_whichever_xswap_lists_it() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("auth.json"),
+            auth_with_member("member-1").to_string(),
+        )
+        .unwrap();
+        let home = dir.path().to_str().unwrap();
+        let mut old = json!({"accounts": [{"accountId": "workspace", "home": home}]});
+        fill_codex_members(&mut old);
+        assert_eq!(old["accounts"][0]["userId"], "member-1");
+        let identity = |row: &Value| {
+            super::super::codex_identity::codex_identity(
+                &text(row, "accountId"),
+                Some(&text(row, "userId")),
+            )
+        };
+        let new = json!({"accountId": "workspace", "home": home, "userId": "member-1"});
+        assert_eq!(identity(&old["accounts"][0]), identity(&new));
+    }
+
+    #[test]
+    fn a_listed_member_stands_and_a_row_without_a_readable_login_stays_as_it_was() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("auth.json"),
+            auth_with_member("from-file").to_string(),
+        )
+        .unwrap();
+        let home = dir.path().to_str().unwrap();
+        let mut data = json!({"accounts": [
+            {"home": home, "userId": "listed"},
+            {"home": "/nowhere/at/all"},
+            {},
+        ]});
+        fill_codex_members(&mut data);
+        assert_eq!(data["accounts"][0]["userId"], "listed");
+        assert!(data["accounts"][1].get("userId").is_none());
+        assert!(data["accounts"][2].get("userId").is_none());
     }
 }

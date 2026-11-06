@@ -98,7 +98,7 @@ impl GhostexGpuiApp {
             gpui_close_command_terminal_gxserver_session(&plan.key);
             self.close_command_terminal_after_gxserver_attach_failure(
                 current_slot_id,
-                "GPUI could not prepare the command terminal attach command.",
+                "Ghostex couldn't open the command terminal.",
                 cx,
             );
             return false;
@@ -577,14 +577,18 @@ impl GhostexGpuiApp {
         // CDXC:CommandPane 2026-09-13 WHY:
         // Restart closes the old Action asynchronously. Exclude pending cleanup identities before yielding, or recovery can reattach the daemon that the close worker is about to kill.
         let closing_sessions = self.pending_command_gxserver_cleanup.clone();
+        let live_snapshot = self.gx_store_local_snapshot_value();
         let background = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
-            let result =
-                background
-                    .spawn(async move {
-                        gpui_prepare_command_terminal_attach_plan(input, closing_sessions)
-                    })
-                    .await;
+            let result = background
+                .spawn(async move {
+                    gpui_prepare_command_terminal_attach_plan(
+                        input,
+                        closing_sessions,
+                        live_snapshot,
+                    )
+                })
+                .await;
             let _ = this.update(cx, |this, cx| {
                 if this.command_pane_project_epoch != command_pane_project_epoch {
                     // The command pane was swapped to another project while the
@@ -673,7 +677,7 @@ impl GhostexGpuiApp {
         if payload.validate_launch_strings().is_err() {
             self.close_command_terminal_after_gxserver_attach_failure(
                 current_slot_id,
-                "GPUI could not prepare the PowerShell command terminal.",
+                "Ghostex couldn't prepare the PowerShell command terminal.",
                 cx,
             );
             return;

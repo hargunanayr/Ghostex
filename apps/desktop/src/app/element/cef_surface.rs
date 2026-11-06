@@ -325,6 +325,12 @@ impl CefSurface {
         self.browser.capture_page_top(width, height, scale)
     }
 
+    /// Answers once the page has loaded with its web fonts and pictures, or after `timeout_ms`,
+    /// saying whether it is at its top (`cef/shell/page_screenshot.rs`).
+    pub(crate) fn wait_for_page_settled(&self, timeout_ms: u64) -> Option<cef::PageSettled> {
+        self.browser.wait_for_page_settled(timeout_ms)
+    }
+
     pub(crate) fn browser_identifier(&self) -> i32 {
         self.browser.identifier()
     }
@@ -373,7 +379,9 @@ impl CefSurface {
         define `__ghostexExtensionBridgeReceive` itself to read it. Surfaces
         without an installed bridge get nothing.
         */
-        if !self.browser.extension_bridge_installed() {
+        if !self.browser.extension_bridge_installed()
+            || !self.browser.extension_bridge_main_frame_matches()
+        {
             return false;
         }
         let Ok(payload) = serde_json::to_string(message) else {
@@ -698,7 +706,11 @@ impl Element for CefElement {
             // CDXC:AppModal 2026-09-15 WHY: App-modal windows have their own AppKit corners. Applying the workspace's 18pt pane mask here rounds Settings a second time and exposes the old backing color at its edges after a live theme change, even with square CSS content.
             // Fullscreen and window-edge changes can change clipping even
             // when the browser's own cached frame is unchanged.
-            super::window_corner_pane::refresh_native_window_corner_clip(native_view);
+            // With the work area frame on, the page clips to the card's corners instead
+            // (element/work_area_frame.rs), from bounds the card recorded earlier this frame.
+            if !super::work_area_frame::refresh_native_work_area_frame_clip(native_view, window) {
+                super::window_corner_pane::refresh_native_window_corner_clip(native_view);
+            }
         }
         let hitbox = window.insert_hitbox(bounds, gpui::HitboxBehavior::Normal);
         let browser = self.browser.clone();

@@ -1,9 +1,13 @@
 use ghostex_gx_chat_core::menus::orchestrator_effort::{
     default_orchestrator_effort, orchestrator_efforts,
 };
+use ghostex_gx_chat_core::protocol::{
+    coordinator_default_model_label, coordinator_launch_takes_effort,
+    coordinator_launch_takes_model, coordinator_model_label,
+};
 use serde_json::{json, Value};
 
-use super::{acknowledge_threads, playbook, sleep_threads, threads};
+use super::{acknowledge_threads, board, playbook, sleep_threads, threads};
 // `pub(in crate::ghostex_cli)` so `ghostex ghost` (ghostex_cli/ghost/command.rs) launches Ghosts the
 // way `ghostex coordinator create` launches coordinators.
 pub(in crate::ghostex_cli) use crate::coordinators::{
@@ -48,6 +52,7 @@ pub(crate) fn run(args: &[String]) -> CliResult<()> {
         "resolve" | "reopen" => threads::set_resolved(&parsed, command == "resolve"),
         "sleep-inactive-threads" => sleep_threads::sleep_inactive_threads(&parsed),
         "acknowledge-threads" => acknowledge_threads::acknowledge_threads(&parsed),
+        "board" => board::board(&parsed),
         "remember" | "forget" | "set-goal" | "set-instructions" => update(command, &parsed),
         "edit" => edit(&parsed),
         "playbook" => playbook::show(&parsed),
@@ -321,16 +326,23 @@ fn options(parsed: &ParsedArgs) -> CliResult<()> {
         .iter()
         .filter_map(|row| {
             let family = agent_family(row)?;
-            // Only these agents' launches take a model (launch_plan.rs `apply_agent_model_options`);
-            // the others start on their own configured model, so their form shows no model choice.
-            let lineup = matches!(family, "claude" | "codex" | "pi" | "zcode" | "antigravity")
+            // An agent whose launch takes no model starts on its configured one, so its form shows
+            // no model choice; one whose launch takes no effort shows no effort choice.
+            let lineup = coordinator_launch_takes_model(family)
                 .then(|| catalog.pointer(&format!("/agents/{family}")))
                 .flatten();
+            let takes_effort = coordinator_launch_takes_effort(family);
             let agent_efforts = lineup
                 .and_then(|agent| agent.get("efforts"))
                 .cloned()
                 .unwrap_or_else(|| json!([]));
-            let models: Vec<Value> = lineup
+            // OpenCode's lineup marks no default, so its first row keeps OpenCode's own model.
+            let keep_default = lineup.and(coordinator_default_model_label(family)).map(|label| {
+                json!({ "value": "", "label": label, "default": true, "efforts": [], "defaultEffort": null })
+            });
+            let models: Vec<Value> = keep_default
+                .into_iter()
+                .chain(lineup
                 .and_then(|agent| agent.get("models"))
                 .and_then(Value::as_array)
                 .map(Vec::as_slice)
@@ -345,6 +357,7 @@ fn options(parsed: &ParsedArgs) -> CliResult<()> {
                         .unwrap_or_default()
                         .iter()
                         .filter_map(Value::as_str)
+                        .filter(|_| takes_effort)
                         .collect();
                     let offered = orchestrator_efforts(&levels, all_efforts, None);
                     let efforts: Vec<Value> = offered
@@ -353,12 +366,16 @@ fn options(parsed: &ParsedArgs) -> CliResult<()> {
                         .collect();
                     json!({
                         "value": model["value"],
-                        "label": model["label"],
+                        "label": coordinator_model_label(
+                            family,
+                            model["value"].as_str().unwrap_or_default(),
+                            model["label"].as_str().unwrap_or_default(),
+                        ),
                         "default": model.get("default").and_then(Value::as_bool) == Some(true),
                         "efforts": efforts,
                         "defaultEffort": default_orchestrator_effort(&levels),
                     })
-                })
+                }))
                 .collect();
             let default_model = models
                 .iter()
@@ -386,7 +403,7 @@ fn options(parsed: &ParsedArgs) -> CliResult<()> {
     let agents: Vec<Value> = agents.into_iter().map(|(_, agent)| agent).collect();
     let result = json!({
         "agents": agents,
-        // CDXC:Coordinators 2026-10-17 SEE-ALSO: packages/gx-chat-core/src/menus/orchestrator_effort.rs (the user's Medium/High/XHigh decision, 2026-10-29); each model's own `defaultEffort` is High (or its highest level at or below High), and this is the level where the model has it.
+        // CDXC:Coordinators 2026-10-17 SEE-ALSO: packages/gx-chat-core/src/menus/orchestrator_effort.rs (the user's Low/Medium/High/XHigh decision, 2026-10-31); each model's own `defaultEffort` is High (or its highest level at or below High), and this is the level where the model has it.
         "defaultEffort": "high",
     });
     if parsed.flags.truthy("json") {
@@ -517,6 +534,7 @@ pub(super) fn print_status(view: &Value, all: bool) {
         ("finished", "Finished"),
         ("working", "Working"),
         ("sleeping", "Sleeping"),
+        ("unreachable", "On a computer that isn't connected"),
         ("closed", "Closed"),
         ("done", "Done"),
     ] {
@@ -564,8 +582,50 @@ pub(super) fn print_status(view: &Value, all: bool) {
                     first_line(agents::text(thread, "task"), 160)
                 );
             }
+            if state == "working" {
+                let clock = [
+                    ("working since", "workingStartedAt"),
+                    ("last output", "lastOutputAt"),
+                ]
+                .iter()
+                .filter_map(|(label, key)| {
+                    time_ago(agents::text(thread, key)).map(|ago| format!("{label} {ago}"))
+                })
+                .collect::<Vec<_>>();
+                if !clock.is_empty() {
+                    println!("      {}", clock.join(", "));
+                }
+                if thread["stalled"].as_bool() == Some(true) {
+                    let quiet = time_ago(agents::text(thread, "quietSince"))
+                        .map(|ago| format!(" (quiet since {ago})"))
+                        .unwrap_or_default();
+                    let label = if thread["stuck"].as_bool() == Some(true) {
+                        "not moving, even after Ghostex nudged it"
+                    } else {
+                        "no new output"
+                    };
+                    println!(
+                        "      {label}{quiet}: heal it (ghostex read-text {})",
+                        agents::text(thread, "globalRef")
+                    );
+                }
+            }
         }
     }
+}
+
+/// "12m ago" for an RFC 3339 time, as `coordinator status` prints a working thread's clock.
+fn time_ago(at: &str) -> Option<String> {
+    let at = chrono::DateTime::parse_from_rfc3339(at).ok()?;
+    let minutes = chrono::Utc::now()
+        .signed_duration_since(at)
+        .num_minutes()
+        .max(0);
+    Some(match minutes {
+        0 => "under a minute ago".to_string(),
+        1..=119 => format!("{minutes}m ago"),
+        _ => format!("{}h {}m ago", minutes / 60, minutes % 60),
+    })
 }
 
 /// `edit`: the goal, the instructions and the whole memory list in one call, the way the Goal &

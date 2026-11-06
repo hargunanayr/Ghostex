@@ -5,14 +5,21 @@
 //! User: the React app modals do not fill their GPUI child window and need a hand-tuned window height, so they are being rebuilt in GPUI one at a time, starting with Handoff / Export. The native dialog must match the React one 1 to 1: the same layout, copy, colors, states and behaviour in both appearances. It measures its own first layout and sizes the window to it instead of trusting a constant.
 //! SEE-ALSO: packages/core-ui/export-transcript-result-modal.tsx (deleted 2026-10-01) and packages/core-ui/styles/modals.css (the React twin and the `.export-transcript-*` rules mirrored below), apps/desktop/src/app/window/native_modal_kit/ (shared chrome and controls), apps/desktop/src/app/export_transcript_modal_lifecycle.rs (open, close, sidebar bridge), apps/desktop/src/bin/native_modal_demo.rs (standalone preview).
 use super::native_modal_kit::*;
+use ghostex_gx_core::handoff_prefs::{
+    HANDOFF_HISTORY_STOPS, HandoffCard, HandoffDestination, HandoffHistory, HandoffInclude,
+    HandoffPrefs, handoff_history_estimate, handoff_history_label, handoff_history_stop_index,
+    handoff_include_summary, handoff_prefs_json, parse_handoff_prefs,
+    remembered_handoff_destination,
+};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, App, ClickEvent, Context, FocusHandle, FontWeight, InteractiveElement as _,
-    IntoElement, KeyDownEvent, ParentElement as _, Render, StatefulInteractiveElement as _,
-    Styled as _, Window, div, px,
+    AnyElement, App, Bounds, ClickEvent, Context, FocusHandle, FontWeight, InteractiveElement as _,
+    IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement as _,
+    Pixels, Render, StatefulInteractiveElement as _, Styled as _, Window, div, px, relative,
 };
 use gpui_component::tooltip::Tooltip;
 use gpui_component::{h_flex, v_flex};
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
@@ -29,18 +36,24 @@ const ICON_CHECK_BUTTON: &str = "modals/export-transcript/check-button.svg";
 const ICON_COPY: &str = "modals/export-transcript/copy.svg";
 const ICON_FOLDER_SEARCH: &str = "modals/export-transcript/folder-search.svg";
 const ICON_CIRCLE_CHECK: &str = "modals/export-transcript/circle-check-filled.svg";
-const ICON_SERVER: &str = "modals/add-project/server.svg";
+const ICON_CHEVRON_RIGHT: &str = "titlebar/chevron-right.svg";
 
 const TITLE: &str = "Handoff / Export";
 const DESCRIPTION: &str = "Ghostex writes this conversation to a Markdown file. Pick what to do with it and what to include.";
 const HANDOFF_CARD_TITLE: &str = "Handoff to an agent";
 const HANDOFF_CARD_DESCRIPTION: &str = "Start a new conversation with the handover attached.";
-const ADVANCED_CARD_TITLE: &str = "Advanced Handoff";
-const ADVANCED_CARD_DESCRIPTION: &str = "Continue in another project, on this computer or another.";
-const EXPORT_CARD_TITLE: &str = "Export to Markdown";
+const EXPORT_CARD_TITLE: &str = "Handoff to MD";
 const EXPORT_CARD_DESCRIPTION: &str = "Save the conversation as a file and copy its path.";
 const CONTINUE_WITH: &str = "Continue with";
 const SELECT_AGENT_PLACEHOLDER: &str = "Select agent";
+const DESTINATION: &str = "Destination";
+const DESTINATION_HERE: &str = "This project, same computer";
+const DESTINATION_PICK_PROJECT: &str = "Pick a project";
+const DESTINATION_CHANGE: &str = "Change…";
+const DESTINATION_RESET: &str = "Use this project";
+const DESTINATION_HIDE: &str = "Hide choices";
+/// One width for the handoff rows' labels, so the selects line up.
+const ROW_LABEL_WIDTH: f32 = 96.0;
 const COMPUTER: &str = "Computer";
 const SELECT_COMPUTER_PLACEHOLDER: &str = "Select computer";
 const PROJECT: &str = "Project";
@@ -52,103 +65,154 @@ const BRANCH_NOTICE_SUBTITLE: &str =
     "We're just handing off the session, not switching the branch there";
 const EXPORT_HINT: &str = "The file is saved in the Ghostex exports folder.";
 const INCLUDE: &str = "Include";
+const INCLUDE_NOTHING: &str = "Messages only";
+const INCLUDE_ROWS: [(&str, &str); 3] = [
+    (
+        "Commands & output",
+        "Terminal commands the agent ran, with the tail of their output.",
+    ),
+    ("File changes", "The patches the agent applied to files."),
+    ("Reasoning", "The agent's own reasoning sections."),
+];
+const HISTORY: &str = "History";
+const WHOLE_CONVERSATION: &str = "Whole conversation";
+const WHOLE_CONVERSATION_DESCRIPTION: &str =
+    "Off, the file keeps the last turns and lists what you asked before them.";
 const SAVED_AS_MARKDOWN: &str = "Saved as Markdown";
 const OPEN_FILE_LOCATION: &str = "Open Location";
 const EXPORT_FAILED: &str = "The transcript export failed.";
 
 /// What the user wants to do with the written file.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum ExportTranscriptMode {
+    #[default]
     Handoff,
-    /// CDXC:TranscriptExport 2026-10-25 DECISION:
-    /// User (Q542): "a 3rd radio card added 2nd there after handoff to agent, call it 'Handoff to Remote'; we should have those extra dropdowns to pick machine and project there only in that case". The Computer and Project selects exist only in this mode, beside the same agent choice Handoff to an agent has; the new session starts on that computer, in that project, with the transcript carried there. Every direction is offered (Q547): this computer to a remote, a remote to this computer, and remote to remote; the session's own computer is not a choice here, since Handoff to an agent already covers it.
-    /// CDXC:TranscriptExport 2026-10-31 DECISION:
-    /// User (Q865): "we should just be able to handoff to another project in the same machine using the 'handoff to remote' option but by changing it a bit (rename it to 'Advanced Handoff')". The session's own computer is now a choice too, listing its other projects; that is how the Unified sidebar, which has no drag, reaches another project. The saved mode stays `handoffRemote`, so a saved choice survives the rename.
-    HandoffAdvanced,
     Export,
 }
 
 impl ExportTranscriptMode {
     fn is_handoff(self) -> bool {
-        matches!(self, Self::Handoff | Self::HandoffAdvanced)
+        self == Self::Handoff
     }
 }
 
-/// The include-toggles; user and agent messages are never optional, so only
-/// the three optional record families are here. Defaults mirror the daemon's
-/// historical selection: commands and patches in, reasoning out.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// The include-toggles; user and agent messages are never optional, so only the three optional
+/// record families are here. All off until the user changes them
+/// (`ghostex_gx_core::handoff_prefs`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ExportTranscriptIncludeOptions {
     pub(crate) commands: bool,
     pub(crate) patches: bool,
     pub(crate) reasoning: bool,
 }
 
-impl Default for ExportTranscriptIncludeOptions {
-    fn default() -> Self {
-        Self {
-            commands: true,
-            patches: true,
-            reasoning: false,
-        }
-    }
+/// What the dialog remembers between opens. A per-client UI preference, so repeat exports reopen
+/// exactly as they were left without involving gxserver.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ExportTranscriptModalPrefs {
+    pub(crate) mode: ExportTranscriptMode,
+    pub(crate) include: ExportTranscriptIncludeOptions,
+    pub(crate) include_open: bool,
+    pub(crate) agent_id: Option<String>,
+    pub(crate) destination: Option<ExportTranscriptRemoteTarget>,
+    pub(crate) destination_open: bool,
+    pub(crate) history: HandoffHistory,
 }
 
-/// The user's last mode and include combination. A per-client UI preference,
-/// so repeat exports reopen exactly as they were left without involving gxserver.
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct ExportTranscriptModalPrefs {
-    pub(crate) mode: Option<ExportTranscriptMode>,
-    pub(crate) include: ExportTranscriptIncludeOptions,
+impl ExportTranscriptModalPrefs {
+    fn from_saved(value: &serde_json::Value) -> Self {
+        let saved = parse_handoff_prefs(value);
+        Self {
+            mode: match saved.card {
+                HandoffCard::Agent => ExportTranscriptMode::Handoff,
+                HandoffCard::Markdown => ExportTranscriptMode::Export,
+            },
+            include: ExportTranscriptIncludeOptions {
+                commands: saved.include.commands,
+                patches: saved.include.patches,
+                reasoning: saved.include.reasoning,
+            },
+            include_open: saved.include_open,
+            agent_id: saved.agent_id,
+            destination: saved
+                .destination
+                .map(|destination| ExportTranscriptRemoteTarget {
+                    machine_id: destination.machine_id,
+                    project_id: destination.project_id,
+                }),
+            destination_open: saved.destination_open,
+            history: saved.history,
+        }
+    }
+
+    fn to_saved(&self) -> serde_json::Value {
+        handoff_prefs_json(&HandoffPrefs {
+            card: match self.mode {
+                ExportTranscriptMode::Handoff => HandoffCard::Agent,
+                ExportTranscriptMode::Export => HandoffCard::Markdown,
+            },
+            include: HandoffInclude {
+                commands: self.include.commands,
+                patches: self.include.patches,
+                reasoning: self.include.reasoning,
+            },
+            include_open: self.include_open,
+            agent_id: self.agent_id.clone(),
+            destination: self
+                .destination
+                .as_ref()
+                .map(|destination| HandoffDestination {
+                    machine_id: destination.machine_id.clone(),
+                    project_id: destination.project_id.clone(),
+                }),
+            destination_open: self.destination_open,
+            history: self.history,
+        })
+    }
 }
 
 pub(crate) fn load_export_transcript_modal_prefs(path: &Path) -> ExportTranscriptModalPrefs {
-    let Some(value) = std::fs::read_to_string(path)
-        .ok()
+    let value = read_saved_prefs(path)
         .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-    else {
-        return ExportTranscriptModalPrefs::default();
-    };
-    let defaults = ExportTranscriptIncludeOptions::default();
-    let flag = |key: &str, default: bool| {
-        value
-            .get(key)
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(default)
-    };
-    ExportTranscriptModalPrefs {
-        mode: match value.get("mode").and_then(serde_json::Value::as_str) {
-            Some("export") => Some(ExportTranscriptMode::Export),
-            Some("handoff") => Some(ExportTranscriptMode::Handoff),
-            Some("handoffRemote") => Some(ExportTranscriptMode::HandoffAdvanced),
-            _ => None,
-        },
-        include: ExportTranscriptIncludeOptions {
-            commands: flag("includeCommands", defaults.commands),
-            patches: flag("includePatches", defaults.patches),
-            reasoning: flag("includeReasoning", defaults.reasoning),
-        },
-    }
+        .unwrap_or(serde_json::Value::Null);
+    ExportTranscriptModalPrefs::from_saved(&value)
 }
 
 pub(crate) fn persist_export_transcript_modal_prefs(
     path: &Path,
-    prefs: ExportTranscriptModalPrefs,
+    prefs: &ExportTranscriptModalPrefs,
 ) {
+    write_saved_prefs(path, &prefs.to_saved().to_string());
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn read_saved_prefs(path: &Path) -> Option<String> {
+    std::fs::read_to_string(path).ok()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn write_saved_prefs(path: &Path, text: &str) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let payload = serde_json::json!({
-        "mode": match prefs.mode {
-            Some(ExportTranscriptMode::Export) => "export",
-            Some(ExportTranscriptMode::HandoffAdvanced) => "handoffRemote",
-            _ => "handoff",
-        },
-        "includeCommands": prefs.include.commands,
-        "includePatches": prefs.include.patches,
-        "includeReasoning": prefs.include.reasoning,
-    });
-    let _ = std::fs::write(path, payload.to_string());
+    let _ = std::fs::write(path, text);
+}
+
+/// A page has no files of its own, so its dialog remembers in the browser's storage.
+#[cfg(target_arch = "wasm32")]
+fn read_saved_prefs(path: &Path) -> Option<String> {
+    web_sys::window()?
+        .local_storage()
+        .ok()??
+        .get_item(&path.to_string_lossy())
+        .ok()?
+}
+
+#[cfg(target_arch = "wasm32")]
+fn write_saved_prefs(path: &Path, text: &str) {
+    if let Some(Ok(Some(storage))) = web_sys::window().map(|window| window.local_storage()) {
+        let _ = storage.set_item(&path.to_string_lossy(), text);
+    }
 }
 
 /// A configured agent that can take the handoff (the React modal only offers
@@ -168,15 +232,15 @@ pub(crate) struct ExportTranscriptHandoffTarget {
     pub(crate) model: String,
 }
 
-/// A computer Advanced Handoff can start the new session on, with its projects ranked for this
-/// session (`ghostex_gx_core::handoff_target`).
+/// A computer a handoff can start the new session on, with its projects ranked for this session
+/// (`ghostex_gx_core::handoff_target`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ExportTranscriptComputer {
     /// `local` for this computer, else the remote machine id.
     pub(crate) machine_id: String,
     pub(crate) label: String,
     /// The computer the session runs on: its transcript is already there, and the session's own
-    /// project is not among `projects`.
+    /// project comes first among `projects`.
     pub(crate) is_source: bool,
     pub(crate) projects: Vec<ExportTranscriptProject>,
     pub(crate) preferred_project_id: Option<String>,
@@ -191,9 +255,11 @@ pub(crate) struct ExportTranscriptProject {
     pub(crate) title: String,
     pub(crate) path: Option<String>,
     pub(crate) same_repo: bool,
+    /// The project the session is in.
+    pub(crate) is_own: bool,
 }
 
-/// Where Advanced Handoff starts the new session.
+/// Where a handoff to somewhere else starts the new session.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ExportTranscriptRemoteTarget {
     pub(crate) machine_id: String,
@@ -209,9 +275,10 @@ pub(crate) struct ExportTranscriptPicks {
     pub(crate) agent_id: Option<String>,
     pub(crate) machine_id: Option<String>,
     pub(crate) project_id: Option<String>,
+    pub(crate) destination_open: bool,
 }
 
-/// The computer Advanced Handoff goes to: the picked one while it is still offered, else the
+/// The computer a handoff goes to: the picked one while it is still offered, else the
 /// first.
 pub(crate) fn handoff_computer<'a>(
     computers: &'a [ExportTranscriptComputer],
@@ -239,30 +306,60 @@ pub(crate) fn handoff_project<'a>(
         .or_else(|| computer.preferred_project_id.as_deref().and_then(find))
 }
 
-/// Advanced Handoff's button: it names where the session goes (Q862), with the computer when it
-/// leaves this one.
-fn advanced_handoff_label(
+/// The button of a handoff going somewhere else.
+fn destination_label(
     computer: &ExportTranscriptComputer,
     project: &ExportTranscriptProject,
 ) -> String {
-    if computer.is_source {
-        format!("Handoff to {}", project.title)
-    } else {
-        format!("Handoff to {} on {}", project.title, computer.label)
-    }
+    ghostex_gx_core::handoff_target::handoff_destination_label(
+        &project.title,
+        &computer.label,
+        computer.is_source,
+    )
 }
 
-/// A Project select row: the title, the same-repository mark, and the folder.
+/// A Project select row.
 fn project_label(project: &ExportTranscriptProject) -> String {
-    let mut label = project.title.clone();
-    if project.same_repo {
-        label.push_str(" (same repo)");
-    }
-    if let Some(path) = project.path.as_deref().filter(|path| !path.is_empty()) {
-        label.push_str(" · ");
-        label.push_str(path);
-    }
-    label
+    ghostex_gx_core::handoff_target::handoff_project_label(
+        &project.title,
+        project.is_own,
+        project.same_repo,
+        project.path.as_deref(),
+    )
+}
+
+/// What the dialog opens on: a remembered destination that still applies, else this project here.
+fn opening_destination(
+    remembered: Option<&ExportTranscriptRemoteTarget>,
+    computers: &[ExportTranscriptComputer],
+) -> Option<ExportTranscriptRemoteTarget> {
+    let own = computers.iter().find(|computer| computer.is_source)?;
+    let own = HandoffDestination {
+        machine_id: own.machine_id.clone(),
+        project_id: own
+            .projects
+            .iter()
+            .find(|project| project.is_own)
+            .map(|project| project.project_id.clone())
+            .unwrap_or_default(),
+    };
+    let remembered = remembered.map(|target| HandoffDestination {
+        machine_id: target.machine_id.clone(),
+        project_id: target.project_id.clone(),
+    });
+    remembered_handoff_destination(remembered.as_ref(), &own, |destination| {
+        computers.iter().any(|computer| {
+            computer.machine_id == destination.machine_id
+                && computer
+                    .projects
+                    .iter()
+                    .any(|project| project.project_id == destination.project_id)
+        })
+    })
+    .map(|destination| ExportTranscriptRemoteTarget {
+        machine_id: destination.machine_id,
+        project_id: destination.project_id,
+    })
 }
 
 /// The agent a model picker handoff goes to: the first agent of the picked family in the list the
@@ -284,6 +381,7 @@ fn family_display_name(family: &str) -> &str {
         "cursor" => "Cursor",
         "grok" => "Grok",
         "antigravity" => "Antigravity CLI",
+        "opencode" => "OpenCode",
         other => other,
     }
 }
@@ -305,14 +403,34 @@ pub(crate) enum ExportTranscriptStage {
     },
 }
 
+/// The computer's count for the History hint (`/api/countSessionTranscriptTurns`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ExportTranscriptTurnCount {
+    Counted {
+        turns: usize,
+        whole_bytes: usize,
+        /// Index `i` is the file's size with the last `i + 1` turns.
+        last_turns_bytes: Vec<usize>,
+    },
+    /// That computer's Ghostex is from before the slider: its export would ignore `lastTurns`,
+    /// so the dialog hides History rather than promise a cut it won't make.
+    Unsupported,
+    Failed,
+}
+
 /// What the dialog asks its host to do. The dialog removes its own window
 /// before sending any command other than `RunExport`.
 pub(crate) enum ExportTranscriptModalCommand {
-    /// `carry` asks for the file's text too, which Advanced Handoff takes to another computer.
+    /// `carry` asks for the file's text too, which a handoff takes to another computer.
     RunExport {
         include: ExportTranscriptIncludeOptions,
+        /// History's last N turns; `None` is the whole conversation.
+        last_turns: Option<usize>,
         carry: bool,
     },
+    /// Count the conversation's turns under this Include, for History's hint; the host answers
+    /// with [`GpuiExportTranscriptModalWindow::set_turn_count`].
+    CountTurns(ExportTranscriptIncludeOptions),
     StartConversation {
         agent_id: String,
         /// `None` starts it beside the session (Handoff to an agent).
@@ -345,7 +463,7 @@ pub(crate) struct ExportTranscriptModalConfig {
     pub(crate) prefs_path: Option<PathBuf>,
     /// Overrides the remembered mode on open; the demo uses it to show one branch.
     pub(crate) initial_mode: Option<ExportTranscriptMode>,
-    /// The computers Advanced Handoff offers, the session's own first.
+    /// The computers a handoff can go to, the session's own first.
     pub(crate) computers: Vec<ExportTranscriptComputer>,
     /// The picks to reopen with after a clone (`AddProjectOn`), over the remembered prefs.
     pub(crate) restore: Option<ExportTranscriptPicks>,
@@ -370,6 +488,19 @@ pub(crate) struct GpuiExportTranscriptModalWindow {
     computers: Vec<ExportTranscriptComputer>,
     selected_machine_id: Option<String>,
     selected_project_id: Option<String>,
+    /// The Computer and Project choices are showing. Closed means this project here.
+    destination_open: bool,
+    /// What was saved at the last handoff: changing a card or a switch keeps these.
+    remembered_agent_id: Option<String>,
+    remembered_destination: Option<ExportTranscriptRemoteTarget>,
+    include_open: bool,
+    history: HandoffHistory,
+    /// The last count and the Include it was made for; a count for another Include is stale.
+    turn_count: Option<(ExportTranscriptIncludeOptions, ExportTranscriptTurnCount)>,
+    /// The Include the host was last asked to count, so a repeat asks nothing.
+    counted_include: Option<ExportTranscriptIncludeOptions>,
+    slider_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    slider_dragging: bool,
     computer_select: ModalSelect,
     project_select: ModalSelect,
     /// The branch notice's first line, for the target it was read for.
@@ -396,6 +527,24 @@ impl GpuiExportTranscriptModalWindow {
         let focus_handle = cx.focus_handle();
         focus_handle.focus(window, cx);
         let restore = config.restore;
+        // CDXC:TranscriptExport 2026-10-31 DECISION:
+        // User: "we should remember what the user picked last time so we keep that selection for next time". A remembered destination opens with its choices showing and the button naming it, because a session of another project would otherwise leave for somewhere it never saw. The chat model picker's pick means "this conversation, on that model", so it opens here on that model's agent, whatever was picked last time.
+        let remembered = (config.handoff_target.is_none() && restore.is_none())
+            .then(|| opening_destination(prefs.destination.as_ref(), &config.computers))
+            .flatten();
+        let destination_open = match &restore {
+            Some(picks) => picks.destination_open,
+            None => {
+                remembered.is_some() || (config.handoff_target.is_none() && prefs.destination_open)
+            }
+        };
+        let selected_agent_id = match &restore {
+            Some(picks) => picks.agent_id.clone(),
+            None => prefs
+                .agent_id
+                .clone()
+                .filter(|_| config.handoff_target.is_none()),
+        };
         let mut this = Self {
             host,
             palette: config.palette,
@@ -407,21 +556,35 @@ impl GpuiExportTranscriptModalWindow {
                 .as_ref()
                 .map(|picks| picks.mode)
                 .or(config.initial_mode)
-                .or(prefs.mode)
-                .unwrap_or(ExportTranscriptMode::Handoff),
+                .unwrap_or(prefs.mode),
             include: restore
                 .as_ref()
                 .map(|picks| picks.include)
                 .unwrap_or(prefs.include),
-            selected_agent_id: restore.as_ref().and_then(|picks| picks.agent_id.clone()),
+            selected_agent_id,
             stage: ExportTranscriptStage::Options,
             handoff_requested: false,
             copied: false,
             copied_generation: 0,
             agent_select: ModalSelect::new(),
             computers: config.computers,
-            selected_machine_id: restore.as_ref().and_then(|picks| picks.machine_id.clone()),
-            selected_project_id: restore.as_ref().and_then(|picks| picks.project_id.clone()),
+            selected_machine_id: restore
+                .as_ref()
+                .and_then(|picks| picks.machine_id.clone())
+                .or_else(|| remembered.as_ref().map(|target| target.machine_id.clone())),
+            selected_project_id: restore
+                .as_ref()
+                .and_then(|picks| picks.project_id.clone())
+                .or_else(|| remembered.as_ref().map(|target| target.project_id.clone())),
+            destination_open,
+            remembered_agent_id: prefs.agent_id.clone(),
+            remembered_destination: prefs.destination.clone(),
+            include_open: prefs.include_open,
+            history: prefs.history,
+            turn_count: None,
+            counted_include: None,
+            slider_bounds: Rc::new(Cell::new(None)),
+            slider_dragging: false,
             computer_select: ModalSelect::new(),
             project_select: ModalSelect::new(),
             branch_notice: None,
@@ -431,7 +594,60 @@ impl GpuiExportTranscriptModalWindow {
             _click_away: super::popup_dismissal::close_app_modal_on_click_away(window, cx),
         };
         this.announce_target(cx);
+        this.ask_turn_count(cx);
         this
+    }
+
+    /// Asks the host to count the conversation under the current Include, once per Include.
+    fn ask_turn_count(&mut self, cx: &mut Context<Self>) {
+        if self.counted_include == Some(self.include) {
+            return;
+        }
+        self.counted_include = Some(self.include);
+        (self.host)(ExportTranscriptModalCommand::CountTurns(self.include), cx);
+    }
+
+    /// The host's answer to `CountTurns`.
+    pub(crate) fn set_turn_count(
+        &mut self,
+        include: ExportTranscriptIncludeOptions,
+        count: ExportTranscriptTurnCount,
+        cx: &mut Context<Self>,
+    ) {
+        if include != self.include && count != ExportTranscriptTurnCount::Unsupported {
+            return;
+        }
+        self.turn_count = Some((include, count));
+        self.fit.refit();
+        cx.notify();
+    }
+
+    /// Whether the computer can cut the file to the last turns.
+    fn history_supported(&self) -> bool {
+        !matches!(
+            self.turn_count,
+            Some((_, ExportTranscriptTurnCount::Unsupported))
+        )
+    }
+
+    /// History's hint, once the computer has counted this Include.
+    fn history_estimate(&self) -> Option<String> {
+        match &self.turn_count {
+            Some((
+                include,
+                ExportTranscriptTurnCount::Counted {
+                    turns,
+                    whole_bytes,
+                    last_turns_bytes,
+                },
+            )) if *include == self.include => Some(handoff_history_estimate(
+                &self.history,
+                *turns,
+                *whole_bytes,
+                last_turns_bytes,
+            )),
+            _ => None,
+        }
     }
 
     /// The host's answer to `TargetChanged`: the notice's first line, or `None` when both
@@ -442,7 +658,7 @@ impl GpuiExportTranscriptModalWindow {
         line: Option<String>,
         cx: &mut Context<Self>,
     ) {
-        if self.remote_target().as_ref() != Some(&target) {
+        if self.elsewhere().as_ref() != Some(&target) {
             return;
         }
         self.branch_notice = line.map(|line| (target, line));
@@ -450,7 +666,7 @@ impl GpuiExportTranscriptModalWindow {
         cx.notify();
     }
 
-    /// The computer Advanced Handoff goes to: the pick, else the first one offered.
+    /// The computer the choices point at: the pick, else the first one offered.
     fn effective_computer(&self) -> Option<&ExportTranscriptComputer> {
         handoff_computer(&self.computers, self.selected_machine_id.as_deref())
     }
@@ -480,17 +696,47 @@ impl GpuiExportTranscriptModalWindow {
             .position(|candidate| candidate.project_id == project.project_id)
     }
 
-    fn remote_target(&self) -> Option<ExportTranscriptRemoteTarget> {
-        Some(ExportTranscriptRemoteTarget {
-            machine_id: self.effective_computer()?.machine_id.clone(),
-            project_id: self.effective_project()?.project_id.clone(),
+    /// Where the handoff goes when that is not this project here.
+    fn elsewhere(&self) -> Option<ExportTranscriptRemoteTarget> {
+        if !self.destination_open {
+            return None;
+        }
+        let computer = self.effective_computer()?;
+        let project = self.effective_project()?;
+        (!(computer.is_source && project.is_own)).then(|| ExportTranscriptRemoteTarget {
+            machine_id: computer.machine_id.clone(),
+            project_id: project.project_id.clone(),
         })
     }
 
-    /// Tells the host which checkout Advanced Handoff now points at, once per change.
+    fn is_leaving_computer(&self) -> bool {
+        self.elsewhere().is_some()
+            && self
+                .effective_computer()
+                .is_some_and(|computer| !computer.is_source)
+    }
+
+    /// The destination row's words: always where the session goes.
+    fn destination_summary(&self) -> String {
+        if !self.destination_open {
+            return DESTINATION_HERE.to_string();
+        }
+        match (self.effective_computer(), self.effective_project()) {
+            (Some(computer), Some(project)) if computer.is_source && project.is_own => {
+                DESTINATION_HERE.to_string()
+            }
+            (Some(computer), Some(project)) if computer.is_source => {
+                format!("{}, same computer", project.title)
+            }
+            (Some(computer), Some(project)) => format!("{} on {}", project.title, computer.label),
+            _ => DESTINATION_PICK_PROJECT.to_string(),
+        }
+    }
+
+    /// Tells the host which checkout the handoff now points at, once per change.
     fn announce_target(&mut self, cx: &mut Context<Self>) {
-        let target = (self.mode == ExportTranscriptMode::HandoffAdvanced)
-            .then(|| self.remote_target())
+        let target = (self.mode == ExportTranscriptMode::Handoff)
+            .then(|| self.elsewhere())
             .flatten();
         if target == self.announced_target {
             return;
@@ -517,6 +763,7 @@ impl GpuiExportTranscriptModalWindow {
                 .effective_computer()
                 .map(|computer| computer.machine_id.clone()),
             project_id: self.selected_project_id.clone(),
+            destination_open: self.destination_open,
         }
     }
 
@@ -560,10 +807,7 @@ impl GpuiExportTranscriptModalWindow {
                     && let Some(agent) = self.effective_agent()
                 {
                     let agent_id = agent.agent_id.clone();
-                    let target = match self.effective_mode() {
-                        ExportTranscriptMode::HandoffAdvanced => self.remote_target(),
-                        _ => None,
-                    };
+                    let target = self.elsewhere();
                     self.close_window_and_send(
                         ExportTranscriptModalCommand::StartConversation { agent_id, target },
                         window,
@@ -661,9 +905,9 @@ impl GpuiExportTranscriptModalWindow {
             && !self.is_exporting()
             && match self.effective_mode() {
                 ExportTranscriptMode::Export => true,
-                ExportTranscriptMode::Handoff => self.effective_agent().is_some(),
-                ExportTranscriptMode::HandoffAdvanced => {
-                    self.effective_agent().is_some() && self.remote_target().is_some()
+                ExportTranscriptMode::Handoff => {
+                    self.effective_agent().is_some()
+                        && (!self.destination_open || self.effective_project().is_some())
                 }
             }
     }
@@ -679,13 +923,18 @@ impl GpuiExportTranscriptModalWindow {
             return "Try Again".to_string();
         }
         match self.effective_mode() {
-            ExportTranscriptMode::Handoff => match self.effective_agent() {
-                Some(agent) => format!("Handoff to {}", agent.name),
-                None => "Handoff".to_string(),
-            },
-            ExportTranscriptMode::HandoffAdvanced => {
-                match (self.effective_computer(), self.effective_project()) {
-                    (Some(computer), Some(project)) => advanced_handoff_label(computer, project),
+            ExportTranscriptMode::Handoff => {
+                // This project here names the agent; anywhere else names where it goes (Q862).
+                if self.elsewhere().is_some()
+                    && let (Some(computer), Some(project)) =
+                        (self.effective_computer(), self.effective_project())
+                {
+                    return destination_label(computer, project);
+                }
+                match self.effective_agent() {
+                    Some(agent) if !self.destination_open || self.effective_project().is_some() => {
+                        format!("Handoff to {}", agent.name)
+                    }
                     _ => "Handoff".to_string(),
                 }
             }
@@ -697,12 +946,61 @@ impl GpuiExportTranscriptModalWindow {
         if let Some(path) = &self.prefs_path {
             persist_export_transcript_modal_prefs(
                 path,
-                ExportTranscriptModalPrefs {
-                    mode: Some(self.mode),
+                &ExportTranscriptModalPrefs {
+                    mode: self.mode,
                     include: self.include,
+                    include_open: self.include_open,
+                    agent_id: self.remembered_agent_id.clone(),
+                    destination: self.remembered_destination.clone(),
+                    destination_open: self.remembered_destination.is_some(),
+                    history: self.history,
                 },
             );
         }
+    }
+
+    /// A handoff remembers its agent and destination when it runs, so a pick the user backed out
+    /// of doesn't come back. The model picker's handoff is about that one model, not a preference.
+    fn remember_handoff(&mut self) {
+        if self.effective_mode() != ExportTranscriptMode::Handoff || self.handoff_target.is_some() {
+            return;
+        }
+        self.remembered_agent_id = self.selected_agent_id.clone();
+        self.remembered_destination = self.elsewhere();
+        self.persist_prefs();
+    }
+
+    fn open_destination(&mut self, cx: &mut Context<Self>) {
+        if self.controls_disabled() {
+            return;
+        }
+        self.destination_open = true;
+        self.fit.refit();
+        self.announce_target(cx);
+        cx.notify();
+    }
+
+    fn use_this_project(&mut self, cx: &mut Context<Self>) {
+        if self.controls_disabled() {
+            return;
+        }
+        self.destination_open = false;
+        self.selected_machine_id = None;
+        self.selected_project_id = None;
+        self.close_menus();
+        self.fit.refit();
+        self.announce_target(cx);
+        cx.notify();
+    }
+
+    fn toggle_include_open(&mut self, cx: &mut Context<Self>) {
+        if self.controls_disabled() {
+            return;
+        }
+        self.include_open = !self.include_open;
+        self.persist_prefs();
+        self.fit.refit();
+        cx.notify();
     }
 
     fn choose_mode(&mut self, mode: ExportTranscriptMode, cx: &mut Context<Self>) {
@@ -733,7 +1031,41 @@ impl GpuiExportTranscriptModalWindow {
             _ => self.include.reasoning = !self.include.reasoning,
         }
         self.persist_prefs();
+        self.ask_turn_count(cx);
         cx.notify();
+    }
+
+    fn toggle_whole_conversation(&mut self, cx: &mut Context<Self>) {
+        if self.controls_disabled() {
+            return;
+        }
+        self.history.all = !self.history.all;
+        self.persist_prefs();
+        self.fit.refit();
+        cx.notify();
+    }
+
+    /// Moves History's slider to the stop under `x`, a window position.
+    fn slide_history_to(&mut self, x: Pixels, cx: &mut Context<Self>) {
+        let Some(bounds) = self.slider_bounds.get() else {
+            return;
+        };
+        let width = f32::from(bounds.size.width).max(1.0);
+        let fraction = (f32::from(x - bounds.origin.x) / width).clamp(0.0, 1.0);
+        let last = HANDOFF_HISTORY_STOPS.len() - 1;
+        let index = (fraction * last as f32).round() as usize;
+        let turns = HANDOFF_HISTORY_STOPS[index.min(last)];
+        if turns != self.history.turns {
+            self.history.turns = turns;
+            cx.notify();
+        }
+    }
+
+    fn end_history_slide(&mut self, cx: &mut Context<Self>) {
+        if std::mem::take(&mut self.slider_dragging) {
+            self.persist_prefs();
+            cx.notify();
+        }
     }
 
     fn run(&mut self, cx: &mut Context<Self>) {
@@ -741,16 +1073,18 @@ impl GpuiExportTranscriptModalWindow {
             return;
         }
         self.close_menus();
+        self.remember_handoff();
         self.handoff_requested = self.effective_mode().is_handoff();
         self.stage = ExportTranscriptStage::Exporting;
         cx.notify();
         (self.host)(
             ExportTranscriptModalCommand::RunExport {
                 include: self.include,
-                carry: self.effective_mode() == ExportTranscriptMode::HandoffAdvanced
-                    && self
-                        .effective_computer()
-                        .is_some_and(|computer| !computer.is_source),
+                last_turns: self
+                    .history_supported()
+                    .then(|| self.history.last_turns())
+                    .flatten(),
+                carry: self.effective_mode().is_handoff() && self.is_leaving_computer(),
             },
             cx,
         );
@@ -1050,23 +1384,14 @@ impl GpuiExportTranscriptModalWindow {
         // CSS grid stretches both cards to the taller one; gpui-component's row helper centers items.
         let mut grid = h_flex().w_full().items_stretch().gap(px(8.0));
         if !self.agents.is_empty() {
-            grid = grid
-                .child(self.render_mode_card(
-                    0,
-                    ExportTranscriptMode::Handoff,
-                    ICON_USER_SHARE,
-                    HANDOFF_CARD_TITLE,
-                    HANDOFF_CARD_DESCRIPTION,
-                    cx,
-                ))
-                .child(self.render_mode_card(
-                    2,
-                    ExportTranscriptMode::HandoffAdvanced,
-                    ICON_SERVER,
-                    ADVANCED_CARD_TITLE,
-                    ADVANCED_CARD_DESCRIPTION,
-                    cx,
-                ));
+            grid = grid.child(self.render_mode_card(
+                0,
+                ExportTranscriptMode::Handoff,
+                ICON_USER_SHARE,
+                HANDOFF_CARD_TITLE,
+                HANDOFF_CARD_DESCRIPTION,
+                cx,
+            ));
         }
         grid.child(self.render_mode_card(
             1,
@@ -1090,11 +1415,10 @@ impl GpuiExportTranscriptModalWindow {
                 .into_any_element();
         }
         let value = self.effective_agent().map(|agent| agent.name.clone());
-        let remote = self.effective_mode() == ExportTranscriptMode::HandoffAdvanced;
-        // In Advanced Handoff the three labels share one width so the selects line up.
         let label = |text: &'static str| {
-            let title = modal_section_title(&p, text).flex_shrink_0();
-            if remote { title.w(px(96.0)) } else { title }
+            modal_section_title(&p, text)
+                .flex_shrink_0()
+                .w(px(ROW_LABEL_WIDTH))
         };
         let agent_row = h_flex()
             .min_h(px(MODAL_CONTROL_HEIGHT))
@@ -1115,8 +1439,56 @@ impl GpuiExportTranscriptModalWindow {
                 |this, _window, cx| this.toggle_agent_menu(cx),
                 cx,
             ));
-        if !remote {
-            return agent_row.into_any_element();
+        // CDXC:TranscriptExport 2026-10-31 DECISION:
+        // User: Handoff to an agent "needs to get all the options" of the other card "but we need to make it more organized and allow either handing off in the current project and current machine and all that (default) or handing off to another machine/another project". The common case is one quiet row that says where the session goes; Change… opens the Computer and Project choices under it, and the row keeps saying where it goes.
+        let open = self.destination_open;
+        let button_label = match (open, self.elsewhere().is_some()) {
+            (false, _) => DESTINATION_CHANGE,
+            (true, true) => DESTINATION_RESET,
+            (true, false) => DESTINATION_HIDE,
+        };
+        let destination_row = h_flex()
+            .min_h(px(MODAL_CONTROL_HEIGHT))
+            .items_center()
+            .gap(px(10.0))
+            .child(label(DESTINATION))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(px(13.0))
+                    .line_height(px(20.0))
+                    .child(self.destination_summary()),
+            )
+            .child(
+                h_flex()
+                    .flex_shrink_0()
+                    .w(px(148.0))
+                    .child(modal_action_button(
+                        &p,
+                        "export-transcript-destination",
+                        button_label,
+                        None,
+                        ModalButtonTone::Neutral,
+                        self.controls_disabled(),
+                        move |this: &mut Self, _window, cx| {
+                            if open {
+                                this.use_this_project(cx);
+                            } else {
+                                this.open_destination(cx);
+                            }
+                        },
+                        cx,
+                    )),
+            );
+        if !self.destination_open {
+            return v_flex()
+                .w_full()
+                .gap(px(10.0))
+                .child(agent_row)
+                .child(destination_row)
+                .into_any_element();
         }
         let computer = self.effective_computer();
         let project_value = self.effective_project().map(project_label);
@@ -1162,6 +1534,7 @@ impl GpuiExportTranscriptModalWindow {
             .w_full()
             .gap(px(10.0))
             .child(agent_row)
+            .child(destination_row)
             .child(computer_row)
             .child(project_row);
         if self.computers.is_empty() {
@@ -1231,31 +1604,75 @@ impl GpuiExportTranscriptModalWindow {
             .into_any_element()
     }
 
+    /// CDXC:TranscriptExport 2026-10-31 DECISION:
+    /// User: "The 'include' part needs to be collapsed by default". The heading says what is in the file, so a closed section hides nothing that matters.
     fn render_include(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let p = self.palette;
         let disabled = self.controls_disabled();
-        const ROWS: [(&str, &str); 3] = [
-            (
-                "Commands & output",
-                "Terminal commands the agent ran, with the tail of their output.",
-            ),
-            ("File changes", "The patches the agent applied to files."),
-            ("Reasoning", "The agent's own reasoning sections."),
-        ];
         let values = [
             self.include.commands,
             self.include.patches,
             self.include.reasoning,
         ];
+        let chosen: Vec<&str> = INCLUDE_ROWS
+            .iter()
+            .zip(values)
+            .filter(|(_, on)| *on)
+            .map(|((label, _), _)| *label)
+            .collect();
+        let include_text = if chosen.is_empty() {
+            INCLUDE_NOTHING.to_string()
+        } else {
+            chosen.join(", ")
+        };
+        let summary = if self.history_supported() {
+            handoff_include_summary(&self.history, &include_text)
+        } else {
+            include_text
+        };
+        let include_open = self.include_open;
         let mut elements = vec![
-            modal_section_title(&p, INCLUDE)
-                .mt(px(4.0))
+            h_flex()
+                .id("export-transcript-include")
+                .w_full()
+                .min_h(px(MODAL_CONTROL_HEIGHT))
+                .items_center()
+                .gap(px(6.0))
+                .when(!disabled, |this| {
+                    this.cursor_pointer().on_click(cx.listener(
+                        |this, _: &ClickEvent, _window, cx| {
+                            this.toggle_include_open(cx);
+                        },
+                    ))
+                })
+                .child(
+                    modal_icon(ICON_CHEVRON_RIGHT, 14.0, p.muted).with_transformation(
+                        gpui::Transformation::rotate(gpui::percentage(if include_open {
+                            0.25
+                        } else {
+                            0.0
+                        })),
+                    ),
+                )
+                .child(modal_section_title(&p, INCLUDE).flex_shrink_0())
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_right()
+                        .child(modal_hint(&p, summary)),
+                )
                 .into_any_element(),
-            modal_panel(&p)
-                .children(
-                    ROWS.iter()
-                        .enumerate()
-                        .map(|(index, (label, description))| {
+        ];
+        if include_open && self.history_supported() {
+            elements.push(self.render_history(cx));
+        }
+        if include_open {
+            elements.push(
+                modal_panel(&p)
+                    .children(INCLUDE_ROWS.iter().enumerate().map(
+                        |(index, (label, description))| {
                             modal_panel_row(
                                 &p,
                                 *label,
@@ -1271,14 +1688,173 @@ impl GpuiExportTranscriptModalWindow {
                                     },
                                 ))
                             })
-                        }),
-                )
-                .into_any_element(),
-        ];
+                        },
+                    ))
+                    .into_any_element(),
+            );
+        }
         if let ExportTranscriptStage::Failed { message } = &self.stage {
             elements.push(modal_error(&p, message.clone()));
         }
         elements
+    }
+
+    /// CDXC:TranscriptExport 2026-11-03 DECISION:
+    /// User (Q1150, Q1155, Q1156, Q1158): History sits inside Include: a "Whole conversation" switch, and while it is off a slider over the last 1 to 100 turns with its value on the label's line, and under them what the pick holds ("10 of 120 turns · about 9k tokens (the whole is 87k)"). The slider is drawn here rather than taken from GPUI Kit because this dialog also runs in the web build, which has no `gpui_base`.
+    fn render_history(&self, cx: &mut Context<Self>) -> AnyElement {
+        let p = self.palette;
+        let disabled = self.controls_disabled();
+        let whole = self.history.all;
+        let mut panel = modal_panel(&p).child(
+            modal_panel_row(
+                &p,
+                WHOLE_CONVERSATION,
+                Some(WHOLE_CONVERSATION_DESCRIPTION),
+                modal_switch(&p, whole, disabled),
+                false,
+            )
+            .id("export-transcript-whole-conversation")
+            .when(!disabled, |this| {
+                this.cursor_pointer()
+                    .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+                        this.toggle_whole_conversation(cx);
+                    }))
+            }),
+        );
+        let estimate = self.history_estimate();
+        if !whole {
+            panel = panel.child(
+                v_flex()
+                    .w_full()
+                    .gap(px(6.0))
+                    .px(px(12.0))
+                    .py(px(9.0))
+                    .border_t_1()
+                    .border_color(hsla(p.hairline))
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .justify_between()
+                            .gap(px(12.0))
+                            .text_size(px(13.0))
+                            .line_height(px(18.57))
+                            .child(div().font_weight(FontWeight::MEDIUM).child(HISTORY))
+                            .child(
+                                div()
+                                    .text_color(hsla(p.muted))
+                                    .child(handoff_history_label(&self.history)),
+                            ),
+                    )
+                    .child(self.render_history_slider(disabled, cx))
+                    .children(estimate.map(|estimate| modal_hint(&p, estimate))),
+            );
+        } else if let Some(estimate) = estimate {
+            panel = panel.child(
+                div()
+                    .px(px(12.0))
+                    .pb(px(9.0))
+                    .child(modal_hint(&p, estimate)),
+            );
+        }
+        panel.into_any_element()
+    }
+
+    /// A 4px track with a dot at each stop, filled up to a 16px thumb.
+    fn render_history_slider(&self, disabled: bool, cx: &mut Context<Self>) -> AnyElement {
+        let p = self.palette;
+        let last = (HANDOFF_HISTORY_STOPS.len() - 1) as f32;
+        let at = handoff_history_stop_index(self.history.turns) as f32 / last;
+        let track = div()
+            .id("export-transcript-history-slider")
+            .relative()
+            .w_full()
+            .h(px(20.0))
+            .when(disabled, |this| this.opacity(0.5))
+            .child(
+                div()
+                    .absolute()
+                    .top(px(8.0))
+                    .left_0()
+                    .w_full()
+                    .h(px(4.0))
+                    .rounded(px(2.0))
+                    .bg(hsla(p.switch_off)),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top(px(8.0))
+                    .left_0()
+                    .w(relative(at))
+                    .h(px(4.0))
+                    .rounded(px(2.0))
+                    .bg(hsla(p.primary)),
+            )
+            .children((0..HANDOFF_HISTORY_STOPS.len()).map(|index| {
+                let fraction = index as f32 / last;
+                div()
+                    .absolute()
+                    .top(px(8.0))
+                    .left(relative(fraction))
+                    .ml(px(-2.0))
+                    .size(px(4.0))
+                    .rounded_full()
+                    .bg(hsla(if fraction <= at {
+                        p.primary_foreground
+                    } else {
+                        p.muted
+                    }))
+                    .opacity(0.6)
+            }))
+            .child(
+                div()
+                    .absolute()
+                    .top(px(2.0))
+                    .left(relative(at))
+                    .ml(px(-8.0))
+                    .size(px(16.0))
+                    .rounded_full()
+                    .border_2()
+                    .border_color(hsla(p.primary))
+                    .bg(hsla(p.background))
+                    .shadow_sm(),
+            )
+            .when(!disabled, |this| {
+                this.cursor_pointer()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, event: &MouseDownEvent, _window, cx| {
+                            this.slider_dragging = true;
+                            this.slide_history_to(event.position.x, cx);
+                            cx.stop_propagation();
+                        }),
+                    )
+                    .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _window, cx| {
+                        if !this.slider_dragging {
+                            return;
+                        }
+                        if event.pressed_button != Some(MouseButton::Left) {
+                            this.end_history_slide(cx);
+                            return;
+                        }
+                        this.slide_history_to(event.position.x, cx);
+                    }))
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, cx| this.end_history_slide(cx)),
+                    )
+                    .on_mouse_up_out(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _window, cx| this.end_history_slide(cx)),
+                    )
+            });
+        // Pad the ends so the thumb's half past each end stays inside the panel.
+        h_flex()
+            .w_full()
+            .px(px(8.0))
+            .on_children_prepainted(capture_child_bounds(self.slider_bounds.clone(), 0))
+            .child(track)
+            .into_any_element()
     }
 
     fn render_result(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -1343,7 +1919,7 @@ impl GpuiExportTranscriptModalWindow {
     }
 
     /// CDXC:TranscriptExport 2026-09-15 DECISION:
-    /// User: Handoff / Export is one page, not an options page followed by a result page, and "Handoff to an agent" and "Export to Markdown" are explicit choices on it ("Handoff to Remote" joined them between the two on 2026-10-25, see `ExportTranscriptMode::HandoffAdvanced`). The mode cards sit above the include-toggles; Handoff writes the file and starts the follow-up conversation in one click, while Export swaps the toggles for the saved path with Copy and Reveal. Starting a conversation never sends a prompt for the user: the mention is typed into the new agent's input and left unsubmitted. Reveal is omitted, not disabled, when the file lives on another machine.
+    /// User: Handoff / Export is one page, not an options page followed by a result page, and "Handoff to an agent" and "Export to Markdown" are explicit choices on it (later Handoff to MD, with a second card for a while until 2026-10-31). The mode cards sit above the include-toggles; Handoff writes the file and starts the follow-up conversation in one click, while Export swaps the toggles for the saved path with Copy and Reveal. Starting a conversation never sends a prompt for the user: the mention is typed into the new agent's input and left unsubmitted. Reveal is omitted, not disabled, when the file lives on another machine.
     fn render_body(&self, cx: &mut Context<Self>) -> AnyElement {
         let mut body = v_flex()
             .w_full()
@@ -1539,6 +2115,7 @@ mod tests {
                     title: id.to_string(),
                     path: None,
                     same_repo: Some(*id) == preferred,
+                    is_own: false,
                 })
                 .collect(),
             preferred_project_id: preferred.map(str::to_string),
@@ -1585,12 +2162,13 @@ mod tests {
     }
 
     #[test]
-    fn advanced_handoff_names_the_project_and_only_a_computer_it_leaves_for() {
+    fn the_button_names_the_project_and_only_a_computer_it_leaves_for() {
         let project = ExportTranscriptProject {
             project_id: "p".to_string(),
             title: "acme-web".to_string(),
             path: None,
             same_repo: false,
+            is_own: false,
         };
         let computer = |is_source| ExportTranscriptComputer {
             machine_id: "m".to_string(),
@@ -1601,50 +2179,98 @@ mod tests {
             missing_repository: None,
         };
         assert_eq!(
-            advanced_handoff_label(&computer(true), &project),
+            destination_label(&computer(true), &project),
             "Handoff to acme-web"
         );
         assert_eq!(
-            advanced_handoff_label(&computer(false), &project),
+            destination_label(&computer(false), &project),
             "Handoff to acme-web on studio"
         );
     }
 
+    fn prefs_from(text: &str) -> ExportTranscriptModalPrefs {
+        ExportTranscriptModalPrefs::from_saved(&serde_json::from_str(text).unwrap())
+    }
+
     #[test]
-    fn a_saved_handoff_to_remote_comes_back_as_advanced_handoff() {
-        let dir = std::env::temp_dir().join(format!(
-            "ghostex-advanced-handoff-prefs-{}",
-            std::process::id()
-        ));
+    fn a_saved_handoff_to_remote_comes_back_as_a_handoff_to_an_agent_with_its_choices_open() {
+        let prefs = prefs_from(r#"{"mode":"handoffRemote","includeCommands":true}"#);
+        assert_eq!(prefs.mode, ExportTranscriptMode::Handoff);
+        assert!(prefs.destination_open);
+        assert_eq!(prefs.include, ExportTranscriptIncludeOptions::default());
+    }
+
+    #[test]
+    fn include_starts_closed_and_off_even_with_the_old_dialogs_saved_switches() {
+        let prefs = prefs_from(
+            r#"{"mode":"handoff","includeCommands":true,"includePatches":true,"includeReasoning":false}"#,
+        );
+        assert_eq!(prefs.include, ExportTranscriptIncludeOptions::default());
+        assert!(!prefs.include_open);
+    }
+
+    #[test]
+    fn a_remembered_destination_opens_only_while_it_still_applies() {
+        let mut own = computer("mac", &["own", "acme"], Some("own"));
+        own.is_source = true;
+        own.projects[0].is_own = true;
+        let computers = [own, computer("studio", &["site"], None)];
+        let target = |machine_id: &str, project_id: &str| ExportTranscriptRemoteTarget {
+            machine_id: machine_id.to_string(),
+            project_id: project_id.to_string(),
+        };
+        let acme = target("mac", "acme");
+        assert_eq!(
+            opening_destination(Some(&acme), &computers),
+            Some(acme.clone())
+        );
+        let site = target("studio", "site");
+        assert_eq!(
+            opening_destination(Some(&site), &computers),
+            Some(site.clone())
+        );
+        // The session's own project, a project that's gone, a computer that's gone.
+        assert_eq!(
+            opening_destination(Some(&target("mac", "own")), &computers),
+            None
+        );
+        assert_eq!(
+            opening_destination(Some(&target("mac", "gone")), &computers),
+            None
+        );
+        assert_eq!(
+            opening_destination(Some(&target("gone", "site")), &computers),
+            None
+        );
+    }
+
+    #[test]
+    fn what_the_user_changes_round_trips_through_the_prefs_file() {
+        let dir =
+            std::env::temp_dir().join(format!("ghostex-export-modal-prefs-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("prefs.json");
-        std::fs::write(&path, r#"{"mode":"handoffRemote"}"#).unwrap();
-        assert_eq!(
-            load_export_transcript_modal_prefs(&path).mode,
-            Some(ExportTranscriptMode::HandoffAdvanced)
-        );
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn handoff_remote_mode_round_trips_through_the_prefs_file() {
-        let dir = std::env::temp_dir().join(format!("gx-export-prefs-{}", std::process::id()));
-        let path = dir.join("prefs.json");
-        persist_export_transcript_modal_prefs(
-            &path,
-            ExportTranscriptModalPrefs {
-                mode: Some(ExportTranscriptMode::HandoffAdvanced),
-                include: ExportTranscriptIncludeOptions::default(),
+        let prefs = ExportTranscriptModalPrefs {
+            mode: ExportTranscriptMode::Export,
+            include: ExportTranscriptIncludeOptions {
+                commands: true,
+                patches: false,
+                reasoning: true,
             },
-        );
-        let loaded = load_export_transcript_modal_prefs(&path);
-        let _ = std::fs::remove_dir_all(&dir);
-        assert_eq!(loaded.mode, Some(ExportTranscriptMode::HandoffAdvanced));
-    }
-
-    #[test]
-    fn handoff_target_of_a_missing_family_is_none() {
-        let agents = [agent("claude", Some("claude")), agent("pi", None)];
-        assert_eq!(handoff_target_agent(&agents, "codex"), None);
+            include_open: true,
+            agent_id: Some("codex".to_string()),
+            destination: Some(ExportTranscriptRemoteTarget {
+                machine_id: "studio".to_string(),
+                project_id: "acme".to_string(),
+            }),
+            destination_open: true,
+            history: HandoffHistory {
+                all: false,
+                turns: 50,
+            },
+        };
+        persist_export_transcript_modal_prefs(&path, &prefs);
+        assert_eq!(load_export_transcript_modal_prefs(&path), prefs);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

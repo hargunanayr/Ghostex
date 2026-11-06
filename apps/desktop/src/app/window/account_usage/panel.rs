@@ -40,6 +40,7 @@ pub(crate) struct AccountUsagePanel {
     reported_height: Rc<Cell<f32>>,
     logo: Arc<gpui::Image>,
     pub(super) now: i64,
+    tick: gpui::Task<()>,
 }
 
 impl AccountUsagePanel {
@@ -56,23 +57,7 @@ impl AccountUsagePanel {
         } else {
             crate::app::titlebar::account_usage::account_logo_svg(false).to_string()
         };
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(Duration::from_secs(30))
-                    .await;
-                if this
-                    .update(cx, |this, cx| {
-                        this.now = now();
-                        cx.notify();
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        })
-        .detach();
+        let tick = Self::start_tick(cx);
         Self {
             main_app,
             id,
@@ -96,7 +81,35 @@ impl AccountUsagePanel {
                 logo.into_bytes(),
             )),
             now: now(),
+            tick,
         }
+    }
+
+    /// Keeps "Updated 15s ago" and the reset countdowns current, waking only when the age's words
+    /// can change. Dropped with the panel, and replaced when a new reading arrives so a long wait
+    /// doesn't hold "Updated just now" still.
+    fn start_tick(cx: &mut gpui::Context<Self>) -> gpui::Task<()> {
+        cx.spawn(async move |this, cx| {
+            loop {
+                let Ok(delay) = this.read_with(cx, |this, _| {
+                    next_age_tick(text(&this.account, "usageUpdatedAt"), now())
+                }) else {
+                    break;
+                };
+                cx.background_executor()
+                    .timer(Duration::from_millis(delay))
+                    .await;
+                if this
+                    .update(cx, |this, cx| {
+                        this.now = now();
+                        cx.notify();
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
     }
 
     pub(crate) fn focus(&self, window: &mut Window, cx: &mut App) {
@@ -104,8 +117,12 @@ impl AccountUsagePanel {
     }
 
     pub(crate) fn update_account(&mut self, account: Value, cx: &mut gpui::Context<Self>) {
+        let stamp_changed = account["usageUpdatedAt"] != self.account["usageUpdatedAt"];
         self.account = popup_account(&account);
         self.now = now();
+        if stamp_changed {
+            self.tick = Self::start_tick(cx);
+        }
         if self.claiming.is_none() {
             self.claimed.clear();
         }
@@ -328,44 +345,84 @@ impl AccountUsagePanel {
     /// name it, and Live limits (Last known when stale) with the reading's time as its tooltip.
     fn render_account_label(&self) -> AnyElement {
         let p = self.palette;
-        let stale = self.account["usageStale"] == true;
-        let stamp = text(&self.account, "usageUpdatedAt");
-        let updated = if stale {
-            match age_text(stamp).as_str() {
-                "" => String::new(),
-                age => format!("Last updated {age} ago"),
-            }
+        // CDXC:AgentProviders 2026-10-31 DECISION:
+        // User: "please dont say live limits here, isntead just show updated how long ago (15 seconds ago etc). keep it short tho (not full actual time etc)". The row names the reading's age, so the clock-time tooltip goes. This keeps the 2026-10-11 rule that the card must not contradict itself: when gxserver marks the reading stale (refreshing has failed since it was taken) the same words show in amber.
+        let color = if self.account["usageStale"] == true {
+            amber()
         } else {
-            match local_date(stamp, false).as_str() {
-                "" => String::new(),
-                time => format!("Updated {time}"),
-            }
+            p.accent_text
         };
-        // CDXC:AgentProviders 2026-10-11 DECISION:
-        // User: the usage card must not contradict itself. When gxserver marks the reading stale (refreshing has failed since it was taken), the pill says "Last known" in amber and its tooltip says how long ago it was updated; "Live limits" shows only for a fresh reading.
-        let (color, pill) = if stale {
-            (amber(), "Last known")
-        } else {
-            (p.accent_text, "Live limits")
-        };
+        let age = updated_age(text(&self.account, "usageUpdatedAt"), self.now);
         section_label(account_section_title(&self.account))
             .child(
                 h_flex()
-                    .id("account-usage-live")
                     .flex_shrink_0()
                     .items_center()
                     .gap(px(5.0))
                     .text_size(px(11.5))
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(color)
-                    .when(!updated.is_empty(), |this| {
-                        this.tooltip(move |window, cx| {
-                            Tooltip::new(updated.clone()).build(window, cx)
-                        })
-                    })
                     .child(div().size(px(6.0)).rounded_full().bg(color))
-                    .child(pill),
+                    .child(age),
             )
+            .into_any_element()
+    }
+
+    /// The amber line under the account's card, Notifications' offline notice with its button.
+    fn render_notice(&self, notice: AccountNotice, cx: &mut gpui::Context<Self>) -> AnyElement {
+        let color = amber();
+        let p = self.palette;
+        h_flex()
+            .w_full()
+            .mt(px(NOTICE_GAP))
+            .px(px(9.0))
+            .py(px(7.0))
+            .gap(px(8.0))
+            .items_center()
+            .rounded(px(RESOURCE_CONTROL_RADIUS))
+            .border_1()
+            .border_color(color.opacity(0.30))
+            .bg(color.opacity(0.10))
+            .text_size(px(12.0))
+            .line_height(px(NOTICE_LINE))
+            .child(
+                div()
+                    .min_w_0()
+                    .flex_1()
+                    .text_color(color.opacity(0.85))
+                    .child(notice.message),
+            )
+            .when_some(notice.button, |this, button| {
+                let run = {
+                    let reconnect = button.reconnect.clone();
+                    let (id, app) = (self.id, self.main_app.clone());
+                    std::rc::Rc::new(move |cx: &mut App| {
+                        let (reconnect, app) = (reconnect.clone(), app.clone());
+                        cx.defer(move |cx| {
+                            let _ = app.update(cx, |app, cx| {
+                                app.open_accounts_from_usage_popup(id, reconnect, cx);
+                            });
+                        });
+                    })
+                };
+                let key_run = run.clone();
+                this.child(
+                    p.control("account-usage-notice-action")
+                        .tab_index(0)
+                        .focus_visible(|this| this.shadow(focus_ring()))
+                        .on_click(move |_, _, cx| {
+                            cx.stop_propagation();
+                            run(cx);
+                        })
+                        .on_key_down(move |event, _, cx| {
+                            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                cx.stop_propagation();
+                                key_run(cx);
+                            }
+                        })
+                        .child(button.label),
+                )
+            })
             .into_any_element()
     }
 
@@ -433,15 +490,8 @@ impl Render for AccountUsagePanel {
     fn render(&mut self, _window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         // The theme and window glass can change while the panel is open.
         self.palette = Palette::new(self.palette.codex);
-        let notice = match text(&self.account, "usageError") {
-            "" => match text(&self.account, "status") {
-                "loading" => "Loading account usage…",
-                "ready" => "",
-                _ => "Reconnect this account in Settings > Accounts.",
-            },
-            error => error,
-        }
-        .to_string();
+        let notice =
+            account_notice(&self.account, self.now).map(|notice| self.render_notice(notice, cx));
         let panel = cx.entity().downgrade();
         let reported = self.reported_height.clone();
         let body = v_flex()
@@ -451,7 +501,7 @@ impl Render for AccountUsagePanel {
             .pt(px(BODY_PADDING_TOP))
             .child(self.render_account_label())
             .child(self.render_limits(cx))
-            .when(!notice.is_empty(), |this| this.child(notice_box(notice)))
+            .children(notice)
             .child(self.render_history())
             // CDXC:AgentProviders 2026-10-30 DECISION:
             // User: the panel's height fits its content, up to what fits on screen, then it
@@ -478,7 +528,8 @@ impl Render for AccountUsagePanel {
                 .left_0()
                 .size_full(),
             );
-        resource_panel_frame().child(
+        crate::app::window::popup_frame::popup_open_frame(
+            resource_panel_frame(),
             v_flex()
                 .id("account-usage-panel")
                 .size_full()
@@ -551,28 +602,51 @@ impl Render for AccountUsagePanel {
                                 .thickness(px(TITLEBAR_DROPDOWN_SCROLLBAR_WIDTH)),
                         ),
                 ),
+            false,
+            cx.reduce_motion(),
         )
     }
 }
 
-/// The amber line under the account's card: a usage error, loading, or reconnect. Notifications'
-/// offline notice.
-fn notice_box(notice: String) -> AnyElement {
-    let color = amber();
-    div()
-        .w_full()
-        .mt(px(NOTICE_GAP))
-        .px(px(9.0))
-        .py(px(7.0))
-        .rounded(px(RESOURCE_CONTROL_RADIUS))
-        .border_1()
-        .border_color(color.opacity(0.30))
-        .bg(color.opacity(0.10))
-        .text_size(px(12.0))
-        .line_height(px(NOTICE_LINE))
-        .text_color(color.opacity(0.85))
-        .child(notice)
-        .into_any_element()
+/// What the amber line under the account's card says, and its button.
+#[derive(Debug, PartialEq)]
+pub(super) struct AccountNotice {
+    message: String,
+    button: Option<NoticeButton>,
+}
+
+#[derive(Debug, PartialEq)]
+struct NoticeButton {
+    label: String,
+    /// The saved account to start signing in, else the button only opens Settings > Accounts.
+    reconnect: Option<String>,
+}
+
+/// CDXC:AgentProviders 2026-10-31 DECISION:
+/// User: "this error is not clear at all. what is a helper? why isn't there a button i can click on to relogin for that account or to go to the accounts settings page". The notice is the core's account problem, the words and action the chat's Accounts & limits panel shows (`account_problem`). An account on another computer can't be signed in from this one's Settings, so its notice says where to do it and has no button.
+fn account_notice(account: &Value, now: i64) -> Option<AccountNotice> {
+    if text(account, "status") == "loading" {
+        return Some(AccountNotice {
+            message: "Loading account usage…".to_string(),
+            button: None,
+        });
+    }
+    let problem = ghostex_gx_chat_core::menus::native_accounts::account_problem(account, now)?;
+    let remote = !matches!(text(account, "titlebarMachine"), "" | "local");
+    if remote && problem.action.is_some() {
+        return Some(AccountNotice {
+            message: "This account needs signing in on the computer it's saved on.".to_string(),
+            button: None,
+        });
+    }
+    let reconnect = problem.action.as_deref() == Some("Reconnect");
+    Some(AccountNotice {
+        message: crate::app::titlebar::account_usage::account_display_text(&problem.message),
+        button: problem.action.map(|label| NoticeButton {
+            label,
+            reconnect: reconnect.then(|| text(account, "id").to_string()),
+        }),
+    })
 }
 
 const NOTICE_GAP: f32 = 8.0;
@@ -607,7 +681,7 @@ pub(crate) fn estimated_height(account: &Value) -> f32 {
     if rows > 0 {
         limits += 1.0 + SEPARATOR_MARGIN * 2.0 + rows as f32 * KV_ROW_HEIGHT;
     }
-    let notice = !text(&account, "usageError").is_empty() || account["status"] != "ready";
+    let notice = account_notice(&account, now()).is_some();
     let history = &account["usageHistory"];
     // The same cases `render_history` writes its notice for.
     let history_notice = history.is_null()
@@ -700,6 +774,52 @@ mod tests {
             super::super::history::fine_print(""),
             "Tokens from conversation logs · Cached tokens included"
         );
+    }
+
+    #[test]
+    fn the_notice_says_what_to_do_and_offers_the_fix() {
+        let account = |status: &str, error: Option<&str>, machine: &str| {
+            json!({
+                "id": "codex-a6d6", "status": status, "usageError": error,
+                "titlebarMachine": machine,
+            })
+        };
+        let missing = "This account isn't signed in on this computer. Reconnect it.";
+        let notice = account_notice(&account("unavailable", Some(missing), "local"), 0).unwrap();
+        assert_eq!(notice.message, missing);
+        assert_eq!(
+            notice.button,
+            Some(NoticeButton {
+                label: "Reconnect".into(),
+                reconnect: Some("codex-a6d6".into()),
+            })
+        );
+        // Every sign-in state offers it, with or without words from gxserver.
+        for status in ["loginRequired", "identityChanged"] {
+            let notice = account_notice(&account(status, None, "local"), 0).unwrap();
+            assert_eq!(notice.button.unwrap().label, "Reconnect", "{status}");
+        }
+        // Turned off: Settings is the fix, and nothing to sign in to.
+        let notice = account_notice(&account("disabled", None, "local"), 0).unwrap();
+        assert_eq!(
+            notice.button,
+            Some(NoticeButton {
+                label: "Open Settings".into(),
+                reconnect: None,
+            })
+        );
+        // Nothing to press: the words say why.
+        let retrying = "Usage could not be read yet. Ghostex keeps trying.";
+        let notice = account_notice(&account("ready", Some(retrying), "local"), 0).unwrap();
+        assert_eq!((notice.message.as_str(), notice.button), (retrying, None));
+        // Another computer's account can't be signed in from here.
+        let notice = account_notice(&account("unavailable", Some(missing), "remote-1"), 0).unwrap();
+        assert_eq!(notice.button, None);
+        assert!(notice.message.contains("the computer it's saved on"));
+        // Loading says so, and a healthy account has no notice.
+        let notice = account_notice(&account("loading", None, "local"), 0).unwrap();
+        assert_eq!(notice.button, None);
+        assert_eq!(account_notice(&account("ready", None, "local"), 0), None);
     }
 
     /// Codex has two limits and no Extra usage row, so it opens shorter than Claude instead of

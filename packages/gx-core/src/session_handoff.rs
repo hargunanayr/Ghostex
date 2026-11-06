@@ -2,7 +2,7 @@
 //! when a session is dragged onto another project.
 //!
 //! CDXC:TranscriptExport 2026-10-31 DECISION:
-//! User (Q863): "put may caret 2 lines below the handoff document pls" and "please put some text before the handoff document that say something about 'you are continuing from xyz'". Every handoff's first message reads the same: a lead-in naming the session and project it came from, the document's link, a blank line, and the caret on the line after it. It replaces the bare link for all of them (Handoff to an agent, Advanced Handoff, the model picker's and the drag's), because the lead-in tells the new agent what the link is in each case, and one draft keeps them from drifting.
+//! User (Q863): "put may caret 2 lines below the handoff document pls" and "please put some text before the handoff document that say something about 'you are continuing from xyz'". Every handoff's first message reads the same: a lead-in naming the session and project it came from, the document's link, a blank line, and the caret on the line after it. It replaces the bare link for all of them (Handoff to an agent wherever it goes, the model picker's and the drag's), because the lead-in tells the new agent what the link is in each case, and one draft keeps them from drifting.
 //!
 //! CDXC:Sidebar 2026-10-31 DECISION:
 //! User (Q866): "stop-first". User (Q864): a "Close source session" toggle, on by default. A dropped session that is working is stopped first, then its conversation is written and the new session started; the source closes last and only when the toggle is on. Any step that fails ends the handoff with its reason, so a failure never closes the source and nothing after a failed stop runs.

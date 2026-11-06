@@ -217,7 +217,14 @@ pub(crate) fn build_git_command(
                 command.with_env("GIT_LITERAL_PATHSPECS", "1")
             }
         }
-        "branch" => ProcessCommand::new("git", vec!["branch", "--show-current"], cwd),
+        // The reads the titlebar state polls (`branch`, `statusPorcelain`, `listUntracked`, `upstreamCounts`,
+        // `listRemotes`, `getOriginRemoteUrl`) start the real git, not Git for Windows' launcher
+        // (CDXC:Git 2026-11-04 in platform/git_program.rs; still one launcher start each on 2026-11-05).
+        "branch" => ProcessCommand::new(
+            crate::platform::git_program::git_for_reads(),
+            vec!["branch", "--show-current"],
+            cwd,
+        ),
         "checkout" => ProcessCommand::new(
             "git",
             vec![
@@ -386,17 +393,40 @@ pub(crate) fn build_git_command(
             ],
             cwd,
         ),
-        "diffNumstat" => ProcessCommand::new("git", vec!["diff", "--numstat", "HEAD"], cwd),
+        /*
+        CDXC:Git 2026-11-04 WHY:
+        The sidebar polls this for every visible project header. Without `--ignore-submodules=dirty`
+        git checks every submodule's work tree only to print `0 0 <path>` for one with uncommitted
+        work inside it, which adds no line: in a repository with nine submodules that was about three
+        times the CPU of the diff (0.38 s against 0.13 s, measured 2026-11-04, issues-1027/macos-perf).
+        A submodule moved to another commit still counts. `--no-optional-locks` keeps a poll from
+        rewriting the index (and from contending with the user's own git over its lock).
+        */
+        "diffNumstat" => ProcessCommand::new(
+            crate::platform::git_program::git_for_reads(),
+            vec![
+                "--no-optional-locks",
+                "diff",
+                "--numstat",
+                "--ignore-submodules=dirty",
+                "HEAD",
+            ],
+            cwd,
+        ),
         "diffNumstatZ" => {
             ProcessCommand::new("git", vec!["diff", "--no-ext-diff", "--numstat", "-z"], cwd)
                 .with_preserved_stdout_whitespace()
         }
-        "getOriginRemoteUrl" => {
-            ProcessCommand::new("git", vec!["remote", "get-url", "origin"], cwd)
-        }
-        "isInsideWorkTree" => {
-            ProcessCommand::new("git", vec!["rev-parse", "--is-inside-work-tree"], cwd)
-        }
+        "getOriginRemoteUrl" => ProcessCommand::new(
+            crate::platform::git_program::git_for_reads(),
+            vec!["remote", "get-url", "origin"],
+            cwd,
+        ),
+        "isInsideWorkTree" => ProcessCommand::new(
+            crate::platform::git_program::git_for_reads(),
+            vec!["rev-parse", "--is-inside-work-tree"],
+            cwd,
+        ),
         "isUntrackedFile" => ProcessCommand::new(
             "git",
             vec![
@@ -438,17 +468,29 @@ pub(crate) fn build_git_command(
                 cwd,
             )
         }
-        "listRemotes" => ProcessCommand::new("git", vec!["remote"], cwd),
+        "listRemotes" => ProcessCommand::new(
+            crate::platform::git_program::git_for_reads(),
+            vec!["remote"],
+            cwd,
+        ),
         "listUntracked" => ProcessCommand::new(
-            "git",
+            crate::platform::git_program::git_for_reads(),
             vec!["ls-files", "--others", "--exclude-standard", "-z"],
             cwd,
         ),
         "status" => ProcessCommand::new("git", vec!["status", "--short", "--branch"], cwd),
-        "statusPorcelain" => ProcessCommand::new("git", vec!["status", "--porcelain"], cwd)
-            .with_preserved_stdout_whitespace(),
-        "statusPorcelainZ" => ProcessCommand::new("git", vec!["status", "--porcelain", "-z"], cwd)
-            .with_preserved_stdout_whitespace(),
+        "statusPorcelain" => ProcessCommand::new(
+            crate::platform::git_program::git_for_reads(),
+            vec!["--no-optional-locks", "status", "--porcelain"],
+            cwd,
+        )
+        .with_preserved_stdout_whitespace(),
+        "statusPorcelainZ" => ProcessCommand::new(
+            crate::platform::git_program::git_for_reads(),
+            vec!["--no-optional-locks", "status", "--porcelain", "-z"],
+            cwd,
+        )
+        .with_preserved_stdout_whitespace(),
         "statusPorcelainZAll" => ProcessCommand::new(
             "git",
             vec!["status", "--porcelain=v1", "-z", "--untracked-files=all"],
@@ -477,7 +519,7 @@ pub(crate) fn build_git_command(
                 .with_env("GIT_LITERAL_PATHSPECS", "1")
         }
         "upstreamCounts" => ProcessCommand::new(
-            "git",
+            crate::platform::git_program::git_for_reads(),
             vec!["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
             cwd,
         ),

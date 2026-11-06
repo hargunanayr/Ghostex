@@ -34,7 +34,7 @@ pub(crate) fn start_session_auto_sleep_sweep(state: Arc<AppState>) {
         let started = Instant::now();
         let mut last_sweep: Option<Instant> = None;
         let mut last_settings: Option<AutoSleepSettings> = None;
-        let mut poll = tokio::time::interval(SETTINGS_POLL);
+        let mut poll = crate::ticks::steady_interval(SETTINGS_POLL);
         loop {
             tokio::select! {
                 _ = shutdown.recv() => break,
@@ -110,10 +110,16 @@ fn select_targets(state: &AppState, settings: AutoSleepSettings) -> Vec<(String,
     else {
         return Vec::new();
     };
+    // A coordinator's thread that still owes work stays awake (zmx/endpoint.rs declines it too).
     sessions_to_sleep(
         &snapshot,
         &|project_id, session_id| session_keep_awake::is_held_awake(project_id, session_id),
         settings,
         chrono::Utc::now().timestamp_millis(),
     )
+    .into_iter()
+    .filter(|(project_id, session_id)| {
+        !crate::coordinators::thread_owes_work(project_id, session_id)
+    })
+    .collect()
 }

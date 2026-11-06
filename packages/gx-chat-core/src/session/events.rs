@@ -142,6 +142,9 @@ fn route(state: &mut ChatState, event: &Event, context: &ChatContext) -> Vec<Eff
             if let Some(send_on_pick) = settings.send_on_pick {
                 state.core.send_on_pick_enabled = send_on_pick;
             }
+            if let Some(wait) = settings.answers_wait_for_idle {
+                state.core.answers_wait_for_idle = wait;
+            }
             if let Some(all_efforts) = settings.all_orchestrator_efforts {
                 state.core.all_orchestrator_efforts_enabled = all_efforts;
             }
@@ -149,8 +152,15 @@ fn route(state: &mut ChatState, event: &Event, context: &ChatContext) -> Vec<Eff
                 state.core.marked_heading_strength =
                     crate::transcript::marked_sections::heading_strength(strength);
             }
+            if let Some(strength) = settings.chat_text_strength {
+                state.core.chat_text_strength =
+                    crate::transcript::text_strength::text_strength(strength);
+            }
             if let Some(enabled) = settings.tool_cards {
                 crate::transcript::tool_card::set_enabled(&mut state.transcript_view, enabled);
+            }
+            if let Some(detailed) = settings.detailed_default {
+                state.transcript_view.detailed_default = detailed;
             }
             state.core.request_publish();
             Vec::new()
@@ -242,6 +252,9 @@ pub fn boot_read(
         if let Some(send_on_pick) = settings.send_on_pick {
             state.core.send_on_pick_enabled = send_on_pick;
         }
+        if let Some(wait) = settings.answers_wait_for_idle {
+            state.core.answers_wait_for_idle = wait;
+        }
         if let Some(all_efforts) = settings.all_orchestrator_efforts {
             state.core.all_orchestrator_efforts_enabled = all_efforts;
         }
@@ -249,8 +262,15 @@ pub fn boot_read(
             state.core.marked_heading_strength =
                 crate::transcript::marked_sections::heading_strength(strength);
         }
+        if let Some(strength) = settings.chat_text_strength {
+            state.core.chat_text_strength =
+                crate::transcript::text_strength::text_strength(strength);
+        }
         if let Some(enabled) = settings.tool_cards {
             crate::transcript::tool_card::set_enabled(&mut state.transcript_view, enabled);
+        }
+        if let Some(detailed) = settings.detailed_default {
+            state.transcript_view.detailed_default = detailed;
         }
     }
     let config = state.session.boot_config.clone().unwrap_or_default();
@@ -284,7 +304,7 @@ pub fn boot_read(
         if matching {
             apply_draft_agent_carriage(state, &cached.result);
         }
-        apply_authoritative(state, &cached.result, matching, context);
+        apply_authoritative(state, &cached.result, matching, false, context);
         state.messages.snapshot = Some(cached);
         state.messages.authoritative_revision += 1;
         // The host handed this fold over; writing it straight back would only restamp it.
@@ -392,7 +412,7 @@ fn frame_arrived(state: &mut ChatState, frame: &ChatFrame, context: &ChatContext
                             state.session.switchable_agents.clone(),
                         );
             }
-            apply_authoritative(state, &own, true, context);
+            apply_authoritative(state, &own, true, true, context);
             state.messages.snapshot = Some(folded);
             state.messages.authoritative_revision += 1;
             if moved || before != FrameIdentity::capture(state) {
@@ -566,6 +586,7 @@ fn rpc_settled(
                 return Vec::new();
             };
             arm_read_deadline(state, context);
+            crate::session::cloud_box::note_awake(state);
             if request.generation != state.messages.generation {
                 // The answer belongs to the previous conversation.
                 return Vec::new();
@@ -576,7 +597,7 @@ fn rpc_settled(
                 ReadKind::Page => page_read_settled(state, &read, &request, context),
             }
         }
-        RpcOutcome::Err { .. } => {
+        RpcOutcome::Err { code, .. } => {
             let Some(request) = state
                 .messages
                 .reads
@@ -586,6 +607,11 @@ fn rpc_settled(
             else {
                 return Vec::new();
             };
+            if crate::session::cloud_box::is_asleep(code.as_deref()) {
+                crate::session::cloud_box::read_refused_asleep(state, context, &request);
+                arm_read_deadline(state, context);
+                return Vec::new();
+            }
             let effects = fail_read(state, context, &request, !answered);
             arm_read_deadline(state, context);
             effects
@@ -657,7 +683,7 @@ fn apply_read_result(
     let moved = side_state_moves(state, read.lifecycle.as_ref(), true, &read.state)
         || carries_new_agents(read);
     apply_draft_agent_carriage(state, read);
-    apply_authoritative(state, read, true, context);
+    apply_authoritative(state, read, true, true, context);
     if moved || before != FrameIdentity::capture(state) {
         state.core.request_render();
     }

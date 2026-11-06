@@ -35,7 +35,7 @@ use super::inputs::{
 use super::machine_spaces::section_spaces_enabled;
 use super::model::SidebarViewModel;
 use super::spaces::{resolve_selected_space, space_for_group, SpacesState};
-use super::tags::matches_tag_filters;
+use super::tags::matches_session_filters;
 use super::view::{GroupView, SidebarView};
 
 /// The changes that put a row on screen. Every field is already compared against what the sidebar
@@ -232,8 +232,9 @@ pub fn reveal_plan(
         // `applyNativeSidebarReveal` asks the row itself, not why it was missing: a ticked filter
         // the row does not match is lifted whether or not something else also kept it out.
         clear_tag_filters: !inputs.ui.selected_tag_filters.is_empty()
-            && !matches_tag_filters(
+            && !matches_session_filters(
                 found.effective_tag.as_deref(),
+                found.on_cloud_box,
                 &inputs.ui.selected_tag_filters,
             ),
         select_space: space_for_reveal(core, inputs, group),
@@ -345,7 +346,9 @@ fn inputs_for_row_machine(
     inputs: &SidebarInputs,
     sidebar_session_id: &str,
 ) -> (Option<SidebarInputs>, bool) {
+    // The one-list sidebar draws every machine's rows where it is (`merged.rs`).
     let Some(machine_id) = row_machine_id(sidebar_session_id)
+        .filter(|_| !inputs.host.merge_machines)
         .filter(|machine_id| *machine_id != inputs.ui.selected_machine_id)
         .filter(|machine_id| {
             core.presentation()
@@ -387,6 +390,8 @@ struct Located {
     section: SectionId,
     /// The tag the row is filtered by.
     effective_tag: Option<String>,
+    /// The row runs on a Cloud Box, which the Cloud Box filter lets through.
+    on_cloud_box: bool,
     /// The folded coordinators above the row, nearest first.
     folded_by: Vec<String>,
 }
@@ -450,6 +455,7 @@ fn locate(
         storage_id: group.core.storage_id.clone(),
         section,
         effective_tag: row.and_then(|row| row.effective_tag.clone()),
+        on_cloud_box: row.is_some_and(|row| row.cloud_box.is_some()),
         folded_by,
     })
 }
@@ -474,6 +480,11 @@ fn space_of_group(core: &Core, inputs: &SidebarInputs, group: &GroupView) -> Opt
     let spaces = SpacesState::from_wire(
         &super::workspaces::window_spaces(core.presentation(), inputs, &machine)?.into_owned(),
     );
+    // The one list files every machine's projects by every machine's Spaces (`merged.rs`).
+    let spaces = match inputs.host.merge_machines && machine.is_local() {
+        true => super::merged::union_spaces_of(core.presentation(), inputs, spaces),
+        false => spaces,
+    };
     let section_key = inputs.ui.section_key();
     let selection = resolve_selected_space(
         &spaces,

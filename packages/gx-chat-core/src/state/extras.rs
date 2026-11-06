@@ -40,6 +40,8 @@ pub struct ExtrasState {
     pub save_markdown: SaveMarkdownState,
     /// The Session details panel (`extras/session_details/`).
     pub session_details: crate::extras::session_details::SessionDetailsState,
+    /// A coordinator's relayed thread approval cards: answers in flight and refusals.
+    pub relayed_approvals: crate::extras::relayed_approvals::RelayedApprovalsState,
     /// When the current transcript read started, which is what the loading stage counts from.
     pub loading_started_at_ms: Option<f64>,
     /// The stage the empty region is showing while a read runs: `blank`, `indicator` or `retry`.
@@ -84,8 +86,30 @@ pub struct PanelsState {
     pub threads_all_request: Option<(u64, String)>,
     /// The `openCoordinatorThread` in flight for a clicked thread row; a newer click replaces it.
     pub threads_open_request: Option<u64>,
+    /// The side chat call in flight (`extras::side_chats`): Bring back or Delete, and the side
+    /// chat it names.
+    pub side_chat_request: Option<(u64, crate::extras::side_chats::SideChatCall)>,
+    /// The secret request answers in flight (`extras::secret_requests`), by RPC id, and the
+    /// last refusal of each card by its id. Never the typed value.
+    pub secret_request_calls: std::collections::BTreeMap<u64, String>,
+    pub secret_request_errors: std::collections::BTreeMap<String, String>,
     /// The grouped background-task row is unfolded to its tasks; folded by default, per chat.
     pub background_tasks_open: bool,
+    /// The coordinator board's groups the reader folded or unfolded against their default (Done and
+    /// Ideas start folded), per chat (`extras::coordinator_board`).
+    pub board_toggled: std::collections::BTreeSet<String>,
+    /// The board's groups showing every row instead of the first few.
+    pub board_expanded: std::collections::BTreeSet<String>,
+    /// The board changes in flight (a row moved to Removed or restored), whose refusal is toasted.
+    pub board_change_requests: std::collections::BTreeSet<u64>,
+    /// The answer this client sent for each board card that asks something, by card key.
+    pub board_answers: std::collections::BTreeMap<String, String>,
+    /// Board answers being recorded with gxserver (op `answer`), by RPC id: the card's key, the
+    /// answer, and the message that goes once it is recorded.
+    pub board_answer_requests: std::collections::BTreeMap<u64, (String, String, String)>,
+    /// The row a board pill in the chat asked the board to show (`board:B4`), and how many times
+    /// one was clicked, so the renderers open the board and scroll to it once per click.
+    pub board_focus: Option<(String, u64)>,
 }
 
 impl Default for PanelsState {
@@ -99,7 +123,16 @@ impl Default for PanelsState {
             threads_all: None,
             threads_all_request: None,
             threads_open_request: None,
+            side_chat_request: None,
+            secret_request_calls: Default::default(),
+            secret_request_errors: Default::default(),
             background_tasks_open: false,
+            board_toggled: Default::default(),
+            board_expanded: Default::default(),
+            board_change_requests: Default::default(),
+            board_answers: Default::default(),
+            board_answer_requests: Default::default(),
+            board_focus: None,
         }
     }
 }

@@ -52,6 +52,9 @@ pub struct CefBrowser {
     motion_hidden: Cell<bool>,
     pub(crate) uses_system_page_appearance: bool,
     pub(crate) extension_bridge_installed: bool,
+    /// The surface the bridge was installed for, so outbound messages can check that the main
+    /// frame still shows that extension's page.
+    extension_bridge_surface: Option<ExtensionBridgeSurfaceSpec>,
     /// CDXC:Browser 2026-09-23 WHY:
     /// Remote reconnect disposes CEF surfaces while retaining their tabs. Mark app-owned disposal before releasing the native view so synchronous or deferred DoClose callbacks cannot turn that teardown into a user-requested tab close.
     app_initiated_close: StdRc<Cell<bool>>,
@@ -289,7 +292,7 @@ impl CefBrowser {
             find_handler,
             load_handler,
             project_workarea_bridge_event_handler,
-            extension_bridge_surface,
+            extension_bridge_surface.clone(),
             extension_bridge_event_handler,
             request_handler,
             permission_handler,
@@ -364,12 +367,28 @@ impl CefBrowser {
             motion_hidden: Cell::new(false),
             uses_system_page_appearance,
             extension_bridge_installed,
+            extension_bridge_surface: extension_bridge_surface
+                .filter(|_| extension_bridge_installed),
             app_initiated_close,
         })
     }
 
     pub fn extension_bridge_installed(&self) -> bool {
         self.extension_bridge_installed
+    }
+
+    /// Whether the main frame still shows the extension page the bridge was installed for.
+    ///
+    /// CDXC:Extensions 2026-10-25 WHY:
+    /// Inbound bridge messages and the bridge install already check the frame URL, but outbound context broadcasts and call answers were sent to whatever document the surface had navigated to, where a third-party page could define `__ghostexExtensionBridgeReceive` and read them (security audit 2026-10-25). Outbound dispatch now requires the same match.
+    pub fn extension_bridge_main_frame_matches(&self) -> bool {
+        let Some(surface) = self.extension_bridge_surface.as_ref() else {
+            return false;
+        };
+        let browser = self.browser.borrow();
+        browser.main_frame().is_some_and(|frame| {
+            surface.matches_url(&cef::CefString::from(&frame.url()).to_string())
+        })
     }
 
     pub fn identifier(&self) -> i32 {
@@ -883,11 +902,11 @@ pub(crate) fn cef_profile_cache_segment(profile: &str) -> Option<&str> {
         .then_some(profile)
 }
 
+/// CEF's DevTools port, or 0 for none.
+///
+/// CDXC:Browser 2026-10-25 DECISION:
+/// User (security audit, Q11): the port was always open on 127.0.0.1, so any local program could drive every Ghostex page; the browser skill now goes through gxserver (cef/shell/devtools_relay.rs). The port opens only for development: when a port variable names one (tooling and `cargo xtask` side-by-side runs set them), or when Settings > Debugging > Show debug UI controls was on at launch (then on 9334, inside the tooling's 9333-9343 scan range, or on a portable copy's own port from its port table). The GPUI-specific variable stays a more specific override so side-by-side runs can split ports.
 pub(crate) fn remote_debugging_port() -> i32 {
-    // Tooling (browser-use MCP, macOS app scripts) sets the shared
-    // GHOSTEX_CEF_REMOTE_DEBUGGING_PORT; the GPUI-specific name stays as a
-    // more-specific override so side-by-side runs can split ports. The
-    // default 9334 stays inside the tooling's 9333-9343 scan range.
     [
         "GHOSTEX_GPUI_CEF_REMOTE_DEBUGGING_PORT",
         "GHOSTEX_CEF_REMOTE_DEBUGGING_PORT",
@@ -899,8 +918,17 @@ pub(crate) fn remote_debugging_port() -> i32 {
             .and_then(|value| value.parse::<i32>().ok())
             .filter(|port| *port > 0)
     })
-    .or_else(|| ghostex_paths::portable::ports().map(|ports| i32::from(ports.cef_remote_debugging)))
-    .unwrap_or(9334)
+    // A portable copy's port table only says which port to use; like any install, it opens one
+    // only in debugging mode (review 2026-11-05: portable copies always opened it, with no token).
+    .or_else(|| {
+        crate::shared_settings::shared_sidebar_settings_snapshot()
+            .debugging_mode()
+            .then(|| {
+                ghostex_paths::portable::ports()
+                    .map_or(9334, |ports| i32::from(ports.cef_remote_debugging))
+            })
+    })
+    .unwrap_or(0)
 }
 
 pub(crate) fn register_native_view_browser(
@@ -938,9 +966,11 @@ pub(crate) fn unregister_native_view_browser(native_view: *mut c_void) {
     remove_pointer_focus_handler(native_view);
     remove_page_focus_handler(native_view);
 
-    CEF_BROWSERS_BY_NATIVE_VIEW.with(|browsers| {
-        browsers.borrow_mut().remove(&(native_view as usize));
-    });
+    let closed = CEF_BROWSERS_BY_NATIVE_VIEW
+        .with(|browsers| browsers.borrow_mut().remove(&(native_view as usize)));
+    if let Some(closed) = closed {
+        cef_devtools_relay_browser_closed(closed.identifier());
+    }
     KEYBOARD_ZOOM_CEF_NATIVE_VIEWS.with(|views| {
         views.borrow_mut().remove(&(native_view as usize));
     });

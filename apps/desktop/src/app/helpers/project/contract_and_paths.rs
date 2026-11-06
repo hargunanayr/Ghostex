@@ -333,6 +333,7 @@ pub(crate) fn project_editor_auto_sleep_duration(
         | TitlebarMode::BotFeed
         | TitlebarMode::GhostOverview
         | TitlebarMode::Changes
+        | TitlebarMode::SideChat
         | TitlebarMode::Work
         | TitlebarMode::Extension(_) => {
             return None;

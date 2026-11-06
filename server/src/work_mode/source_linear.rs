@@ -78,7 +78,7 @@ pub(crate) fn ticket_of_linear_issue(info: LinearIssueInfo) -> Ticket {
 const NO_LINEAR_KEY: &str = "Set a Linear API key first (Settings, or ghostex issues linear-key).";
 
 impl WorkSource for LinearSource {
-    fn name(&self) -> Cow<'static, str> {
+    fn name(&self, _scope: &TicketScope) -> Cow<'static, str> {
         Cow::Borrowed("Linear")
     }
 
@@ -112,6 +112,10 @@ impl WorkSource for LinearSource {
 
     fn team_of(&self, id: &str) -> Option<String> {
         id.split_once('-').map(|(team, _)| team.to_string())
+    }
+
+    fn borrows_other_projects_credentials(&self) -> bool {
+        true
     }
 
     fn parse_ref(&self, text: &str) -> Option<String> {
@@ -293,6 +297,7 @@ impl WorkSource for LinearSource {
                             ticket: ticket_of_list_issue(issue),
                             project_id: None,
                             repo: String::new(),
+                            workspace_id: None,
                         }))
                 }
                 Some(Err(error)) => list.errors.push(format!("Linear: {error}")),

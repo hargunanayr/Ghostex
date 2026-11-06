@@ -1252,4 +1252,48 @@ pub const GXSERVER_STORAGE_MIGRATIONS: &[Migration] = &[
         id: "0048_session_chat_resources",
         sql: include_str!("migrations/0048_session_chat_resources.sql"),
     },
+    Migration {
+        id: "0049_cloud_boxes",
+        sql: include_str!("migrations/0049_cloud_boxes.sql"),
+    },
+    Migration {
+        id: "0050_coordinator_close_threads",
+        sql: include_str!("migrations/0050_coordinator_close_threads.sql"),
+    },
+    Migration {
+        id: "0051_coordinator_remote_threads",
+        sql: include_str!("migrations/0051_coordinator_remote_threads.sql"),
+    },
+    Migration {
+        id: "0052_coordinator_remote_thread_message",
+        sql: include_str!("migrations/0052_coordinator_remote_thread_message.sql"),
+    },
+    Migration {
+        id: "0053_coordinator_remote_thread_activity",
+        sql: include_str!("migrations/0053_coordinator_remote_thread_activity.sql"),
+    },
+    Migration {
+        id: "0054_work_ticket_titles",
+        sql: include_str!("migrations/0054_work_ticket_titles.sql"),
+    },
+    Migration {
+        id: "0055_coordinator_board",
+        sql: include_str!("migrations/0055_coordinator_board.sql"),
+    },
+    Migration {
+        id: "0056_coordinator_board_removed",
+        sql: include_str!("migrations/0056_coordinator_board_removed.sql"),
+    },
+    Migration {
+        id: "0057_coordinator_board_answers",
+        sql: include_str!("migrations/0057_coordinator_board_answers.sql"),
+    },
+    Migration {
+        id: "0058_coordinator_board_answered",
+        sql: include_str!("migrations/0058_coordinator_board_answered.sql"),
+    },
+    Migration {
+        id: "0059_paired_device_api_token",
+        sql: include_str!("migrations/0059_paired_device_api_token.sql"),
+    },
 ];

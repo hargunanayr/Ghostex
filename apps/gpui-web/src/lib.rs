@@ -50,6 +50,7 @@ mod cef;
 mod fold_motion;
 #[allow(dead_code)]
 mod ghostty_vt;
+mod host_name;
 mod hotkey_label;
 /// The desktop's notification feed reads a bridge the browser build does not have; the bell stays hidden, so its state is always empty.
 #[allow(dead_code)]
@@ -194,6 +195,15 @@ pub fn run() -> Result<(), JsValue> {
             .expect("Failed to load the platform fonts");
         app::helpers::apply_gpui_component_theme(cx);
         cx.global_mut::<Theme>().mono_font_family = "JetBrains Mono".into();
+        // Fenced code reads this through the base theme: unsynced, it asked for a family the page
+        // doesn't have, drew proportional and followed a picked app font.
+        Theme::sync_base(cx);
+        // A page has no system fonts: `?settings=` can only pick one of the faces it bundles, and
+        // any other name leaves it on its default fonts.
+        ui_fonts::apply_fonts(
+            shared_settings::shared_sidebar_settings_snapshot().object(),
+            cx,
+        );
 
         cx.open_window(WindowOptions::default(), |window, cx| {
             let shell = cx.new(|cx| {

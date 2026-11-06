@@ -16,6 +16,7 @@ fn opens_in_browser(kind: GpuiAppModalKind) -> bool {
     matches!(
         kind,
         GpuiAppModalKind::RenameSession
+            | GpuiAppModalKind::ExportTranscriptResult
             | GpuiAppModalKind::SessionNote
             | GpuiAppModalKind::DelayedSend
             | GpuiAppModalKind::AgentHooksRequired
@@ -78,6 +79,9 @@ impl GhostexGpuiApp {
     ) {
         match kind {
             GpuiAppModalKind::RenameSession => self.open_gpui_rename_session_modal(message, cx),
+            GpuiAppModalKind::ExportTranscriptResult => {
+                self.open_gpui_export_transcript_modal(message, cx)
+            }
             GpuiAppModalKind::SessionNote => self.open_gpui_session_note_modal(message, cx),
             GpuiAppModalKind::DelayedSend => self.open_gpui_delayed_send_modal(message, cx),
             GpuiAppModalKind::AgentHooksRequired => {

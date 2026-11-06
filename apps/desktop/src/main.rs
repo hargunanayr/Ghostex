@@ -20,6 +20,7 @@ mod component_store;
 mod fold_motion;
 mod ghostty_kit;
 mod ghostty_vt;
+mod host_name;
 mod hotkey_label;
 #[cfg(target_os = "linux")]
 mod linux_hyprland;
@@ -31,6 +32,8 @@ mod navigation_history;
 mod notification_feed;
 mod plugins_modal;
 mod profiling;
+#[cfg(any(not(target_os = "macos"), test))]
+mod session_link_handoff;
 mod shared_settings;
 mod support_logs;
 mod terminal_chat_claim;
@@ -52,6 +55,8 @@ mod windows_single_instance;
 mod windows_terminal_backend;
 #[cfg(target_os = "windows")]
 mod windows_updater;
+#[cfg(any(target_os = "windows", test))]
+mod windows_url_scheme;
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -211,12 +216,21 @@ fn main() {
             env::set_var("PATH", gpui_startup_user_tool_path(current_path.as_deref()));
         }
     }
+    // Windows and Linux start a new process for a ghostex://session link (session_link_handoff.rs).
+    #[cfg(not(target_os = "macos"))]
+    let launch_links = session_link_handoff::links_from_launch_args();
     // A second launch brings the running Ghostex forward and exits (see
     // windows_single_instance.rs for why this no longer waits for CEF).
     #[cfg(target_os = "windows")]
-    if windows_single_instance::hand_off_to_running_instance() {
+    if windows_single_instance::hand_off_to_running_instance(&launch_links) {
         return;
     }
+    #[cfg(target_os = "linux")]
+    if session_link_handoff::hand_off_to_running_app(&launch_links) {
+        return;
+    }
+    #[cfg(target_os = "windows")]
+    thread::spawn(windows_url_scheme::register_at_launch);
     // Install missing `ghostex`/`gx` PATH wrappers and refresh stale
     // Ghostex-owned ones off the main thread so filesystem probing cannot
     // delay first paint, and only after the PATH normalization above so the
@@ -270,6 +284,9 @@ fn main() {
     // Before anything reads or writes terminal settings, so the first config Ghostex
     // terminals load is the copied one.
     shared_settings::ghostty_config_migration::migrate_terminal_config_from_ghostty_once();
+    // Dictate's old default chord moves to Ctrl+Alt+Space once (voice_agent/dictate_hotkey.rs).
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    app::voice_agent::dictate_hotkey::move_old_default_chord_once();
     cef::prepare_application();
     #[cfg(target_os = "macos")]
     reconcile_gpui_managed_ghostty_config();
@@ -289,6 +306,8 @@ fn main() {
     #[cfg(target_os = "macos")]
     application.on_open_urls(queue_gpui_os_integration_urls);
     application.run(move |cx| {
+        #[cfg(not(target_os = "macos"))]
+        session_link_handoff::start_receiving(launch_links, cx);
         #[cfg(target_os = "windows")]
         cef::register_windows_shutdown(cx);
         gpui_component::init(cx);
@@ -312,6 +331,22 @@ fn main() {
         crate::app::window::frosted_host::register_frosted_tooltip_root_plugin(cx);
         crate::app::window::modal_popover_host::install_frosted_modal_popover_host();
         apply_gpui_component_theme(cx);
+        ui_fonts::apply_fonts(
+            shared_settings::shared_sidebar_settings_snapshot().object(),
+            cx,
+        );
+        // A saved Ghostty list draws in its first installed entry, which only this read can tell.
+        let read_fonts = ui_fonts::read_installed_families(cx);
+        cx.spawn(async move |cx| {
+            read_fonts.await;
+            cx.update(|cx| {
+                ui_fonts::apply_fonts(
+                    shared_settings::shared_sidebar_settings_snapshot().object(),
+                    cx,
+                );
+            });
+        })
+        .detach();
         #[cfg(target_os = "macos")]
         {
             let source_id = app_icon::source_id_from_settings(
@@ -372,7 +407,6 @@ fn main() {
         // surface has focus.
         crate::app::shell_hotkeys::gpui_bind_hotkeys_from_settings(cx);
         gpui_prewarm_ghostex_editor_daemon();
-        crate::app::helpers::note_main_window_background(window_glass_background_appearance());
         cx.on_action(|_: &NewGhostexGpuiWindow, cx| {
             // A key press dispatches while its window is mid-update; the new window reads that
             // window's frame and project, so it opens on the next turn.

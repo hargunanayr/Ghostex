@@ -503,6 +503,7 @@ impl ChatOptionMenu {
         #[cfg(target_os = "linux")]
         let owner = self.source;
         let accounts_customize = rows.first().is_some_and(|row| row["customize"] == true);
+        let fade_in = rows.first().is_some_and(accounts_row_opens_animated);
         self.opening = true;
         // Under window glass the menu's window blurs what is behind it, rounded to the card.
         let glass = crate::app::helpers::window_glass_active();
@@ -567,6 +568,12 @@ impl ChatOptionMenu {
                         crate::app::window::attach_gpui_app_modal_window_to_main_window(
                             window, parent,
                         );
+                        if fade_in {
+                            crate::app::window::popup_frame::fade_in_popup_window(
+                                window,
+                                cx.reduce_motion(),
+                            );
+                        }
                         let panel = cx.new(|cx| {
                             let focus = cx.focus_handle();
                             focus.focus(window, cx);
@@ -957,4 +964,10 @@ mod tests {
             assert!(!row_opens_key_window(&json!({ "type": kind })));
         }
     }
+}
+
+/// The Accounts & limits panel fades in when it opens. `refit_accounts` reopening it taller carries
+/// `customize` in its row, and that is the same panel growing, not an open.
+pub(super) fn accounts_row_opens_animated(row: &Value) -> bool {
+    row["accounts"].is_object() && row.get("customize").is_none()
 }

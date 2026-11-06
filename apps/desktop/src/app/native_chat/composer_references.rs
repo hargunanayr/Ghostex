@@ -9,6 +9,7 @@ use std::{ops::Range, time::Duration};
 const ICON_INSET_REM: f32 = 0.1;
 const ROOT_FONT_PX: f32 = 16.0;
 const COMPOSER_FONT_PX: f32 = 14.0;
+const SESSION_ICON_PX: f32 = 12.0;
 
 /// One markdown reference in the draft, resolved to the draft's byte offsets.
 ///
@@ -82,7 +83,12 @@ pub(super) fn replacements(
             let color = markdown_links::composer_color(&reference.kind, appearance)?;
             // A mention of another session (gx-chat-core `session_mentions.rs`) leads with that
             // session's agent logo, as its pill does in the transcript.
+            let mut icon_size = COMPOSER_FONT_PX * markdown_links::VISUAL.icon_em;
             let icon = if reference.kind == "session" {
+                // An agent logo fills its whole box where the outline icons above keep a margin,
+                // so at the full 1em it touched the title. It draws at the sent pill's 12px
+                // (`session_pill_link`), which leaves the same gap before the title.
+                icon_size = SESSION_ICON_PX;
                 let known = crate::app::gx_chat::session_directory::find(&reference.path);
                 let agent = known
                     .as_ref()
@@ -95,6 +101,10 @@ pub(super) fn replacements(
                 )
                 .0
                 .to_string()
+            } else if reference.kind == "board" {
+                // A board item leads with the Board pill's icon, as its pill does when sent.
+                icon_size = SESSION_ICON_PX;
+                markdown_links::BOARD_ICON.to_string()
             } else {
                 format!("chat-references/{}.svg", reference.kind)
             };
@@ -103,9 +113,7 @@ pub(super) fn replacements(
                     .color(color)
                     .icon(
                         icon,
-                        gpui::px(
-                            COMPOSER_FONT_PX * appearance.scale * markdown_links::VISUAL.icon_em,
-                        ),
+                        gpui::px(icon_size * appearance.scale),
                         gpui::px(ICON_INSET_REM * ROOT_FONT_PX * appearance.scale),
                     )
                     // No pill changes the cursor (see native_chat/cursor.rs): a reference inside
@@ -126,6 +134,14 @@ pub(super) fn replacements(
                         )
                         .map(|comment| comment.tooltip())
                         .unwrap_or_default()
+                    } else if reference.kind == "board" {
+                        format!(
+                            "{} on the board",
+                            reference
+                                .path
+                                .strip_prefix("board:")
+                                .unwrap_or(&reference.path)
+                        )
                     } else {
                         reference.path.clone()
                     }),

@@ -128,7 +128,12 @@ pub(crate) fn dispatch(
                 "xswap"
             },
         )
-        .ok_or_else(|| DomainStateError::bad_request("Install the account login helper first."))?;
+        .ok_or_else(|| {
+            DomainStateError::bad_request(format!(
+                "Install {} in Settings > Accounts first.",
+                helpers::tool_label(provider.helper())
+            ))
+        })?;
         let mut command = CommandBuilder::new(binary);
         let result_dir = if provider == Provider::Claude {
             Some(
@@ -151,17 +156,28 @@ pub(crate) fn dispatch(
             }
         } else if let Some(selector) = selector {
             command.args(["login", selector]);
-        } else {
-            // xswap checks the browser login against the email it was given and prompts for one
-            // when it has none, which a Settings login cannot answer.
-            let email = email
-                .ok_or_else(|| DomainStateError::bad_request("Enter the Codex account's email."))?;
+        } else if let Some(email) = email {
             command.args([
                 "add",
                 "--login",
                 "--share-history",
                 "--email",
                 email,
+                "--json",
+            ]);
+        } else {
+            // CDXC:AgentProviders 2026-11-05 DECISION:
+            // User picked "No email, like Claude" for adding a Codex account: Codex Swap 0.3.6 saves whichever account the browser signs in to (`--any-account`) and still refuses one that is already saved. Settings updates an older Codex Swap first (`codexSwapNeedsUpdate` on the helper row). Supersedes the 2026-10-14 rule that Add account asked for a new Codex account's email.
+            if super::helper_tools::codex_swap_needs_update_to_add(&state.paths.home_dir) {
+                return Err(DomainStateError::bad_request(
+                    "Update Codex Swap to add a Codex account, then try again.",
+                ));
+            }
+            command.args([
+                "add",
+                "--login",
+                "--share-history",
+                "--any-account",
                 "--json",
             ]);
         }
@@ -222,7 +238,10 @@ pub(crate) fn dispatch(
         }
         let state = state.clone();
         let selector = selector.map(str::to_string);
+        // GitHub #410: `register` updates sessions, and a session update starts the chat follower with `tokio::spawn`, which panics on a plain thread (poisoning `accounts.mutations`), so the login thread runs inside the caller's runtime.
+        let runtime = tokio::runtime::Handle::try_current().ok();
         std::thread::spawn(move || {
+            let _runtime = runtime.as_ref().map(|runtime| runtime.enter());
             let output_job = job.clone();
             let output = std::thread::spawn(move || read_output(reader, output_job));
             let exit = child.wait();
@@ -376,7 +395,7 @@ fn wrong_account(transcript: &str) -> Option<String> {
 const RESULT_FILE: &str = "result.json";
 const LOGIN_INCOMPLETE: &str = "Login did not complete. Check the terminal details and try again.";
 const HELPER_SILENT: &str =
-    "The helper did not report the saved account. Update the helper and try again.";
+    "The sign-in finished, but the account wasn't saved. Update it in Settings > Accounts and try again.";
 
 /// A Claude login's outcome from the helper's result file: the saved slot, or the reason it
 /// failed. The terminal screen is never read for it.
@@ -538,10 +557,13 @@ mod tests {
 
     #[test]
     fn failed_login_shows_the_helpers_reason() {
-        let report = json!({"ok":false,"error":"cswap could not save this login. Check the message above and try again."});
+        let report = json!({"ok":false,"error":"Claude Swap could not save this login. Check the message above and try again."});
         assert_eq!(
             claude_outcome(false, Some(&report), None),
-            Err("cswap could not save this login. Check the message above and try again.".into())
+            Err(
+                "Claude Swap could not save this login. Check the message above and try again."
+                    .into()
+            )
         );
     }
 

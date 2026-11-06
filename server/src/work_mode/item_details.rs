@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Map, Value};
 
+use crate::domain::DomainStateError;
 use crate::paths::GxserverPaths;
 use crate::session_git_status::{gh_cli_is_available, run_gh_command};
 use crate::team_sync::{team_for_page, team_ticket_facts};
@@ -18,8 +19,8 @@ use super::*;
 
 /// Re-opening a ticket within this long shows what was read a moment ago.
 const DETAIL_TTL: Duration = Duration::from_secs(45);
-const MAX_COMMENTS: usize = 30;
-const MAX_TEXT_CHARS: usize = 20_000;
+pub(crate) const MAX_COMMENTS: usize = 30;
+pub(crate) const MAX_TEXT_CHARS: usize = 20_000;
 
 /// The item a request names: a source's ticket, or a PR (the code host's).
 #[derive(Clone, Debug, PartialEq)]
@@ -95,11 +96,28 @@ pub(crate) fn cached_detail(
     value
 }
 
-/// The scope a source reads the details with: the project's own, or, when the source cannot read
-/// with the project's credentials (no Linear key of its own), the first project's it can read
-/// with, in the project's checkout.
-fn source_scope<'a>(
-    source: WorkSourceId,
+/// `key`'s cached details while they are fresh and found the ticket; never a failure.
+pub(crate) fn kept_detail(key: &str) -> Option<Value> {
+    detail_cache().lock().ok().and_then(|cache| {
+        cache
+            .get(key)
+            .filter(|cached| cached.fetched_at.elapsed() < DETAIL_TTL)
+            .and_then(|cached| cached.value.clone().ok())
+    })
+}
+
+/// Drops `key`'s cached details, for an answer only its own caller may see.
+pub(crate) fn forget_detail(key: &str) {
+    if let Ok(mut cache) = detail_cache().lock() {
+        cache.remove(key);
+    }
+}
+
+/// The scope a source reads the details with, in the project's checkout: the project's own, or,
+/// for a source that borrows credentials (`borrows_other_projects_credentials`) and cannot read
+/// with the project's (no Linear key of its own), the first project's it can read with.
+pub(crate) fn source_scope<'a>(
+    rules: &dyn WorkSource,
     project: Option<&'a WorkProjectInput>,
     projects: &'a [WorkProjectInput],
     cwd: Option<&'a str>,
@@ -108,19 +126,50 @@ fn source_scope<'a>(
         cwd,
         ..owner.ticket_scope()
     };
-    let rules = work_source(source);
     match project {
-        Some(own) => project
+        Some(own) if rules.borrows_other_projects_credentials() => project
             .into_iter()
             .chain(projects)
             .map(in_checkout)
             .find(|scope| rules.can_read(scope))
             .unwrap_or_else(|| in_checkout(own)),
+        Some(own) => in_checkout(own),
         None => TicketScope {
             cwd,
             ..TicketScope::default()
         },
     }
+}
+
+/// Why a ticket command's ticket isn't read: no project in a workspace that pins the command.
+pub(crate) const COMMAND_DETAILS_REFUSAL: &str =
+    "Pass the projectId of a project whose workspace uses this ticket command.";
+
+/// The project a ticket command's ticket is read in: the request's `projectId`, or, for a row that
+/// names no project, the first of `projects` in the workspace its `sourceKey` names; either way in
+/// a workspace that pins the command, since another workspace can pin the same id and answer the
+/// same ticket ids.
+pub(crate) fn command_ticket_project(
+    projects: &[WorkProjectInput],
+    source: WorkSourceId,
+    project_id: Option<&str>,
+    row_source_key: Option<&str>,
+) -> Result<String, DomainStateError> {
+    let source_id = source.as_wire();
+    let input = match (project_id, row_source_key) {
+        (Some(id), _) => projects.iter().find(|input| input.project_id == id),
+        (None, Some(key)) => projects
+            .iter()
+            .find(|input| source_key(&input.workspace_id, source_id) == key),
+        (None, None) => None,
+    };
+    input
+        .filter(|input| {
+            workspace_command(&input.workspace_id)
+                .is_some_and(|command| command.source_id == source_id)
+        })
+        .map(|input| input.project_id.clone())
+        .ok_or_else(|| DomainStateError::bad_request(COMMAND_DETAILS_REFUSAL))
 }
 
 /// Everything the details page shows. `projects` are the work-mode projects the window shows,
@@ -135,14 +184,22 @@ pub(crate) fn read_work_item(
 ) -> Value {
     let list = build_work_list(projects, plan);
     // A worktree project shares its repo with the main checkout, whose row the list holds.
-    let wanted_repo = project_id
-        .and_then(|id| projects.iter().find(|input| input.project_id == id))
-        .and_then(|input| input.repo.clone());
+    let wanted_project =
+        project_id.and_then(|id| projects.iter().find(|input| input.project_id == id));
+    let wanted_repo = wanted_project.and_then(|input| input.repo.clone());
+    let wanted_workspace = wanted_project.map(|input| input.workspace_id.as_str());
     let wanted_key_matches = |item: &Value| match item_ref {
         WorkItemRef::Ticket(ticket) => {
             item.get("source").and_then(Value::as_str) == Some(ticket.source.as_wire())
                 && item.get("ticketId").and_then(Value::as_str) == Some(ticket.id.as_str())
                 && match &wanted_repo {
+                    // A ticket command's row is its workspace's (`row_key`): another workspace can
+                    // pin the same id and answer the same ticket ids.
+                    _ if matches!(ticket.source, WorkSourceId::Command(_)) => wanted_workspace
+                        .is_none_or(|workspace_id| {
+                            item.get("sourceKey").and_then(Value::as_str)
+                                == Some(source_key(workspace_id, ticket.source.as_wire()).as_str())
+                        }),
                     // A Linear key names one ticket wherever it is worked.
                     _ if !work_source(ticket.source).keys_name_a_repo() => true,
                     Some(repo) => {
@@ -175,7 +232,8 @@ pub(crate) fn read_work_item(
         .or_else(|| projects.first());
     let cwd = project.and_then(|input| input.path.clone());
     let gh = gh_cli_is_available();
-    let scope_for = |source: WorkSourceId| source_scope(source, project, projects, cwd.as_deref());
+    let scope_for =
+        |source: WorkSourceId| source_scope(work_source(source), project, projects, cwd.as_deref());
 
     // The PR to read: the item's folded one, or the request's own.
     let mut pull_request_selector = item
@@ -200,6 +258,7 @@ pub(crate) fn read_work_item(
         WorkItemRef::PullRequest(selector) => pull_request_tickets_known_locally(
             selector,
             project.and_then(|input| input.repo.as_deref()),
+            project.map(|input| input.workspace_id.as_str()),
             item.as_ref(),
             projects,
         ),
@@ -216,6 +275,8 @@ pub(crate) fn read_work_item(
             WorkItemRef::Ticket(ticket) => match ticket.source {
                 WorkSourceId::Linear => Some(ticket.id.clone()),
                 WorkSourceId::Github => repo.map(|repo| format!("{repo}#{}", ticket.id)),
+                // A team workspace never uses a ticket command.
+                WorkSourceId::Command(_) => None,
             },
             WorkItemRef::PullRequest(selector) => pull_request_url_parts(selector)
                 .map(|(repo, number)| format!("{}#{number}", repo.to_ascii_lowercase()))
@@ -260,7 +321,7 @@ pub(crate) fn read_work_item(
                 })
             });
         if let (Some(task), WorkItemRef::Ticket(wanted)) = (ticket_task, ticket_ref) {
-            let name = work_source(wanted.source).name();
+            let name = work_source(wanted.source).name(&scope_for(wanted.source));
             match task
                 .join()
                 .unwrap_or_else(|_| Err(format!("{name} read failed.")))
@@ -305,7 +366,8 @@ pub(crate) fn read_work_item(
     });
 
     if let (WorkItemRef::PullRequest(_), Some(pr)) = (item_ref, pull_request.as_ref()) {
-        let known_keys: Vec<(WorkSourceId, Vec<String>)> = WorkSourceId::BUILT_IN
+        let known_keys: Vec<(WorkSourceId, Vec<String>)> = plan
+            .sources()
             .into_iter()
             .map(|source| {
                 (
@@ -314,11 +376,12 @@ pub(crate) fn read_work_item(
                 )
             })
             .collect();
-        for ticket in pull_request_branch_tickets(pr, &known_keys) {
+        let tracker = project.map_or(WorkSourceId::Github, |input| input.tracker);
+        for ticket in pull_request_branch_tickets(pr, &known_keys, tracker) {
             push_ticket(&mut pr_tickets, ticket);
         }
         if let Some(url) = pr.get("url").and_then(Value::as_str) {
-            for source in WorkSourceId::BUILT_IN {
+            for source in plan.sources() {
                 let source_rules = work_source(source);
                 let scope = scope_for(source);
                 if !source_rules.can_read(&scope) {
@@ -344,7 +407,7 @@ pub(crate) fn read_work_item(
                 if source.can_read(&scope) {
                     match source.read_detail(&scope, &first.id, force) {
                         Ok(value) => ticket = Some(value),
-                        Err(error) => errors.push(format!("{}: {error}", source.name())),
+                        Err(error) => errors.push(format!("{}: {error}", source.name(&scope))),
                     }
                 }
             }
@@ -390,7 +453,8 @@ pub(crate) fn read_work_item(
         for attachment in attachments {
             if let Some(url) = attachment.get("url").and_then(Value::as_str) {
                 texts.push(url.to_string());
-                if !is_github_pull_request_url(url) && media_embed(url).is_none() {
+                // The PR itself shows on its own; anything else stays a plain link.
+                if canonical_github_pull_request_url(url).is_none() && media_embed(url).is_none() {
                     links.push(attachment.clone());
                 }
             }
@@ -648,7 +712,8 @@ fn team_flow_facts(
     }
 }
 
-fn cut(text: &str, limit: usize) -> String {
+/// `text` cut to `limit` characters, with an ellipsis when it was longer.
+pub(crate) fn cut(text: &str, limit: usize) -> String {
     match text.char_indices().nth(limit) {
         Some((index, _)) => format!("{}…", &text[..index]),
         None => text.to_string(),
@@ -696,11 +761,11 @@ fn linear_issue_detail_of(identifier: &str, body: &Value) -> Result<Value, Strin
                 .collect()
         })
         .unwrap_or_default();
-    let pull_request_urls: Vec<&str> = attachments
-        .iter()
-        .filter_map(|attachment| attachment.get("url").and_then(Value::as_str))
-        .filter(|url| is_github_pull_request_url(url))
-        .collect();
+    let pull_request_urls = canonical_github_pull_request_urls(
+        attachments
+            .iter()
+            .filter_map(|attachment| attachment.get("url").and_then(Value::as_str)),
+    );
     let comments: Vec<Value> = issue
         .pointer("/comments/nodes")
         .and_then(Value::as_array)

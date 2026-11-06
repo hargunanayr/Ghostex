@@ -54,7 +54,8 @@ pub(crate) fn workspace_window_options(
 ) -> WindowOptions {
     WindowOptions {
         window_bounds: Some(window_bounds),
-        window_background: window_glass_background_appearance(),
+        // Opens where glass can be switched live (CDXC:Theming 2026-11-02 in helpers/window_glass.rs).
+        window_background: live_glass_window_creation_background(),
         display_id,
         window_min_size: Some(size(
             px(GPUI_WINDOW_FRAME_MIN_WIDTH),
@@ -80,12 +81,15 @@ pub(crate) fn workspace_window_options(
         35px Search row while the sidebar is docked and the 36px work area header while it is
         collapsed, and both centre their own contents near y = 18. At the old y = 8 the lights
         sat three and a half pixels above everything beside them in both states; 11.5 puts a
-        12px light on that same centreline.
+        12px light on that same centreline. With the work area frame on, both rows start one
+        gutter lower and the card one gutter in, and the lights move down and in with them
+        (`workspace_traffic_light_position`); a window already open follows a change of the
+        setting at once (`sync_work_area_frame_traffic_lights`).
         */
         titlebar: Some(gpui::TitlebarOptions {
             title: Some(TITLEBAR_PROJECT_LABEL_FALLBACK.into()),
             appears_transparent: true,
-            traffic_light_position: Some(gpui::point(px(11.0), px(11.5))),
+            traffic_light_position: Some(crate::app::helpers::workspace_traffic_light_position()),
         }),
         // See `window_drag_region`: the top band holds draggable tabs, so the app, not AppKit,
         // decides which drags there move the window.
@@ -333,6 +337,7 @@ pub(crate) fn open_workspace_window(
             cx.observe_window_activation(window, |app, window, cx| {
                 if !window.is_window_active() {
                     app.voice_agent_window_deactivated(cx);
+                    app.dictate_hotkey_window_deactivated(window, cx);
                     app.close_gpui_titlebar_popup(None, window, cx);
                     /*
                     CDXC:Sidebar 2026-08-02:

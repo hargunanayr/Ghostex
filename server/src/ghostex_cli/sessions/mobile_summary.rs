@@ -654,7 +654,7 @@ fn to_mobile_custom_session_tags(tags_state: Option<&Value>) -> Option<Value> {
 fn to_mobile_session_summary(session: &Value) -> Value {
     let s = |key: &str| session.get(key);
     let mut map = Map::new();
-    // CDXC:Drafts 2026-09-15 SEE-ALSO: packages/shared/session-drafts.ts (deleted 2026-10-01) and apps/mobile/app/src/contract/sessionDrafts.ts need the draft marker, composer-text flag and creation clock to move unsent sessions into Drafts after 10 minutes.
+    // CDXC:Drafts 2026-11-02 SEE-ALSO: apps/mobile/app/src/contract/sessionDrafts.ts and draftArrivals.ts need the draft marker and creation clock to put every unsent session into Drafts and to open Drafts when a new one lands there (packages/gx-core/src/sidebar_view/draft_arrivals.rs); the composer-text flag draws the row's draft dot.
     insert_js(&mut map, "createdAt", &[s("createdAt")]);
     insert_js(&mut map, "isDraft", &[s("isDraft")]);
     insert_js(&mut map, "hasComposerDraft", &[s("hasComposerDraft")]);
@@ -727,6 +727,8 @@ fn to_mobile_session_summary(session: &Value) -> Value {
     insert_non_null(&mut map, "links", s("links"));
     // CDXC:ClaudeCloud 2026-10-23 WHY: the same second-whitelist trap: the phone's row needs the Claude cloud record (state, claude.ai link) to mark the row and open the session's page on a tap.
     insert_non_null(&mut map, "claudeCloud", s("claudeCloud"));
+    // CDXC:CloudBoxes 2026-11-02 WHY: the same second-whitelist trap: the phone's row draws the ☁ badge of a session on a Cloud Box from it.
+    insert_non_null(&mut map, "cloudBox", s("cloudBox"));
     /*
      * CDXC:SessionChat 2026-08-21-b:
      * The phone's session-row queue badge reads these two. This compactor is a
@@ -834,6 +836,7 @@ fn to_mobile_session_summary(session: &Value) -> Value {
         "modelSelectionFailure",
         &[s("modelSelectionFailure")],
     );
+    insert_js(&mut map, "sendFailure", &[s("sendFailure")]);
     insert_js(
         &mut map,
         "closeAfterDoneDeadlineAt",

@@ -166,6 +166,7 @@ pub(crate) struct NativeChatView {
     pub(crate) answer_input: Option<(String, Entity<TextareaState>)>,
     pub(crate) answer_subscription: Option<Subscription>,
     pub(super) terminal_dialog_input: Option<super::terminal_dialog::TerminalDialogInput>,
+    pub(super) secret_request_inputs: super::secret_request::SecretRequestInputs,
     pub(super) terminal_dialog_key_focus: gpui::FocusHandle,
     pub(super) terminal_picker_input: Option<super::terminal_picker::TerminalPickerInput>,
     pub(crate) note_input: Option<Entity<TextareaState>>,
@@ -196,14 +197,14 @@ pub(crate) struct NativeChatView {
     pub(super) resource_modal_closing: bool,
     /// The Session details panel: wanted, docked or floating (session_details/).
     pub(crate) session_details: super::session_details::SessionDetailsView,
+    /// A coordinator's board: open, docked or floating (coordinator_board.rs).
+    pub(crate) board: super::coordinator_board::CoordinatorBoardView,
     pub(super) files_links_closing: bool,
     pub(super) files_links_jump_revision: u64,
     /// The question jump this pane last scrolled to (`None` before its first document), and the
     /// highlight on the question it landed on (open_questions.rs).
     pub(super) open_question_jump_revision: Option<u64>,
     pub(super) question_flash: Option<super::open_questions::QuestionFlash>,
-    /// The "Previous question" pill's attention ping (question_ping.rs).
-    pub(super) question_ping: super::question_ping::QuestionPing,
     /// The ? pill's question list: its hover and folded sections (questions_list.rs).
     pub(super) question_list: super::questions_list::QuestionList,
     /// The find the row being drawn gives its text views, set only while a searched row is drawn
@@ -228,6 +229,11 @@ pub(crate) struct NativeChatView {
     /// The worktree tray's project search, while it is open.
     pub(super) draft_project_picker: Option<super::draft_project_picker::DraftProjectPicker>,
     pub(super) draft_project_chip_bounds: std::rc::Rc<std::cell::Cell<gpui::Bounds<gpui::Pixels>>>,
+    pub(super) draft_machine_chip_bounds: std::rc::Rc<std::cell::Cell<gpui::Bounds<gpui::Pixels>>>,
+    /// The new chat bar's where and detail parts, which their menus open from (`worktree_tray.rs`).
+    pub(super) worktree_tray_where_bounds: std::rc::Rc<std::cell::Cell<gpui::Bounds<gpui::Pixels>>>,
+    pub(super) worktree_tray_detail_bounds:
+        std::rc::Rc<std::cell::Cell<gpui::Bounds<gpui::Pixels>>>,
     pub(crate) draft_revision: u64,
     pub(crate) draft_id: String,
     /// A send left this composer and has not settled; Enter does not wait for it (the core holds
@@ -258,6 +264,12 @@ pub(crate) struct NativeChatView {
     /// The composer's dictation session, made the first time the reader presses Dictate.
     pub(crate) dictation: super::dictation::Dictation,
     pub(crate) list: gpui::ListState,
+    /// Set while a transcript field has focus: whether tail following resumes when it leaves (scroll_bottom.rs).
+    pub(super) transcript_focus_follow: std::cell::Cell<Option<bool>>,
+    /// A one-click answer holding the row the reader clicked still (answer_anchor.rs).
+    pub(super) answer_hold: std::rc::Rc<std::cell::RefCell<super::answer_anchor::AnswerHold>>,
+    /// Where the focused transcript field was painted, which streaming rows must not move (scroll_bottom.rs).
+    pub(super) transcript_focus_field_top: std::rc::Rc<std::cell::Cell<Option<gpui::Pixels>>>,
     /// The transcript's own cached view, created on the first draw (transcript_host.rs).
     pub(super) transcript_host: Option<Entity<super::transcript_host::TranscriptHost>>,
     /// The composer's own view, which keystrokes notify instead of the chat (composer_host.rs).
@@ -399,6 +411,9 @@ impl NativeChatView {
             option_menu: None,
             draft_project_picker: None,
             draft_project_chip_bounds: Default::default(),
+            draft_machine_chip_bounds: Default::default(),
+            worktree_tray_where_bounds: Default::default(),
+            worktree_tray_detail_bounds: Default::default(),
             menu_toggle: Default::default(),
             pill_bounds: Default::default(),
             working_card: Default::default(),
@@ -415,6 +430,9 @@ impl NativeChatView {
             in_work_fold: false,
             hide_file_changes: false,
             disclosure_motion: Default::default(),
+            transcript_focus_follow: Default::default(),
+            answer_hold: Default::default(),
+            transcript_focus_field_top: Default::default(),
             in_subagent: false,
             maximized_window: None,
             maximized_wanted: false,
@@ -463,6 +481,7 @@ impl NativeChatView {
             answer_input: None,
             answer_subscription: None,
             terminal_dialog_input: None,
+            secret_request_inputs: Default::default(),
             terminal_dialog_key_focus: cx.focus_handle(),
             terminal_picker_input: None,
             note_input: None,
@@ -480,11 +499,11 @@ impl NativeChatView {
             resource_modal_pending: false,
             resource_modal_closing: false,
             session_details: Default::default(),
+            board: Default::default(),
             files_links_closing: false,
             files_links_jump_revision: 0,
             open_question_jump_revision: None,
             question_flash: None,
-            question_ping: Default::default(),
             question_list: Default::default(),
             row_find: None,
             row_label_find: None,
@@ -696,10 +715,10 @@ impl NativeChatView {
     }
 
     pub(crate) fn invoke(&mut self, action: Value, cx: &mut Context<Self>) {
+        self.hold_for_answer(&action, cx);
         if let Some(runtime) = &self.runtime {
             runtime.call("action", vec![action]);
         }
-        let _ = cx;
     }
 
     pub(crate) fn receive_callback(
@@ -829,13 +848,14 @@ impl NativeChatView {
             subagent_splice,
         } = output;
         if let Some(splice) = items_splice {
+            let anchor_key = self.transcript_anchor_key();
             // The host ships only the changed window of transcript items (see transcriptItemsSplice in native-host.ts).
             let items = Arc::make_mut(&mut self.items);
             let start = splice.start.min(items.len());
             let end = start.saturating_add(splice.delete_count).min(items.len());
             let inserted_len = splice.items.len();
             items.splice(start..end, splice.items);
-            self.splice_transcript(start, end, inserted_len);
+            self.splice_transcript_keyed(start, end, inserted_len, anchor_key);
             self.notify_if_shown(cx);
         }
         if let Some(markers) = output
@@ -876,7 +896,8 @@ impl NativeChatView {
             let ring_moved = ["enabled", "ring"]
                 .iter()
                 .any(|key| self.snapshot["sessionDetails"][key] != snapshot["sessionDetails"][key]);
-            self.snapshot = Arc::new(snapshot);
+            let before = std::mem::replace(&mut self.snapshot, Arc::new(snapshot));
+            self.adopt_board_focus(&before, cx);
             if ring_moved {
                 cx.emit(NativeChatEvent::SessionDetailsRing);
             }
@@ -1039,7 +1060,30 @@ impl NativeChatView {
                 return super::attachments::import_paths(&config.remote, &params)
                     .map_err(|message| json!({"message":message,"endpoint":endpoint}));
             }
-            super::rpc::request(config.remote, &endpoint, &params).await
+            // A session on a Cloud Box reaches the box's own gxserver; a send wakes a stopped box
+            // first and nothing else does (gx_store/cloud_boxes.rs, Q1013).
+            let delivers_message = matches!(
+                endpoint.as_str(),
+                "/api/sendSessionChatMessage"
+                    | "/api/queueSessionChatPrompt"
+                    | "/api/sendSessionChatQueuedPrompt"
+                    | "/api/answerSessionChatPrompt"
+            );
+            let remote = match crate::app::gx_store::cloud_box_send_target(
+                &config.machine_id,
+                delivers_message,
+            )
+            .await
+            {
+                Ok(Some(target)) => Some(target),
+                Ok(None) => config.remote,
+                Err(refusal) => {
+                    return Err(
+                        json!({"code":refusal.code,"message":refusal.message,"endpoint":endpoint}),
+                    );
+                }
+            };
+            super::rpc::request(remote, &endpoint, &params).await
         });
         cx.spawn(async move |this, cx| {
             let result = task.await;

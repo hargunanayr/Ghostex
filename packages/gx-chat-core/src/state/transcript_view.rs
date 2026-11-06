@@ -44,10 +44,11 @@ pub const ROOT_AGENT_PATH: &str = "/root";
 pub struct TranscriptViewState {
     /// Whether the transcript is folded into one row per turn.
     pub summary_mode: bool,
-    /// The user's verbose override, or `None` to follow the setting.
+    /// The chat's saved `verbose` record. Verbose is retired: a chat saved on it reads as Detailed
+    /// (`transcript::view_level`).
     pub verbose_override: Option<bool>,
-    /// The user's Simple override for this chat, or `None` to follow the setting (with
-    /// `verbose_override` the chat's detail level: CDXC:SessionChat 2026-10-29 in transcript/actions.rs).
+    /// The chat's saved `simple` record: `true` is Normal, `false` Detailed, `None` follows the
+    /// Default to Detailed view setting (`transcript::view_level`).
     pub simple_override: Option<bool>,
     /// The session's directory, which shortens the paths on file-change cards.
     ///
@@ -122,6 +123,12 @@ pub struct TranscriptViewState {
     pub deferred_cache: DeferredWorkCache,
     /// The `readSessionChatImage` reads in flight, by request id, with the path asked for.
     pub image_requests: BTreeMap<u64, String>,
+    /// A digest of each picture file's bytes the chat has read, by path: a picture an agent read
+    /// that is the same picture as one the user showed at another path stays out of a closed
+    /// fold's strip (`transcript/read_images.rs`). Bumped `picture_digests_revision` when a new
+    /// pair matches.
+    pub picture_digests: std::collections::HashMap<String, u64>,
+    pub picture_digests_revision: u64,
     /// The `readVisualPageThumbnail` reads in flight, by request id, with the page asked for
     /// ([`crate::transcript::page_thumbnails`]).
     pub page_thumbnail_requests: BTreeMap<u64, String>,
@@ -157,6 +164,8 @@ pub struct TranscriptViewState {
     /// Settings > Chat > Tool call cards (`chatToolCallCards`): each message's tool calls project
     /// as one card (`transcript/tool_card.rs`). A change throws the cached projections away.
     pub tool_cards: bool,
+    /// The Default to Detailed view setting, which a chat with no level of its own follows.
+    pub detailed_default: bool,
 }
 
 /// One message's full projection, with the source it was built from.
@@ -176,12 +185,19 @@ pub struct TranscriptViewState {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProjectedMessage {
     pub source: ChatMessage,
+    /// The row as it arrived, when `source` is the tool calls a background row was turned into
+    /// (`background_task_source`): the cache is judged by it, so an unchanged row is not turned
+    /// again to check.
+    pub arrived: Option<ChatMessage>,
     pub model: Arc<Value>,
     /// Set while `model` carries the work-fold marks, with what they replaced, so a row drawn
     /// outside a fold gets the model exactly as projected.
     pub in_work_fold: Option<crate::transcript::tool_rows::WorkFoldMarks>,
     /// The line-break rule the model was projected under; a change of agent family re-projects.
     pub line_breaks: crate::transcript::line_breaks::AgentLineBreaks,
+    /// `source` has a call that never answered (`tool_card::has_unanswered_call`), so its tool card
+    /// follows whether the session is working.
+    pub unanswered: bool,
     /// The tag-shaped words of the reply's prose (`transcript/open_questions.rs`), and those of
     /// them the model links to a question; a question asking one of the others re-projects.
     pub tag_words: Vec<String>,
@@ -250,6 +266,8 @@ impl Default for TranscriptViewState {
             deferred_requests: BTreeMap::new(),
             deferred_cache: DeferredWorkCache::default(),
             image_requests: BTreeMap::new(),
+            picture_digests: Default::default(),
+            picture_digests_revision: 0,
             page_thumbnail_requests: BTreeMap::new(),
             page_thumbnail_attempts: BTreeMap::new(),
             pending_summary_mode: None,
@@ -263,6 +281,7 @@ impl Default for TranscriptViewState {
             session_directory: Vec::new(),
             session_directory_revision: 0,
             tool_cards: false,
+            detailed_default: false,
         }
     }
 }

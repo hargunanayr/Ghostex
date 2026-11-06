@@ -231,7 +231,11 @@ fn tool_entry(
     let name = pair.call_name().unwrap_or_default();
     let input = pair.call_input().unwrap_or(&Value::Null);
     let output = pair.result_output().unwrap_or_default();
-    let status = Status::of(pair.result.is_some(), pair.result_is_error(), working);
+    let status = if crate::transcript::background_rows::is_stopped_task(pair) {
+        Status::Stopped
+    } else {
+        Status::of(pair.result.is_some(), pair.result_is_error(), working)
+    };
     let mcp = name
         .strip_prefix("mcp__")
         .and_then(|rest| mcp_call(rest, input));
@@ -296,6 +300,11 @@ fn tool_entry(
         .into(),
     );
     entry.insert("time".to_string(), "".into());
+    // The pictures the call opened from disk, drawn under the entry like a plain row's
+    // (`read_images.rs`).
+    if let Some(images) = row.get("images") {
+        entry.insert("images".to_string(), images.clone());
+    }
     Value::Object(entry)
 }
 
@@ -406,6 +415,14 @@ impl McpCall {
             format!("{verb} {object} in {}", app.name)
         }
     }
+}
+
+/// An MCP call's line in the given tense ("Read SPX-412 in Linear", "Use spaceo click"), for a
+/// tool named `mcp__<server>__<tool>`; `None` for any other name.
+pub fn mcp_call_label(name: &str, input: &Value, tense: LabelTense) -> Option<String> {
+    name.strip_prefix("mcp__")
+        .and_then(|rest| mcp_call(rest, input))
+        .map(|call| call.label(tense))
 }
 
 /// `mcp__<server>__<tool>`, past its `mcp__`.
@@ -812,10 +829,24 @@ pub fn set_enabled(view: &mut crate::state::TranscriptViewState, enabled: bool) 
 }
 
 /// A cached model's card still says the right thing: a call it drew as running is stopped once
-/// the session stops working, and one it drew as stopped runs again when the session works.
-pub fn card_fresh(model: &Value, working: bool) -> bool {
+/// the session stops working, and an unanswered call it drew as stopped runs again when the
+/// session works. `unanswered` is [`has_unanswered_call`] for the message the card was projected
+/// from.
+///
+/// CDXC:SessionChat 2026-10-30 WHY: only an unanswered call's look follows the session's activity. A stopped card whose calls all answered (a cancelled background task, `is_stopped_task`, beside completed or failed ones) does not change while the agent works, and judging it by the stopped flag alone projected the row again on every pass.
+pub fn card_fresh(model: &Value, unanswered: bool, working: bool) -> bool {
     let card = &model["toolCard"];
-    !((card["running"] == true && !working) || (card["stopped"] == true && working))
+    !((card["running"] == true && !working) || (card["stopped"] == true && working && unanswered))
+}
+
+/// Whether the message has a call that never answered, which its card draws running while the
+/// session works and stopped once it stops. A cancelled background task is stopped for good.
+pub fn has_unanswered_call(blocks: &[ChatBlock]) -> bool {
+    pair_tool_blocks(blocks).iter().any(|pair| {
+        pair.call.is_some()
+            && pair.result.is_none()
+            && !crate::transcript::background_rows::is_stopped_task(pair)
+    })
 }
 
 /// The message whose card stays open while the agent works: the newest agent row, with the

@@ -57,6 +57,31 @@ struct Card {
 /// Every waiting card, oldest first; a session shows its oldest.
 static CARDS: Mutex<Vec<Card>> = Mutex::new(Vec::new());
 
+/// How the last cards ended, newest last, so a coordinator's relayed copy of a card can say
+/// whether it was answered in its thread, expired or cancelled (coordinators/relay.rs).
+static ENDED: Mutex<Vec<(String, Answer)>> = Mutex::new(Vec::new());
+const ENDED_KEPT: usize = 64;
+
+/// How the card `tool_use_id` (`connectorcard:<id>`) ended, while it is still remembered.
+pub(crate) fn connector_card_outcome(tool_use_id: &str) -> Option<Answer> {
+    let card_id = tool_use_id.strip_prefix(TOOL_USE_PREFIX)?;
+    ENDED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .iter()
+        .rev()
+        .find(|(id, _)| id == card_id)
+        .map(|(_, answer)| *answer)
+}
+
+/// Whether a session's stored chat prompt is one of these cards.
+pub(crate) fn is_connector_card(prompt: &SessionChatInteractivePrompt) -> bool {
+    card_id_of(prompt).is_some()
+}
+
+/// The card's buttons in order, which a relayed answer names by position.
+pub(crate) const CARD_LABELS: [&str; 3] = [APPROVE_LABEL, ALWAYS_LABEL, DENY_LABEL];
+
 fn with_cards<T>(f: impl FnOnce(&mut Vec<Card>) -> T) -> T {
     f(&mut CARDS.lock().unwrap_or_else(PoisonError::into_inner))
 }
@@ -75,7 +100,7 @@ fn chat_prompt(card_id: &str, question: &str) -> SessionChatInteractivePrompt {
             tool_name: Some(CARD_TOOL_NAME.to_string()),
             recommended: None,
             preview_layout: false,
-            options: [APPROVE_LABEL, ALWAYS_LABEL, DENY_LABEL]
+            options: CARD_LABELS
                 .into_iter()
                 .map(|label| SessionChatQuestionOption {
                     label: label.to_string(),
@@ -211,6 +236,12 @@ fn finish(state: &AppState, card_id: &str, answer: Answer) {
     let Some(mut card) = card else {
         return;
     };
+    {
+        let mut ended = ENDED.lock().unwrap_or_else(PoisonError::into_inner);
+        ended.push((card.id.clone(), answer));
+        let excess = ended.len().saturating_sub(ENDED_KEPT);
+        ended.drain(..excess);
+    }
     if let Some(sender) = card.sender.take() {
         let _ = sender.send(answer);
     }
@@ -312,6 +343,30 @@ pub(crate) fn waiting_card(session: &Value) -> Option<String> {
         .and_then(parse_stored_session_chat_prompt)?;
     let card_id = card_id_of(&stored)?;
     is_waiting(card_id).then(|| format!("{TOOL_USE_PREFIX}{card_id}"))
+}
+
+/// Puts a card in the waiting list the way `ask` does, without an agent call behind it, and
+/// returns its id and the stored chat prompt that shows it. `release_waiting_card` ends it.
+#[cfg(test)]
+pub(crate) fn hold_waiting_card(project_id: &str, session_id: &str) -> (String, String) {
+    let id = uuid::Uuid::new_v4().to_string();
+    let prompt = serde_json::to_string(&chat_prompt(&id, "Send the email?")).expect("card prompt");
+    with_cards(|cards| {
+        cards.push(Card {
+            id: id.clone(),
+            project_id: project_id.to_string(),
+            session_id: session_id.to_string(),
+            question: "Send the email?".to_string(),
+            call_id: None,
+            sender: None,
+        })
+    });
+    (id, prompt)
+}
+
+#[cfg(test)]
+pub(crate) fn release_waiting_card(card_id: &str) {
+    with_cards(|cards| cards.retain(|card| card.id != card_id));
 }
 
 /// The agent cancelled an MCP call: its card goes away.

@@ -69,6 +69,16 @@ impl SettingsPalette {
             // dialogs' washes on the popover glass (CDXC:AppModal 2026-10-29 on `frosted_dialog_fill`).
             let surface = modal.surface;
             let hairline = modal.hairline;
+            // CDXC:Settings 2026-11-06 DECISION:
+            // The select and searchable dropdown menus drew the theme chrome (`solid_surface`, near-black on the default theme) under glass. The user does not want black fills on the glass design, so they take the lifted themed surface the dialogs inside Settings use (`dialog_surface`), still opaque so the page does not read through an open menu.
+            let popup = css_mix(
+                rgb(0xffffff),
+                0.055,
+                Rgba {
+                    a: 1.0,
+                    ..modal.solid_surface
+                },
+            );
             return Self {
                 modal,
                 light: false,
@@ -83,11 +93,11 @@ impl SettingsPalette {
                 destructive: modal.destructive,
                 settings_accent: rgb(DEFAULT_GHOSTEX_ACCENT),
                 focus_border: css_mix(foreground, 0.58, hairline),
-                popup_background: modal.solid_surface,
+                popup_background: popup,
                 popup_border: hairline,
-                popup_selected: css_mix(rgb(0xffffff), 0.14, modal.solid_surface),
+                popup_selected: css_mix(rgb(0xffffff), 0.14, popup),
                 popup_selected_foreground: rgb(0xffffff),
-                popup_hover: css_mix(rgb(0xffffff), 0.085, modal.solid_surface),
+                popup_hover: css_mix(rgb(0xffffff), 0.085, popup),
                 ring: rgb(0x737373),
             };
         }
@@ -162,6 +172,40 @@ impl SettingsPalette {
     /// `color-mix(in srgb, var(--muted-foreground) 82%, var(--foreground) 18%)`: the modified asterisk.
     pub(crate) fn modified_marker(&self) -> Rgba {
         css_mix(self.muted, 0.82, self.foreground)
+    }
+
+    /// The surface of a dialog drawn inside Settings over its backdrop: the theme's own colour (the
+    /// tinted chrome, opaque even under glass) lifted a step toward the ink's opposite, so the sheet
+    /// reads as a raised pane of the theme instead of a black box.
+    ///
+    /// CDXC:Settings 2026-11-03 DECISION:
+    /// User, of the Remote > Add a machine dialog drawn solid black with near-black fields: "make this not black bg like this, should fit the theme better please with transparency when it's enabled". Every dialog drawn inside Settings takes this themed surface and [`Self::nested_dialog`]'s ink washes for its fields, switches and segmented controls. It stays opaque under glass: a GPUI window blurs only what is behind the window, so a see-through sheet here would show the Settings page's text unblurred through it, the read-through the user turned down for floating surfaces on 2026-10-25.
+    pub(crate) fn dialog_surface(&self) -> Rgba {
+        let base = Rgba {
+            a: 1.0,
+            ..self.modal.solid_surface
+        };
+        if self.light {
+            css_mix(rgb(0xffffff), 0.6, base)
+        } else {
+            css_mix(rgb(0xffffff), 0.055, base)
+        }
+    }
+
+    /// This palette for the body of a dialog drawn inside Settings: the dialog's surface
+    /// ([`Self::dialog_surface`]) and the dialogs' ink washes (`frosted_dialog_washes`) for its
+    /// inputs, raised controls and hairlines, so they follow the theme instead of the page's solid
+    /// near-black fills.
+    pub(crate) fn nested_dialog(&self) -> Self {
+        let washes = frosted_dialog_washes(self.light);
+        Self {
+            surface: self.dialog_surface(),
+            raised: washes.raised,
+            raised_hover: washes.raised_hover,
+            hairline: washes.hairline,
+            focus_border: css_mix(self.foreground, 0.58, washes.hairline),
+            ..*self
+        }
     }
 
     /// `color-mix(in srgb, var(--settings-raised) 82%, transparent)`: text inputs.

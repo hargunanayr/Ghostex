@@ -151,6 +151,7 @@ pub(crate) fn titlebar_mode_view_tab_hidden_settings_key(
         TitlebarMode::Agents
         | TitlebarMode::Work
         | TitlebarMode::GhostOverview
+        | TitlebarMode::SideChat
         | TitlebarMode::Extension(_) => None,
     }
 }

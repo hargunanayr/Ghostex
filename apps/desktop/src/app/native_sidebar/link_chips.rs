@@ -35,7 +35,7 @@ use ghostex_gx_core::{
 /// The line's height, the Work mode card's chip line's (work_chips.rs).
 pub(crate) const LINK_LINE_HEIGHT: f32 = 16.0;
 /// A text's width in the sidebar's UI font at `size`, unscaled.
-fn ui_text_width(text_system: &WindowTextSystem, text: &str, size: f32) -> f32 {
+pub(crate) fn ui_text_width(text_system: &WindowTextSystem, text: &str, size: f32) -> f32 {
     let run = TextRun {
         len: text.len(),
         font: gpui::font(crate::ui_fonts::UI_FONT),

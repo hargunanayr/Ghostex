@@ -675,6 +675,19 @@ pub const CHAT_PAGE_OPEN_TARGET_OPTIONS: &[Opt] = &[
     opt("System browser", "system-browser"),
 ];
 
+/// What a coordinator chat's Board pill opens (`coordinatorBoardView`), in the Settings control's order.
+pub const COORDINATOR_BOARD_VIEW_OPTIONS: &[Opt] = &[
+    opt("Side list", "list"),
+    opt("Columns", "columns"),
+];
+
+/// Where agents open a page they built for the user (`agentPreviewBrowser`), in the Settings control's order.
+pub const AGENT_PREVIEW_BROWSER_OPTIONS: &[Opt] = &[
+    opt("Ask", "ask"),
+    opt("Ghostex Browser", "internal-browser"),
+    opt("My default browser", "system-default-browser"),
+];
+
 pub const WEB_LINK_OPEN_TARGET_OPTIONS: &[Opt] = &[
     opt("Internal Browser", "internal-browser"),
     opt("System Default Browser", "system-default-browser"),

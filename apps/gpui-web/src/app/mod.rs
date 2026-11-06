@@ -48,6 +48,7 @@ mod quick_access_modal_lifecycle;
 pub(crate) mod read_aloud;
 pub(crate) mod remote_conn;
 mod rename_session_modal_lifecycle;
+mod export_transcript_modal_lifecycle;
 pub(crate) mod session_handoff_modal_lifecycle;
 mod rename_worktree_modal_lifecycle;
 pub(crate) mod render;

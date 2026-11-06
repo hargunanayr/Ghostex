@@ -118,6 +118,8 @@ pub(crate) fn gpui_telemetry_surface_for_titlebar_mode(
         TitlebarMode::Terminal => Some(GpuiTelemetrySurface::Terminal),
         TitlebarMode::BotFeed => Some(GpuiTelemetrySurface::Automations),
         TitlebarMode::Work => Some(GpuiTelemetrySurface::Work),
+        // Not a surface of the telemetry spec: a side chat is a chat, not a view.
+        TitlebarMode::SideChat => None,
         mode if mode.is_claude_web() => Some(GpuiTelemetrySurface::Claude),
         TitlebarMode::Extension(id) => Some(GpuiTelemetrySurface::Extension(id)),
     }
@@ -219,6 +221,14 @@ fn post_gpui_client_event_body(body: &str) {
     let Ok(socket_address) = address.parse::<SocketAddr>() else {
         return;
     };
+    if ghostex_paths::loopback_owner::check_host_port(
+        &socket_address.ip().to_string(),
+        socket_address.port(),
+    )
+    .is_err()
+    {
+        return;
+    }
     let Ok(mut stream) = TcpStream::connect_timeout(&socket_address, GPUI_CLIENT_EVENT_TIMEOUT)
     else {
         return;

@@ -58,7 +58,8 @@ pub(crate) fn gpui_gxserver_rpc_result(
     CDXC:StatusPet 2026-06-24-11:48:
     Settings status/actions share the typed-operation transport and may expose only the validated gxserver `result` object to the modal host. Transport, status, envelope, and parse failures stay as local errors so callers can clear loading with explicit empty status payloads without logging private daemon data.
     */
-    let (status_code, body) = gxserver_post_typed_operation(endpoint, params, timeout)?;
+    let (status_code, body) = gxserver_post_typed_operation(endpoint, params, timeout)
+        .map_err(|message| gxserver_error_for_people(endpoint, message))?;
     if !(200..300).contains(&status_code) {
         return Err(gpui_gxserver_rpc_error_message(status_code, &body));
     }
@@ -1195,9 +1196,36 @@ fn gpui_bootout_all_ghostex_launchd_jobs() {
             }
         }
     }
-    for label in labels {
+    let mut targets = labels
+        .into_iter()
+        .map(|label| format!("gui/{uid}/{label}"))
+        .collect::<Vec<_>>();
+    // gxserver starts zmx jobs in the background `user/<uid>` domain while nobody is logged in
+    // (CDXC:Zmx 2026-11-02 in server/src/zmx/launch.rs); `launchctl list` above only shows the
+    // desktop login's own domain.
+    if let Ok(print_output) = std::process::Command::new("/bin/launchctl")
+        .args(["print", &format!("user/{uid}")])
+        .output()
+    {
+        let text = String::from_utf8_lossy(&print_output.stdout);
+        let services = text
+            .lines()
+            .skip_while(|line| line.trim() != "services = {")
+            .skip(1)
+            .take_while(|line| line.trim() != "}");
+        for line in services {
+            if let Some(label) = line
+                .split_whitespace()
+                .last()
+                .filter(|label| label.starts_with(&prefix))
+            {
+                targets.push(format!("user/{uid}/{label}"));
+            }
+        }
+    }
+    for target in targets {
         let _ = std::process::Command::new("/bin/launchctl")
-            .args(["bootout", &format!("gui/{uid}/{label}")])
+            .args(["bootout", &target])
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -1430,10 +1458,12 @@ fn gpui_windows_process_image(pid: u32) -> Option<String> {
 }
 
 pub(crate) fn gpui_gxserver_protocol_mismatch_message(reported: Option<u64>) -> String {
-    format!(
-        "gxserver protocol mismatch. Expected protocol {GPUI_GXSERVER_PROTOCOL_VERSION}, got {}. Update Ghostex and gxserver so their protocol versions match.",
+    // CDXC:Notices 2026-11-06: no protocol numbers in the toast (Q1410); they go to the log.
+    eprintln!(
+        "[ghostex] gxserver protocol mismatch: expected {GPUI_GXSERVER_PROTOCOL_VERSION}, got {}",
         reported.map_or_else(|| "none".to_string(), |version| version.to_string()),
-    )
+    );
+    "Two different versions of Ghostex are running. Quit Ghostex and open it again; if this stays, reinstall it.".to_string()
 }
 
 #[cfg(test)]

@@ -43,6 +43,7 @@ pub(crate) fn gpui_open_remote_gxserver_tunnel(
                 child: tunnel.child,
                 liveness: GpuiRemoteTunnelLiveness::default(),
                 this_computer: false,
+                reverse_tunnel: None,
             });
         }
         // A tunnel that is still running bound its port (ExitOnForwardFailure), so another port
@@ -111,7 +112,10 @@ pub(crate) fn gpui_spawn_remote_gxserver_tunnel(
     let askpass = gpui_remote_ssh_askpass_script(config)?;
     let mut arguments = Vec::new();
     let remote_port = gpui_remote_gxserver_port(execution_target);
-    let forward = format!("{local_port}:127.0.0.1:{remote_port}");
+    // Bound to 127.0.0.1 explicitly, like the code-server tunnel: without a bind address ssh can
+    // succeed on ::1 alone while another account already holds 127.0.0.1:<port>, which is where
+    // the health probe then sends the token. The registry matches this exact `-L` value.
+    let forward = format!("127.0.0.1:{local_port}:127.0.0.1:{remote_port}");
     if !matches!(
         execution_target,
         GpuiRemoteExecutionTarget::WindowsWsl { .. }
@@ -241,6 +245,7 @@ pub(crate) fn gpui_remote_gxserver_capabilities_from_health_response(
     GpuiRemoteGxserverCapabilities {
         code_server_prompt_editor: advertises(GPUI_GXSERVER_CODE_SERVER_PROMPT_EDITOR_CAPABILITY),
         browser_tcp_websocket_v1: advertises("browserTcpWebSocketV1"),
+        coordinator_handoff_draft: advertises("coordinatorHandoffDraft"),
         zmx_missing: value
             .get("tools")
             .and_then(serde_json::Value::as_array)
@@ -279,6 +284,16 @@ mod zmx_health_tests {
         assert!(!capabilities(&tool("available")).zmx_missing);
         // An older daemon's answer says nothing either way.
         assert!(!capabilities(r#"{"capabilities":[]}"#).zmx_missing);
+    }
+
+    #[test]
+    fn only_a_daemon_that_advertises_it_takes_an_orchestrator_handoff_draft() {
+        assert!(
+            capabilities(r#"{"capabilities":["health","coordinatorHandoffDraft"]}"#)
+                .coordinator_handoff_draft
+        );
+        assert!(!capabilities(r#"{"capabilities":["health"]}"#).coordinator_handoff_draft);
+        assert!(!capabilities("{}").coordinator_handoff_draft);
     }
 }
 

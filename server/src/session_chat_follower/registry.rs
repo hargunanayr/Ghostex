@@ -60,8 +60,20 @@ pub(crate) fn session_chat_identity_fingerprint(session: &Value) -> String {
     )
 }
 
+/// CDXC:SessionChat 2026-11-05 WHY:
+/// Issue #418: OpenCode 2 runs a conversation in its background service, not in the terminal, so
+/// its chat keeps reading and sending (session_chat_opencode/conversation.rs) while the terminal
+/// sleeps or has exited. Its chat is followed whenever it has a conversation, except for a
+/// session that was closed.
 pub(crate) fn is_session_chat_followable_session(session: &Value) -> bool {
-    read_session_text(session, "lifecycleState").as_deref() == Some("running")
+    match read_session_text(session, "lifecycleState").as_deref() {
+        Some("running") => true,
+        Some("stopped") => false,
+        _ => {
+            session_chat_agent_for_session(session).as_deref() == Some("opencode")
+                && read_runtime_text(session, "agentSessionId").is_some()
+        }
+    }
 }
 
 /*
@@ -133,6 +145,10 @@ pub(crate) fn sync_session_chat_follower_for_session(
     if task_alive && entry.fingerprint == fingerprint {
         return;
     }
+    // GitHub #410: a session update made on a plain thread has no runtime to spawn on, and `tokio::spawn` would panic while the caller holds its locks; the follower is left as it is and the next update on a runtime thread respawns it.
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
     if let Some(task) = entry.task.take() {
         task.abort();
     }
@@ -486,15 +502,15 @@ pub(crate) fn sync_session_chat_follower_for_session(
     // the aborted one's last stamp can never be read as the new task's progress.
     let heartbeat = Arc::new(crate::session_chat::SessionChatFollowerHeartbeat::new());
     entry.heartbeat = heartbeat.clone();
-    entry.task = Some(tokio::spawn(
-        crate::session_chat::run_session_chat_follower(
+    entry.task = Some(
+        runtime.spawn(crate::session_chat::run_session_chat_follower(
             config,
             entry.stream.clone(),
             entry.resnapshot.clone(),
             heartbeat,
             emit,
-        ),
-    ));
+        )),
+    );
 }
 
 fn log_session_chat_follower_wedged(state: &AppState, project_id: &str, session_id: &str) {

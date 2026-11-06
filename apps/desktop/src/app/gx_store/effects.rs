@@ -73,6 +73,9 @@ impl GxStoreHost {
                 // Every computer's feed: the bell shows remote computers' rows too
                 // (gx_store/notifications/feeds.rs).
                 effect @ Effect::RefetchNotificationFeed { .. } => self.app_effects.push(effect),
+                // This computer's settings sync notes: the "changed on X · Undo" toast
+                // (gx_store/settings_sync.rs).
+                effect @ Effect::SettingsSyncNote { .. } => self.app_effects.push(effect),
                 // Connectors are this computer's (their sign-ins never leave it).
                 Effect::ConnectorsChanged { machine } if machine.is_local() => {
                     self.app_effects.push(Effect::ConnectorsChanged { machine });
@@ -82,11 +85,14 @@ impl GxStoreHost {
                 effect @ (Effect::MachineLive { .. }
                 | Effect::RefetchSidebarHud { .. }
                 | Effect::DomainProjectChanged { .. }) => self.app_effects.push(effect),
+                // Home gxserver's box registry is read again (gx_store/cloud_boxes.rs).
+                effect @ Effect::RefetchCloudBoxes => self.app_effects.push(effect),
                 // Attention: the acknowledgement timer, the report to the session's daemon and the
                 // completion sound (gx_store/attention/).
                 effect @ (Effect::ArmAttentionAcknowledge { .. }
                 | Effect::ReportAgentActivity { .. }
-                | Effect::SessionAttentionRaised { .. }) => self.app_effects.push(effect),
+                | Effect::SessionAttentionRaised { .. }
+                | Effect::SessionStuckRaised { .. }) => self.app_effects.push(effect),
                 // The core's effect list grows with each milestone; a new one is wired when the
                 // milestone that introduces it lands.
                 _ => {}
@@ -137,19 +143,23 @@ impl GhostexGpuiApp {
             }
             effect @ (Effect::ArmAttentionAcknowledge { .. }
             | Effect::ReportAgentActivity { .. }
-            | Effect::SessionAttentionRaised { .. }) => {
+            | Effect::SessionAttentionRaised { .. }
+            | Effect::SessionStuckRaised { .. }) => {
                 self.gx_store_perform_attention_effect(effect, cx)
             }
             Effect::MachineLive { machine } => {
                 self.gx_store_refresh_notification_feed(machine.clone(), cx);
                 if machine.is_local() {
                     self.navigation_history_refresh(cx);
+                    self.gx_store_refresh_cloud_boxes(cx);
                 }
                 self.gx_store_perform_hud_effect(Effect::MachineLive { machine }, cx);
             }
             effect @ (Effect::RefetchSidebarHud { .. } | Effect::DomainProjectChanged { .. }) => {
                 self.gx_store_perform_hud_effect(effect, cx)
             }
+            Effect::RefetchCloudBoxes => self.gx_store_refresh_cloud_boxes(cx),
+            Effect::SettingsSyncNote { note } => self.gx_store_show_settings_sync_note(&note, cx),
             _ => {}
         }
     }

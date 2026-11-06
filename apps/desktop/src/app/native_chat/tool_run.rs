@@ -108,6 +108,17 @@ impl NativeChatView {
                     cx,
                 );
                 rows.push(self.disclosure_body_motion(&key, motion, ROW_GAP * p.scale, body));
+            } else if let Some(pictures) = self.read_picture_strip(
+                &format!("{key}:read"),
+                &message["readImages"],
+                super::read_pictures::FOLDED_CALLS_INSET,
+                p.background,
+                p,
+                cx,
+            ) {
+                // The closed group keeps the pictures its calls read in view (gx-chat-core
+                // `read_images.rs`).
+                rows.push(pictures);
             }
             return rows;
         }
@@ -189,8 +200,35 @@ impl NativeChatView {
             .filter(|index| fold["visible"][*index] == true)
             .collect();
         let (above, below) = split(&kept);
+        // The pictures the folded calls read stay in view under the toggle, except one the
+        // user's own message already shows, which only its open row keeps (gx-chat-core
+        // `read_images.rs`, `is_user_shown`).
+        let mut folded_pictures: Vec<Value> = Vec::new();
+        for image in (0..tools.len())
+            .filter(|index| fold["visible"][*index] != true)
+            .filter_map(|index| tools[index]["images"].as_array())
+            .flatten()
+            .filter(|image| !ghostex_gx_chat_core::transcript::read_images::is_user_shown(image))
+        {
+            if !folded_pictures
+                .iter()
+                .any(|shown| shown.get("path") == image.get("path"))
+            {
+                folded_pictures.push(image.clone());
+            }
+        }
         let mut rows = self.tool_row_list(&id, &tools, &above, p, cx);
-        rows.push(self.tool_fold_toggle(run_key, label, false, p, cx));
+        rows.push(self.tool_fold_toggle(run_key.clone(), label, false, p, cx));
+        if let Some(pictures) = self.read_picture_strip(
+            &format!("{run_key}:read"),
+            &Value::Array(folded_pictures),
+            super::read_pictures::FOLDED_CALLS_INSET,
+            p.background,
+            p,
+            cx,
+        ) {
+            rows.push(pictures);
+        }
         rows.extend(self.tool_row_list(&id, &tools, &below, p, cx));
         rows
     }
@@ -508,6 +546,8 @@ impl NativeChatView {
         // and weight, a fifth dimmer (`DESCRIBED_LABEL_OPACITY`).
         let heading = match (failed, described) {
             (true, _) => p.error(),
+            // A background task stopped before it finished: the tool card's stopped look.
+            _ if status == "stopped" => p.muted,
             (false, true) => p.prose.opacity(DESCRIBED_LABEL_OPACITY),
             (false, false) => p.foreground,
         };
@@ -609,6 +649,11 @@ impl NativeChatView {
                     .child(self.find_label(&name_key, name)),
             )
         };
+        // The picture the call opened from disk, at the row's right before its duration
+        // (gx-chat-core `read_images.rs`, `READ_TILE`).
+        if let Some(pictures) = self.read_pictures(&key, &tool["images"], p, cx) {
+            trigger = trigger.child(pictures);
+        }
         if !duration.is_empty() {
             trigger = trigger.child(
                 div()
@@ -621,6 +666,7 @@ impl NativeChatView {
         let status_icon = match status.as_str() {
             "done" => Some(("titlebar/check.svg", p.success())),
             "failed" => Some(("titlebar/x.svg", p.error())),
+            "stopped" => Some(("titlebar/circle-dashed.svg", p.muted)),
             _ => None,
         };
         if let Some((icon, color)) = status_icon {

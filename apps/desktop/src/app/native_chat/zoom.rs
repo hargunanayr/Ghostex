@@ -1,9 +1,10 @@
 //! Keyboard zoom for the chat: Cmd+= / Cmd+- / Cmd+0 (Ctrl on Windows and Linux).
 //!
-//! GPUI chat paints everything at `ChatAppearance::scale`, which is the saved
-//! `sessionChatZoomPercent` (Settings > Chat > Default chat zoom). The chords step that setting,
-//! so every open chat on the computer, and every window drawn from one (the maximized composer,
-//! the pickers, the image viewer), changes size together.
+//! GPUI chat paints everything at `ChatAppearance::scale`, the size Interface scale gives the chat
+//! (Settings > Appearance > Interface scale): Scale, or with Scale areas separately on, the saved
+//! `sessionChatZoomPercent`. The chords step whichever of the two applies, so every open chat on
+//! the computer, and every window drawn from one (the maximized composer, the pickers, the image
+//! viewer), changes size together.
 
 use super::state::NativeChatView;
 use gpui::{App, Context, Task, Window};
@@ -17,7 +18,7 @@ use std::time::Duration;
 /// The rungs are Chromium's preset zoom factors kept inside the 70% to 200% range Settings offers,
 /// so the same number of presses lands on the same percentage as the React chat did on web and mobile, and
 /// every rung is also a multiple of the shared 5% step.
-/// SEE-ALSO: packages/settings-catalog/src/data/limits.rs owns the range and step; packages/settings-catalog/src/data/defaults.rs the default.
+/// SEE-ALSO: packages/settings-catalog/src/data/limits.rs owns the range and step; packages/settings-catalog/src/data/defaults.rs the default. The Files text zoom (native_docs/text_zoom.rs) steps the same rungs.
 const ZOOM_PERCENT_RUNGS: [f32; 10] = [
     70.0, 75.0, 80.0, 90.0, 100.0, 110.0, 125.0, 150.0, 175.0, 200.0,
 ];
@@ -47,10 +48,56 @@ pub(super) struct ChatZoomOut;
 pub(super) struct ChatZoomReset;
 
 #[derive(Clone, Copy)]
-enum ZoomStep {
+pub(crate) enum ZoomStep {
     In,
     Out,
     Reset,
+}
+
+impl ZoomStep {
+    /// The step's name in the chat host's `stepInterfaceScale` message.
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::In => "in",
+            Self::Out => "out",
+            Self::Reset => "reset",
+        }
+    }
+
+    pub(crate) fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "in" => Some(Self::In),
+            "out" => Some(Self::Out),
+            "reset" => Some(Self::Reset),
+            _ => None,
+        }
+    }
+}
+
+/// Paints every chat at `percent` until the Interface scale chords' debounced save lands
+/// (`app/interface_scale_zoom.rs`), the way a chat's own chord does.
+#[allow(dead_code)] // The GPUI web build compiles this file without the desktop's chord host.
+pub(crate) fn set_pending_chat_zoom_percent(percent: Option<f32>) {
+    PENDING_ZOOM_PERCENT.with(|pending| pending.set(percent));
+}
+
+/// The zoom one chord lands on from `current`: the next rung up or down, or 100% for a reset.
+/// With no rung left in that direction the zoom stays where it is, clamped by the range.
+pub(crate) fn step_zoom_percent(current: f32, step: ZoomStep) -> f32 {
+    match step {
+        ZoomStep::Reset => RESET_ZOOM_PERCENT,
+        ZoomStep::In => ZOOM_PERCENT_RUNGS
+            .iter()
+            .copied()
+            .find(|rung| *rung > current + 0.01)
+            .unwrap_or(current),
+        ZoomStep::Out => ZOOM_PERCENT_RUNGS
+            .iter()
+            .rev()
+            .copied()
+            .find(|rung| *rung < current - 0.01)
+            .unwrap_or(current),
+    }
 }
 
 /// The one debounced save, whichever chat's chord started it; a later press replaces it.
@@ -101,14 +148,16 @@ pub(super) fn register(cx: &mut App) {
     cx.bind_keys(bindings);
 }
 
-/// The chat zoom every chat paints at: a chord's value still waiting to be saved, else the saved
-/// `sessionChatZoomPercent`.
+/// The chat zoom every chat paints at: a chord's value still waiting to be saved, else the one
+/// Interface scale gives the chat (the saved `sessionChatZoomPercent` when areas scale
+/// separately, else Scale).
 pub(super) fn chat_zoom_percent(settings: &serde_json::Map<String, serde_json::Value>) -> f32 {
     PENDING_ZOOM_PERCENT.with(Cell::get).unwrap_or_else(|| {
-        settings
-            .get("sessionChatZoomPercent")
-            .and_then(serde_json::Value::as_f64)
-            .unwrap_or(100.0) as f32
+        ghostex_settings_catalog::interface_scale::scaled_area_value(
+            settings,
+            "sessionChatZoomPercent",
+        )
+        .unwrap_or(100.0) as f32
     })
 }
 
@@ -164,22 +213,19 @@ impl NativeChatView {
 
     fn step_chat_zoom(&mut self, step: ZoomStep, cx: &mut Context<Self>) {
         cx.stop_propagation();
+        // Interface scale with areas together (CDXC:Settings 2026-11-05 in the settings catalog):
+        // the chord steps Scale, so the sidebar, Files and the terminal follow the chat.
+        let snapshot = crate::shared_settings::shared_sidebar_settings_snapshot();
+        if !ghostex_settings_catalog::interface_scale::scale_areas_separately(snapshot.object()) {
+            self.host(
+                "stepInterfaceScale",
+                serde_json::json!({ "step": step.as_str() }),
+                cx,
+            );
+            return;
+        }
         let current = current_chat_zoom_percent();
-        let next = match step {
-            ZoomStep::Reset => RESET_ZOOM_PERCENT,
-            // No rung left in that direction: the zoom stays where it is, clamped by the range.
-            ZoomStep::In => ZOOM_PERCENT_RUNGS
-                .iter()
-                .copied()
-                .find(|rung| *rung > current + 0.01)
-                .unwrap_or(current),
-            ZoomStep::Out => ZOOM_PERCENT_RUNGS
-                .iter()
-                .rev()
-                .copied()
-                .find(|rung| *rung < current - 0.01)
-                .unwrap_or(current),
-        };
+        let next = step_zoom_percent(current, step);
         if next == current {
             return;
         }
@@ -205,5 +251,44 @@ impl NativeChatView {
             });
         });
         cx.set_global(ChatZoomSave(save));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ZoomStep, step_zoom_percent};
+
+    #[test]
+    fn zoom_steps_through_the_rungs_and_resets_to_100() {
+        assert_eq!(step_zoom_percent(100.0, ZoomStep::In), 110.0);
+        assert_eq!(step_zoom_percent(110.0, ZoomStep::In), 125.0);
+        assert_eq!(step_zoom_percent(100.0, ZoomStep::Out), 90.0);
+        assert_eq!(step_zoom_percent(90.0, ZoomStep::Out), 80.0);
+        assert_eq!(step_zoom_percent(175.0, ZoomStep::Reset), 100.0);
+        assert_eq!(step_zoom_percent(70.0, ZoomStep::Reset), 100.0);
+    }
+
+    #[test]
+    fn zoom_between_rungs_lands_on_the_next_one() {
+        // A Settings slider value off the ladder (5% steps) steps to the nearest rung that way.
+        assert_eq!(step_zoom_percent(105.0, ZoomStep::In), 110.0);
+        assert_eq!(step_zoom_percent(105.0, ZoomStep::Out), 100.0);
+        assert_eq!(step_zoom_percent(135.0, ZoomStep::In), 150.0);
+        assert_eq!(step_zoom_percent(135.0, ZoomStep::Out), 125.0);
+    }
+
+    #[test]
+    fn zoom_stays_inside_70_to_200() {
+        assert_eq!(step_zoom_percent(200.0, ZoomStep::In), 200.0);
+        assert_eq!(step_zoom_percent(70.0, ZoomStep::Out), 70.0);
+        let mut percent = 100.0;
+        for _ in 0..20 {
+            percent = step_zoom_percent(percent, ZoomStep::In);
+        }
+        assert_eq!(percent, 200.0);
+        for _ in 0..20 {
+            percent = step_zoom_percent(percent, ZoomStep::Out);
+        }
+        assert_eq!(percent, 70.0);
     }
 }

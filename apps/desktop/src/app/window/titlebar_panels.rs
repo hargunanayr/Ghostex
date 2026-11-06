@@ -27,6 +27,7 @@ pub(crate) enum GpuiTitlebarPopupKind {
     RemoteSites,
     SessionLinks,
     Tips,
+    Updates,
 }
 
 impl GpuiTitlebarPopupKind {
@@ -47,6 +48,7 @@ impl GpuiTitlebarPopupKind {
             Self::RemoteSites => "remoteSites",
             Self::SessionLinks => "sessionLinks",
             Self::Tips => "tips",
+            Self::Updates => "updates",
         }
     }
 }
@@ -105,6 +107,7 @@ impl GpuiTitlebarPopupWindow {
             GpuiTitlebarPopupKind::RemoteSites => "Ghostex Remote Sites",
             GpuiTitlebarPopupKind::SessionLinks => "Ghostex Session Links",
             GpuiTitlebarPopupKind::Tips => "Ghostex Tips",
+            GpuiTitlebarPopupKind::Updates => "Ghostex Updates",
         });
         /*
         PopupMenu dispatches a clicked row's typed action through the focused
@@ -430,6 +433,15 @@ impl Render for GpuiTitlebarPopupWindow {
                 }),
             )
             .on_action(
+                cx.listener(|this, action: &RunGpuiTitlebarUpdates, window, cx| {
+                    let update_all = action.update_all;
+                    this.update_main_window(cx, move |app, main_window, cx| {
+                        app.run_gpui_titlebar_updates(update_all, Some(main_window), cx);
+                    });
+                    this.close_from_popup_window(window, cx);
+                }),
+            )
+            .on_action(
                 cx.listener(|this, action: &RunGpuiTitlebarHelpQuestion, window, cx| {
                     let question_index = action.question_index as usize;
                     this.update_main_window(cx, move |app, _main_window, cx| {
@@ -731,11 +743,23 @@ impl GpuiTitlebarReadingPanel {
 
 impl Render for GpuiTitlebarReadingPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        resource_panel_frame().child(match self.state {
-            GpuiTitlebarReadingPanelState::Tips { .. } => self.render_tips(cx),
-            GpuiTitlebarReadingPanelState::Resources { .. } => self.render_resources(cx),
-            GpuiTitlebarReadingPanelState::Notifications { .. } => self.render_notifications(cx),
-        })
+        match self.state {
+            GpuiTitlebarReadingPanelState::Tips { .. } => {
+                resource_panel_frame().child(self.render_tips(cx))
+            }
+            GpuiTitlebarReadingPanelState::Resources { .. } => {
+                resource_panel_frame().child(self.render_resources(cx))
+            }
+            GpuiTitlebarReadingPanelState::Notifications { .. } => {
+                return super::popup_frame::popup_open_frame(
+                    resource_panel_frame(),
+                    self.render_notifications(cx),
+                    false,
+                    cx.reduce_motion(),
+                );
+            }
+        }
+        .into_any_element()
     }
 }
 

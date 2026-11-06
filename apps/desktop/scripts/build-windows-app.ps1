@@ -60,7 +60,7 @@ function Invoke-CargoReleaseBuild([string[]]$CargoArguments) {
     $ReleaseDir = Join-Path (Get-Location) "target/release"
     New-Item -ItemType Directory -Force -Path $ReleaseDir | Out-Null
     # `--timings` only writes target/cargo-timings/*.html; it is not a rustc flag, so the
-    # artifacts and the sccache keys are unchanged. Opt-in (GHOSTEX_CARGO_TIMINGS=1) from the
+    # artifacts and the kache keys are unchanged. Opt-in (GHOSTEX_CARGO_TIMINGS=1) from the
     # release workflow, as on macOS (tooling/release-gpui/macos.sh).
     $TimingsArguments = @(if ($env:GHOSTEX_CARGO_TIMINGS -eq "1") { "--timings" })
     cargo build --release @CargoArguments @TimingsArguments --message-format=json-render-diagnostics |
@@ -286,6 +286,8 @@ Copy-Item -Recurse (Join-Path $GpuiDir "dist/sidebar") (Join-Path $AppDir "dist/
 $SoundResources = Join-Path $AppDir "resources/sounds"
 New-Item -ItemType Directory -Force -Path $SoundResources | Out-Null
 Copy-Item (Join-Path $RepoRoot "media/sounds/*.mp3") $SoundResources
+# The licence notices of the bundled third-party parts.
+Copy-Item (Join-Path $RepoRoot "THIRD_PARTY_NOTICES.md") (Join-Path $AppDir "resources")
 
 $ComponentRoot = Join-Path $RepoRoot "build/on-demand-components"
 $ComponentAssetDir = Join-Path $ComponentRoot "assets"
@@ -310,7 +312,7 @@ if ($OnDemandComponents) {
     Remove-Item -Recurse -Force $CefComponentStage
     & node (Join-Path $RepoRoot "tooling/release-gpui/publish-component.mjs") `
         --metadata-only `
-        --reuse-published `
+        --require-published-match `
         --component cef `
         --version $CefComponentVersion `
         --platform "windows-$ReleaseArch" `
@@ -427,7 +429,7 @@ if ($WslCodeServerArchive -and (Test-Path $WslCodeServerArchive)) {
     )
     & node (Join-Path $RepoRoot "tooling/release-gpui/publish-component.mjs") `
         --metadata-only `
-        --reuse-published `
+        --require-published-match `
         --component code-server `
         --version $ComponentVersion `
         --platform "windows-$ReleaseArch" `

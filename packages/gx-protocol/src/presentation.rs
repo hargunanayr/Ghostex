@@ -85,6 +85,11 @@ pub struct PresentationCapabilities {
     /// the workspace routes. Without it a client shows the machine unfiltered.
     #[serde(default, deserialize_with = "crate::de::null_as_default")]
     pub workspaces: bool,
+    /// The daemon looks up `attention.notificationId`. Without it a client has no exact link from
+    /// an attention to its Notifications row; with it, a missing id means there is no row to link
+    /// right now (not written yet, or already dismissed, cleared or pruned).
+    #[serde(default, deserialize_with = "crate::de::null_as_default")]
+    pub attention_notification_id: bool,
 }
 
 /// One synthetic group per project today (`<projectId>:active`). User-made groups live in
@@ -185,8 +190,9 @@ pub struct PresentationProject {
     /// project and from an older daemon.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bot_runs_today: Option<u64>,
-    /// Issues Workflow (formerly Work mode) is on for this project: a Linear key applies to it or
-    /// `gh` is signed in (server/src/work_mode/project.rs). Present only when true.
+    /// Issues Workflow (formerly Work mode) is on for this project: a Linear key applies to it, `gh`
+    /// is signed in, or its workspace has a ticket command (server/src/work_mode/project.rs).
+    /// Present only when true.
     #[serde(
         default,
         deserialize_with = "crate::de::null_as_default",
@@ -201,6 +207,15 @@ pub struct PresentationProject {
         skip_serializing_if = "is_false"
     )]
     pub work_linear: bool,
+    /// Create Linear Ticket is offered: a Linear key applies and the workspace picked Linear as its
+    /// tracker or the key is the project's or its workspace's own, not only the shared key. Present
+    /// only when true; absent from an older daemon (the item stays hidden).
+    #[serde(
+        default,
+        deserialize_with = "crate::de::null_as_default",
+        skip_serializing_if = "is_false"
+    )]
+    pub work_linear_create: bool,
     /// Issues Workflow is on but `gh` is not signed in, so its GitHub parts (pull requests, GitHub
     /// issues and projects) are hidden. Present only when true; absent from an older daemon, whose
     /// work mode had no such rule (read as signed in).
@@ -212,7 +227,8 @@ pub struct PresentationProject {
     pub work_github_off: bool,
     /// `linear` or `github`: the primary tracker of the project's workspace (server/src/work_mode/
     /// tracker.rs), which decides what Create ticket makes and what Link to offers. Present only
-    /// with work mode on; absent from an older daemon (read as Linear).
+    /// with work mode on; absent from an older daemon (read as Linear), and when the tracker is
+    /// the workspace's ticket command (`work_source.is_tracker`), so it never names one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub work_tracker: Option<String>,
     /// The workspace this project belongs to; absent = the default workspace (and on an older
@@ -231,6 +247,11 @@ pub struct PresentationProject {
     /// daemon (server/src/ghosts/published.rs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ghost: Option<PresentationGhost>,
+    /// The ticket command of the project's workspace (server/src/work_mode/command/), a source of
+    /// tickets on its sessions' cards. Absent without one, in a team workspace (where it is
+    /// stopped), and from an older daemon.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work_source: Option<PresentationWorkSource>,
 }
 
 /// A Ghost as its home project's row carries it.
@@ -253,6 +274,26 @@ pub struct PresentationGhost {
     pub project_ids: Vec<String>,
     #[serde(default, deserialize_with = "crate::de::null_as_default")]
     pub show_threads_in_sidebar: bool,
+}
+
+/// A workspace's ticket command as a project row shows it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PresentationWorkSource {
+    /// The id its `info` pinned, which its tickets' keys and link kinds start with (`fixture`).
+    pub id: String,
+    /// Its name for the workspace (`info.name`). Its icon is not on the row (CDXC:WorkMode
+    /// 2026-11-03 in server/src/work_mode/project.rs).
+    pub name: String,
+    /// Whether it is the workspace's primary tracker (picked with `ghostex issues tracker <id>`).
+    /// Then the row has no `work_tracker` and no `work_linear`, which old clients would read as
+    /// Linear's or GitHub's (server/src/presentation/session_projection.rs).
+    #[serde(default, deserialize_with = "crate::de::null_as_default")]
+    pub is_tracker: bool,
+    /// Whether it creates tickets now: its `info` says it does and its program can run there
+    /// (`/api/createWorkTicket`). Absent from an older daemon.
+    #[serde(default, deserialize_with = "crate::de::null_as_default")]
+    pub can_create: bool,
 }
 
 impl PresentationProject {
@@ -385,6 +426,14 @@ pub struct SessionActions {
     pub wake: bool,
 }
 
+open_string_enum! {
+    /// Whether an attention is a finished turn or waits on the user's answer.
+    AttentionKind {
+        Finished => "finished",
+        NeedsInput => "needsInput",
+    }
+}
+
 /// Present only while `activity` is `attention`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -395,6 +444,26 @@ pub struct AttentionState {
     pub entered_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event_id: Option<String>,
+    /// `finished` only for a finished turn while nothing waits on the user (no unanswered question,
+    /// also on a sleeping or stopped session, no approval, stored chat prompt or connector card);
+    /// `needsInput` otherwise. Decided from the live session, so it can differ from the
+    /// Notifications row's kind. Absent on an older daemon.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<AttentionKind>,
+    /// When the working stint this attention ended started. Present when the session entered the
+    /// attention from working, or a connector card shows a session that is still working; absent
+    /// when the attention came from idle (a bell, Stop or connector card after an acknowledgement,
+    /// including rows acknowledged by an older daemon) or the start is not known. Exception: an
+    /// attention an older daemon stored before the upgrade keeps the start it copied, which can be
+    /// an earlier, acknowledged stint's start. That holds on running, sleeping and stopped rows,
+    /// and for a connector card shown over such an attention, until the next acknowledgement or
+    /// working stint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_started_at: Option<String>,
+    /// The Notifications row written for this attention event, while it exists
+    /// (`PresentationCapabilities::attention_notification_id`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notification_id: Option<String>,
 }
 
 /// Health of the zmx title watcher.
@@ -863,6 +932,11 @@ pub struct PresentationSession {
         skip_serializing_if = "std::ops::Not::not"
     )]
     pub awaiting_approval: bool,
+    /// Since when a working session has shown no output, present only while that has lasted long
+    /// enough to count as stuck (gxserver's coordinators/stall.rs); clients draw the red
+    /// not-moving dot and play the not-moving sound when it appears.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stuck_since: Option<String>,
     #[serde(default, deserialize_with = "crate::de::null_as_default")]
     pub actions: SessionActions,
     /// Falls back to `createdAt` on the server, so it cannot say whether the session was ever
@@ -885,6 +959,10 @@ pub struct PresentationSession {
     /// The sidebar draws it as a red dot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_selection_failure: Option<String>,
+    /// A chat message that could not be sent, or that waits on a closed session: the same red dot,
+    /// and its tooltip (server/src/session_chat_send_failure.rs).
+    #[serde(default)]
+    pub send_failure: Option<String>,
     /// The session's OSC 7501 program status; absent when it has no records to show.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub program_status: Option<ProgramStatus>,
@@ -950,6 +1028,10 @@ pub struct PresentationSession {
     /// Present only for a Claude cloud session: the agent runs on claude.ai's computers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_cloud: Option<PresentationClaudeCloud>,
+    /// Present only for a Cloud Box session (on the box's gxserver) or a draft whose tray picked
+    /// Cloud Box (on home gxserver): the ☁ badge and its state dot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloud_box: Option<crate::cloud_box::PresentationCloudBox>,
     /// Accounts or agents this session can be resumed under; element shape kept loose.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub switchable_agents: Option<Value>,
@@ -976,6 +1058,14 @@ pub struct PresentationSession {
     /// `finished`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coordinator_thread_state: Option<String>,
+    /// A coordinator's threads that run on other computers this one is connected to; the client
+    /// nests those computers' rows under the coordinator (server/src/coordinators/remote_threads.rs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coordinator_remote_threads: Option<Vec<PresentationRemoteThread>>,
+    /// The main session this session is a side chat of (server/src/side_chats/); a side chat is
+    /// left out of every session list and shown from its main chat's Side chats pill.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub side_chat_parent_session_id: Option<String>,
 
     // Title block.
     #[serde(default, deserialize_with = "crate::de::null_as_default")]
@@ -1078,6 +1168,162 @@ pub struct PresentationSession {
     pub close_after_done_deadline_at: Option<String>,
 }
 
+impl PresentationSession {
+    /// Whether the session is a row of the session lists: a workspace session the daemon shows by
+    /// default, and not a side chat (those are reached from their main chat's Side chats pill).
+    pub fn listed_in_sidebar(&self) -> bool {
+        self.visible_in_sidebar_by_default
+            && self.surface != SessionSurface::Commands
+            && self.side_chat_parent_session_id.is_none()
+    }
+}
+
 fn is_false(value: &bool) -> bool {
     !*value
+}
+
+/// One of a coordinator's threads on another computer: that computer's server id, the thread's ids
+/// there, and its state as the coordinator's computer sees it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PresentationRemoteThread {
+    #[serde(default)]
+    pub server_id: String,
+    #[serde(default)]
+    pub project_id: String,
+    #[serde(default)]
+    pub session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_state: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::delta::PresentationDelta;
+
+    const ENTERED_AT: &str = "2026-10-31T09:00:30.000Z";
+    const STARTED_AT: &str = "2026-10-31T09:00:00.000Z";
+
+    fn session_with_attention(attention: Value) -> Value {
+        json!({
+            "projectId": "P1",
+            "sessionId": "G1",
+            "groupId": "P1:active",
+            "kind": "agent",
+            "surface": "workspace",
+            "lifecycleState": "running",
+            "activity": "attention",
+            "attention": attention,
+        })
+    }
+
+    fn full_attention() -> Value {
+        json!({
+            "acknowledged": false,
+            "enteredAt": ENTERED_AT,
+            "eventId": "attn_1",
+            "kind": "finished",
+            "workingStartedAt": STARTED_AT,
+            "notificationId": "row-1",
+        })
+    }
+
+    #[test]
+    fn attention_extensions_accept_older_wire_shapes() {
+        let older_attention =
+            json!({ "acknowledged": false, "enteredAt": ENTERED_AT, "eventId": "attn_1" });
+        let older: PresentationSession =
+            serde_json::from_value(session_with_attention(older_attention.clone()))
+                .expect("an older daemon's attention parses");
+        let attention = older.attention.expect("attention");
+        assert_eq!(attention.kind, None);
+        assert_eq!(attention.working_started_at, None);
+        assert_eq!(attention.notification_id, None);
+        assert_eq!(
+            serde_json::to_value(&attention).expect("serialize"),
+            older_attention,
+            "absent additions stay absent, never null"
+        );
+
+        let capabilities: PresentationCapabilities =
+            serde_json::from_value(json!({ "sessionSettlement": true, "sessionSnooze": true }))
+                .expect("an older daemon's capabilities parse");
+        assert!(!capabilities.attention_notification_id);
+        let capabilities: PresentationCapabilities =
+            serde_json::from_value(json!({ "attentionNotificationId": true }))
+                .expect("capabilities parse");
+        assert!(capabilities.attention_notification_id);
+
+        let newer: PresentationSession =
+            serde_json::from_value(session_with_attention(full_attention()))
+                .expect("a newer daemon's attention parses");
+        let attention = newer.attention.expect("attention");
+        assert_eq!(attention.kind, Some(AttentionKind::Finished));
+        assert_eq!(attention.working_started_at.as_deref(), Some(STARTED_AT));
+        assert_eq!(attention.notification_id.as_deref(), Some("row-1"));
+        assert_eq!(
+            serde_json::to_value(&attention).expect("serialize"),
+            full_attention()
+        );
+    }
+
+    #[test]
+    fn unknown_attention_kind_does_not_drop_session() {
+        let snapshot: PresentationSnapshot = serde_json::from_value(json!({
+            "revision": 3,
+            "projects": [],
+            "groups": [],
+            "sessions": [session_with_attention(json!({ "acknowledged": false, "kind": "failed" }))],
+        }))
+        .expect("snapshot parses");
+        assert_eq!(snapshot.skipped_row_count(), 0);
+        let attention = snapshot.sessions[0].attention.as_ref().expect("attention");
+        assert_eq!(
+            attention.kind,
+            Some(AttentionKind::Other("failed".to_string()))
+        );
+        assert_eq!(
+            serde_json::to_value(attention).expect("serialize")["kind"],
+            json!("failed"),
+            "an unknown kind round-trips verbatim"
+        );
+    }
+
+    #[test]
+    fn absent_attention_fields_clear_on_replacement() {
+        let changed = |attention: Value| -> PresentationSession {
+            match PresentationDelta::from_value(json!({
+                "type": "sessionPresentationChanged",
+                "session": session_with_attention(attention),
+            }))
+            .expect("delta parses")
+            {
+                PresentationDelta::SessionPresentationChanged { session } => *session,
+                other => panic!("unexpected delta {other:?}"),
+            }
+        };
+        let first = changed(full_attention());
+        assert_eq!(
+            first
+                .attention
+                .as_ref()
+                .and_then(|attention| attention.notification_id.as_deref()),
+            Some("row-1")
+        );
+        // The row was dismissed and a question came up: the next whole session carries no id and
+        // another kind, and nothing of the earlier attention survives in the decoded session.
+        let second = changed(json!({
+            "acknowledged": false,
+            "enteredAt": ENTERED_AT,
+            "eventId": "attn_1",
+            "kind": "needsInput",
+        }));
+        let attention = second.attention.as_ref().expect("attention");
+        assert_eq!(attention.notification_id, None);
+        assert_eq!(attention.working_started_at, None);
+        assert_eq!(attention.kind, Some(AttentionKind::NeedsInput));
+    }
 }

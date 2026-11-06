@@ -94,6 +94,13 @@ fn is_local_snapshot(event: &Event) -> bool {
 #[derive(Default)]
 pub(crate) struct GxStoreHost {
     pub(crate) core: Core,
+    /// The close a close confirmation holds while it is open (`sidebar_close_confirm.rs`).
+    pub(crate) pending_session_close: Option<super::sidebar_close_confirm::PendingSessionClose>,
+    /// Set while a confirmed close runs, so the same close does not ask again.
+    pub(crate) session_close_confirmed: bool,
+    /// The door a tab or session-control close came through, set by that door and taken by the
+    /// request it builds, for gxserver's close log (server/src/session_close_log.rs).
+    pub(crate) close_source: Option<&'static str>,
     pub(super) client: Option<GxClient>,
     transport: Option<GxStoreTransport>,
     /// Bumped by every client start, so a pump task or a restart timer of an earlier client can
@@ -161,6 +168,7 @@ pub(crate) struct GxStoreHost {
     /// K5 and K6 on a REMOTE machine: the per-machine `nextCollectionNumber` floor and what this
     /// run sent down the machine tunnels.
     pub(super) remote_project_docs: super::remote_project_docs::RemoteProjectDocsHost,
+    /// The passes that keep every computer's Spaces and groups alike in the one-list sidebar.
     /// A Project Group's Rename, colour and Ungroup, which write the same K5 document.
     pub(super) collection_menu: super::collection_menu::CollectionMenuCounters,
     /// The New/Edit Space dialog's results, which write the K6 document.
@@ -188,6 +196,8 @@ pub(crate) struct GxStoreHost {
     pub(super) indicators: super::indicators::IndicatorsHost,
     /// The Unified sidebar's per-machine lists, alive only while it is selected (unified_sidebar.rs).
     pub(crate) unified_sidebar: super::unified_sidebar::UnifiedSidebarHost,
+    /// The drafts each sidebar last drew, to open Drafts for a new one (draft_arrivals.rs).
+    pub(crate) draft_arrivals: super::draft_arrivals::DraftArrivalsHost,
     /// The collection a project move just created, which the renderer opens its Rename on. Held
     /// here rather than carried from the old projection's publish, because the create is the
     /// store's now and the publish would not know about it.

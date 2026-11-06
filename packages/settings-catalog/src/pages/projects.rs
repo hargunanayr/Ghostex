@@ -4,8 +4,25 @@ pub(crate) fn page() -> Page {
     Page {
         id: "projects",
         title: "Projects",
-        sections: vec![docs(), global_defaults(), project_settings()],
+        sections: vec![
+            new_projects(),
+            docs(),
+            global_defaults(),
+            project_settings(),
+        ],
     }
+}
+
+pub(crate) fn new_projects() -> Section {
+    section(
+        "newProjects",
+        "New projects",
+        vec![row(
+            "defaultProjectsFolder",
+            "Default projects folder",
+            "Folder that holds your projects, like ~/dev. Add Project's New project folder makes new projects here, and Local folder starts here. Left blank, Add Project suggests the folder that holds the selected project (else ~/dev) and saves the folder your first new project is made in.",
+        )],
+    )
 }
 
 pub(crate) fn docs() -> Section {
@@ -43,6 +60,9 @@ pub(crate) fn project_settings() -> Section {
             row("beadsDirectory", "Beads directory", "Absolute path the Project board reads its Beads workspace (.beads) from."),
             row("docsDirectory", "Docs directory", "Extra folder this project's Files view shows, in addition to its own docs."),
             row("projectLinearApiKey", "Project Linear API key", "A Linear key for this project only, used instead of its workspace's or the shared key. Issues Workflow shows Linear tickets once a key applies to the project."),
+            row("projectCloudBoxDefaults", "Cloud box provider and size", "Which provider and machine size a new Cloud Box for this project starts on."),
+            row("projectCloudBoxSnapshots", "Cloud box snapshots", "This project's saved snapshots: what a new Cloud Box starts from. Make one the Default (★), update the Default from a running box, or delete one."),
+            row("projectCloudBoxSecrets", "Send to the box", "Tick the project's .env files and name the variables a Cloud Box gets at start. Their values are read from this computer each time and never saved in a snapshot."),
         ],
     )
 }

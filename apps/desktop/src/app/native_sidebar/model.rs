@@ -68,6 +68,11 @@ pub(crate) struct NativeSidebarGroup {
     /// One of this project's session groups holds the focused session.
     #[serde(default)]
     pub(crate) holds_active_session_group: bool,
+    /// The machines a project the one-list sidebar merged is on (gx-core `GroupCore::machine_names`),
+    /// drawn after its name.
+    /// Each is `(name, short name)`; the chip draws the short name (gx-core `MachineChip`).
+    #[serde(default)]
+    pub(crate) machine_names: Vec<(String, String)>,
     pub(crate) project_context: Option<Value>,
     pub(crate) remote_machine_context: Option<Value>,
     #[serde(deserialize_with = "deserialize_sessions")]
@@ -112,6 +117,10 @@ pub(crate) struct NativeSidebarSession {
     /// Stuck on a permission prompt or approval card only the user can grant (the red dot).
     #[serde(default)]
     pub(crate) awaiting_approval: bool,
+    /// Working with no output for long enough to count as stuck (gx-core `SessionRow::stuck`): the
+    /// red dot, like a failure.
+    #[serde(default)]
+    pub(crate) stuck: bool,
     pub(crate) agent_icon: Option<String>,
     pub(crate) kind: Option<String>,
     pub(crate) session_kind: Option<String>,

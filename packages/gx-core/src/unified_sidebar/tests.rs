@@ -67,6 +67,8 @@ fn group(project: &str, path: &str, origin: Option<&str>, sessions: Vec<SessionR
             sessions: sessions.into_iter().map(view_of).collect(),
             remote_machine: None,
             is_stale: false,
+            machine_names: Vec::new(),
+            action_target: None,
         }),
         collection_color: None,
         collection_id: None,
@@ -134,6 +136,79 @@ fn repo_identity_falls_back_to_the_folder_and_a_worktree_to_its_parent() {
     let windows = repo_identity(None, "C:\\code\\Tool", None, "x");
     assert_eq!(windows.label, "Tool");
     assert_eq!(repo_identity(None, "", None, " Notes ").label, "Notes");
+}
+
+#[test]
+fn a_filter_row_names_every_project_its_remove_takes_out() {
+    let windows = MachineId::Remote("windows".to_string());
+    let local = SidebarView {
+        groups: vec![
+            group(
+                "P1",
+                "/a/ghostex",
+                Some("git@github.com:o/Ghostex.git"),
+                vec![],
+            ),
+            group(
+                "P2",
+                "/a/other",
+                Some("https://github.com/o/other.git"),
+                vec![],
+            ),
+        ],
+        ..SidebarView::default()
+    };
+    let remote = SidebarView {
+        groups: vec![group(
+            "P9",
+            "/w/ghostex",
+            Some("https://github.com/o/Ghostex"),
+            vec![],
+        )],
+        ..SidebarView::default()
+    };
+    let inputs = [
+        UnifiedMachineInput {
+            machine: MachineId::Local,
+            label: "Local".to_string(),
+            view: &local,
+            spaces: None,
+        },
+        UnifiedMachineInput {
+            machine: windows.clone(),
+            label: "Windows".to_string(),
+            view: &remote,
+            spaces: None,
+        },
+    ];
+    let view = build_unified_sidebar(
+        &inputs,
+        UnifiedSettings::default(),
+        &UnifiedFilter::default(),
+        0,
+    );
+    let ghostex = view
+        .options
+        .repos
+        .iter()
+        .find(|option| option.label == "Ghostex")
+        .unwrap();
+    let group_of = |machine: MachineId, project: &str| {
+        crate::keys::ProjectKey {
+            machine,
+            project_id: project.to_string(),
+        }
+        .to_sidebar_group_id()
+    };
+    let mut expected = vec![group_of(MachineId::Local, "P1"), group_of(windows, "P9")];
+    expected.sort();
+    assert_eq!(ghostex.project_group_ids, expected);
+    // Machines and Spaces name none, so they get no Remove.
+    assert!(view
+        .options
+        .machines
+        .iter()
+        .all(|option| option.project_group_ids.is_empty()));
 }
 
 #[test]
@@ -401,6 +476,127 @@ fn the_filter_narrows_by_repository_machine_and_space_together() {
 }
 
 #[test]
+fn the_active_space_scopes_its_machine_and_leaves_the_others() {
+    let remote = MachineId::Remote("r".to_string());
+    let local_view = sidebar(vec![
+        group(
+            "web",
+            "/dev/web",
+            None,
+            vec![row(&MachineId::Local, "web", "w")],
+        ),
+        group(
+            "api",
+            "/dev/api",
+            None,
+            vec![row(&MachineId::Local, "api", "a")],
+        ),
+    ]);
+    let remote_view = sidebar(vec![group(
+        "srv",
+        "/srv/srv",
+        None,
+        vec![row(&remote, "srv", "rs")],
+    )]);
+    let mut spaces = BTreeMap::new();
+    spaces.insert(
+        "work".to_string(),
+        Space {
+            space_id: "work".to_string(),
+            name: "Work".to_string(),
+            member_project_ids: vec!["api".to_string()],
+            ..Space::default()
+        },
+    );
+    let state = SpacesState {
+        order: vec!["work".to_string()],
+        spaces,
+    };
+    let mut remote_spaces = state.clone();
+    remote_spaces
+        .spaces
+        .get_mut("work")
+        .unwrap()
+        .member_project_ids = vec!["srv".to_string()];
+    let machines = [
+        UnifiedMachineInput {
+            machine: MachineId::Local,
+            label: "Local".to_string(),
+            view: &local_view,
+            spaces: Some(state),
+        },
+        UnifiedMachineInput {
+            machine: remote.clone(),
+            label: "hp".to_string(),
+            view: &remote_view,
+            spaces: Some(remote_spaces),
+        },
+    ];
+    let scope = |space_id: &str| UnifiedSpaceScope {
+        machine: MachineId::Local,
+        space_id: space_id.to_string(),
+        label: space_id.to_string(),
+        every_machine: false,
+    };
+    let build = |filter: &UnifiedFilter, space_id: &str| {
+        build_unified_sidebar_scoped(&machines, settings(), filter, Some(&scope(space_id)), NOW)
+    };
+    let sorted = |view: &UnifiedSidebarView| {
+        let mut rows = ids(&view.active);
+        rows.sort();
+        rows
+    };
+
+    let work = build(&UnifiedFilter::default(), "work");
+    assert_eq!(sorted(&work), ["a", "r:srv:rs"]);
+    assert_eq!(work.total, 2, "the total counts the Space's rows");
+    let repos: Vec<&str> = work
+        .options
+        .repos
+        .iter()
+        .map(|option| option.label.as_str())
+        .collect();
+    assert_eq!(
+        repos,
+        ["api", "srv"],
+        "a project of another Space is no filter choice"
+    );
+    let spaces: Vec<&str> = work
+        .options
+        .spaces
+        .iter()
+        .map(|option| option.key.as_str())
+        .collect();
+    assert_eq!(
+        spaces,
+        ["r|work", "r|other"],
+        "the Space row picks this machine's Spaces"
+    );
+
+    assert_eq!(
+        sorted(&build(&UnifiedFilter::default(), "other")),
+        ["r:srv:rs", "w"]
+    );
+
+    let mut local_only = UnifiedFilter::default();
+    local_only.machines.insert("local".to_string());
+    assert_eq!(
+        sorted(&build(&local_only, "work")),
+        ["a"],
+        "the filter narrows inside the Space"
+    );
+
+    let unscoped = build_unified_sidebar(&machines, settings(), &UnifiedFilter::default(), NOW);
+    assert_eq!(unscoped.total, 3);
+
+    let local_spaces = machines[0].spaces.as_ref().unwrap();
+    let space_of = |project: &str| unified_space_of_project(&local_view, local_spaces, project);
+    assert_eq!(space_of("api").as_deref(), Some("work"));
+    assert_eq!(space_of("web").as_deref(), Some("other"));
+    assert_eq!(space_of("gone"), None);
+}
+
+#[test]
 fn a_worktree_project_is_its_parents_repository() {
     let mut worktree = group(
         "wt",
@@ -583,10 +779,10 @@ fn a_quick_access_project_pick_finds_its_repository() {
         vec![row(&local, "p1", "a")],
     )]);
     assert_eq!(
-        repo_of_project(&view, "p1").map(|repo| repo.key),
+        repo_of_project(&[&view], "p1").map(|repo| repo.key),
         Some("github.com/o/ghostex".to_string())
     );
-    assert!(repo_of_project(&view, "missing").is_none());
+    assert!(repo_of_project(&[&view], "missing").is_none());
 }
 
 #[test]
@@ -659,4 +855,404 @@ fn a_cards_snooze_button_gets_the_presets_without_a_snooze_hover_button() {
         .filter_map(|item| item.label.clone())
         .collect();
     assert_eq!(labels, ["1 Hour", "3 Hours", "Tomorrow", "Next Week"]);
+}
+
+/// A worker of the coordinator `parent`, as the Project sidebar links it.
+fn worker_of(mut row: SessionRow, parent: &SessionRow) -> SessionRow {
+    row.coordinator_parent = parent.key.clone();
+    row
+}
+
+fn coordinator(machine: &MachineId, project: &str, id: &str) -> SessionRow {
+    SessionRow {
+        is_coordinator: true,
+        ..row(machine, project, id)
+    }
+}
+
+fn every_card(view: &UnifiedSidebarView) -> Vec<String> {
+    let mut all: Vec<String> = [
+        &view.drafts,
+        &view.pinned,
+        &view.active,
+        &view.working,
+        &view.snoozed,
+        &view.parked,
+    ]
+    .into_iter()
+    .flat_map(|rows| ids(rows))
+    .collect();
+    all.sort();
+    all
+}
+
+#[test]
+fn a_coordinators_workers_here_and_on_another_computer_are_no_cards_of_their_own() {
+    let local = MachineId::Local;
+    let windows = MachineId::Remote("windows".to_string());
+    let lead = coordinator(&local, "p", "lead");
+    let here = worker_of(row(&local, "p", "here"), &lead);
+    // The worker on Windows: its own computer's row has no link, the copy under its coordinator does.
+    let away = row(&windows, "w", "away");
+    let borrowed = worker_of(away.clone(), &lead);
+    let mine = row(&local, "p", "mine");
+    let local_view = sidebar(vec![group(
+        "p",
+        "/p",
+        None,
+        vec![lead, here, borrowed, mine],
+    )]);
+    let remote_view = sidebar(vec![group("w", "/w", None, vec![away])]);
+    let machines = [
+        UnifiedMachineInput {
+            machine: local.clone(),
+            label: "Local".to_string(),
+            view: &local_view,
+            spaces: None,
+        },
+        UnifiedMachineInput {
+            machine: windows.clone(),
+            label: "Windows".to_string(),
+            view: &remote_view,
+            spaces: None,
+        },
+    ];
+    let built = build_unified_sidebar(&machines, settings(), &UnifiedFilter::default(), NOW);
+    assert_eq!(every_card(&built), ["lead", "mine"]);
+    assert_eq!(built.total, 2, "the counts leave workers out too");
+}
+
+#[test]
+fn a_worker_whose_coordinator_is_gone_and_a_nested_coordinators_workers() {
+    let local = MachineId::Local;
+    let gone = coordinator(&local, "p", "gone");
+    let orphan = worker_of(row(&local, "p", "orphan"), &gone);
+    let top = coordinator(&local, "p", "top");
+    let middle = worker_of(coordinator(&local, "p", "middle"), &top);
+    let deep = worker_of(row(&local, "p", "deep"), &middle);
+    let view = sidebar(vec![group(
+        "p",
+        "/p",
+        None,
+        vec![orphan, top, middle, deep],
+    )]);
+    let machines = [UnifiedMachineInput {
+        machine: local,
+        label: "Local".to_string(),
+        view: &view,
+        spaces: None,
+    }];
+    let built = build_unified_sidebar(&machines, settings(), &UnifiedFilter::default(), NOW);
+    assert_eq!(every_card(&built), ["orphan", "top"]);
+}
+
+#[test]
+fn a_card_says_no_source_control_only_for_a_project_outside_git_without_a_branch() {
+    let local = MachineId::Local;
+    let mut repo = group(
+        "P1",
+        "/Users/a/dev/ghostex",
+        None,
+        vec![row(&local, "P1", "S1")],
+    );
+    Arc::make_mut(&mut repo.core)
+        .project_context
+        .as_mut()
+        .expect("a project")
+        .git_work_tree = true;
+    let folder = group("P2", "/Users/a", None, vec![row(&local, "P2", "S2")]);
+    let mut on_branch = row(&local, "P3", "S3");
+    on_branch.menu_facts.branch = Some("main".to_string());
+    // A session with a branch in a project the probe has not reached yet.
+    let unprobed = group("P3", "/Users/a/dev/new", None, vec![on_branch]);
+    let view = sidebar(vec![repo, folder, unprobed]);
+    let list = build_unified_sidebar(
+        &[UnifiedMachineInput {
+            machine: local.clone(),
+            label: "Mac".to_string(),
+            view: &view,
+            spaces: None,
+        }],
+        settings(),
+        &UnifiedFilter::default(),
+        NOW,
+    );
+    let claims: BTreeMap<String, bool> = list
+        .active
+        .iter()
+        .map(|row| {
+            (
+                row.session.row.sidebar_session_id.clone(),
+                row.no_source_control,
+            )
+        })
+        .collect();
+    assert_eq!(claims.get("S1"), Some(&false), "a git project");
+    assert_eq!(claims.get("S2"), Some(&true), "a plain folder");
+    assert_eq!(claims.get("S3"), Some(&false), "a session with a branch");
+}
+
+#[test]
+fn a_computer_gives_cards_only_while_its_stream_is_live() {
+    use crate::presentation_store::{PresentationStore, SnapshotOrigin};
+    use crate::ConnectionUpdate;
+
+    let snapshot = || {
+        serde_json::from_value(serde_json::json!({
+            "revision": 1,
+            "generatedAt": "2026-11-05T00:00:00.000Z",
+            "projects": [],
+            "groups": [],
+            "sessions": [],
+        }))
+        .expect("a snapshot")
+    };
+    let windows = MachineId::Remote("windows".to_string());
+    let mut store = PresentationStore::default();
+    assert!(
+        unified_shows_machine(&store, &MachineId::Local),
+        "this computer always"
+    );
+    assert!(!unified_shows_machine(&store, &windows), "not loaded");
+
+    store.seed_last_seen(&windows, snapshot());
+    assert!(
+        !unified_shows_machine(&store, &windows),
+        "only its stored copy"
+    );
+
+    store.apply_snapshot(&windows, "S8g", snapshot(), SnapshotOrigin::Stream);
+    store.apply_connection(&windows, ConnectionUpdate::Live, 1);
+    assert!(unified_shows_machine(&store, &windows), "live");
+
+    store.apply_connection(&windows, ConnectionUpdate::Lost { error: None }, 2);
+    assert!(!unified_shows_machine(&store, &windows), "disconnected");
+    store.apply_connection(&windows, ConnectionUpdate::Connecting { attempt: 1 }, 3);
+    assert!(!unified_shows_machine(&store, &windows), "reconnecting");
+
+    store.apply_connection(&windows, ConnectionUpdate::Live, 4);
+    assert!(
+        unified_shows_machine(&store, &windows),
+        "back once it reconnects"
+    );
+}
+
+#[test]
+fn every_card_has_a_third_line() {
+    let local = MachineId::Local;
+    let mut on_branch = row(&local, "P1", "S1");
+    on_branch.menu_facts.branch = Some("feature".to_string());
+    let mut repo = group(
+        "P1",
+        "/r/repo",
+        None,
+        vec![on_branch, row(&local, "P1", "S2")],
+    );
+    Arc::make_mut(&mut repo.core)
+        .project_context
+        .as_mut()
+        .expect("a project")
+        .git_work_tree = true;
+    let folder = group("P2", "/Users/a", None, vec![row(&local, "P2", "S3")]);
+    let view = sidebar(vec![repo, folder]);
+    let list = build_unified_sidebar(
+        &[UnifiedMachineInput {
+            machine: local.clone(),
+            label: "Mac".to_string(),
+            view: &view,
+            spaces: None,
+        }],
+        settings(),
+        &UnifiedFilter::default(),
+        NOW,
+    );
+    let find = |id: &str| {
+        list.active
+            .iter()
+            .find(|row| row.session.row.sidebar_session_id == id)
+            .expect("a card")
+    };
+    assert_eq!(
+        unified_branch_line(find("S1"), Some("old")),
+        UnifiedBranchLine::Branch("feature".to_string())
+    );
+    assert_eq!(
+        unified_branch_line(find("S3"), None),
+        UnifiedBranchLine::Untracked
+    );
+    assert_eq!(
+        unified_branch_line(find("S2"), Some("main")),
+        UnifiedBranchLine::LastKnown("main".to_string())
+    );
+    assert_eq!(
+        unified_branch_line(find("S2"), None),
+        UnifiedBranchLine::Unknown
+    );
+    assert_eq!(
+        unified_branch_line(find("S2"), Some(" ")),
+        UnifiedBranchLine::Unknown
+    );
+}
+
+/// CDXC:Sidebar 2026-11-05 (unified_sidebar/reveal.rs): a revealed working card, here and on
+/// another computer, opens the folded Working shelf, inside its project group too.
+#[test]
+fn revealing_a_working_card_opens_its_shelf_and_its_folded_project() {
+    let remote = MachineId::Remote("r".to_string());
+    let mut here = row(&MachineId::Local, "web", "here");
+    here.activity = "working".to_string();
+    let mut there = row(&remote, "web2", "there");
+    there.activity = "working".to_string();
+    let local_view = sidebar(vec![group(
+        "web",
+        "/dev/web",
+        Some("git@github.com:o/web.git"),
+        vec![here],
+    )]);
+    let remote_view = sidebar(vec![group(
+        "web2",
+        "/srv/web",
+        Some("git@github.com:o/web.git"),
+        vec![there],
+    )]);
+    let machines = [
+        UnifiedMachineInput {
+            machine: MachineId::Local,
+            label: "Local".to_string(),
+            view: &local_view,
+            spaces: None,
+        },
+        UnifiedMachineInput {
+            machine: remote,
+            label: "hp".to_string(),
+            view: &remote_view,
+            spaces: None,
+        },
+    ];
+    let built = build_unified_sidebar(&machines, settings(), &UnifiedFilter::default(), NOW);
+    for id in ["here", "r:web2:there"] {
+        let spot = find_unified_row(&built, id).expect("listed").reveal_spot();
+        assert_eq!(spot.shelf, UnifiedShelf::Working);
+        assert_eq!(spot.repo_key, "github.com/o/web");
+
+        // A flat list: the Working shelf at the bottom opens, and stays open.
+        let mut saved = UnifiedSavedState::default();
+        assert!(open_unified_reveal(&mut saved, &spot, false));
+        assert!(unified_shelf_open(&saved, UnifiedShelf::Working, "Working"));
+        assert!(
+            !open_unified_reveal(&mut saved, &spot, false),
+            "already open"
+        );
+
+        // Group by Project with the project folded: the group unfolds and its own shelf opens;
+        // the flat list's shelf is left as it was.
+        let mut saved = UnifiedSavedState::default();
+        saved.folded_groups.insert("github.com/o/web".to_string());
+        assert!(open_unified_reveal(&mut saved, &spot, true));
+        assert!(saved.folded_groups.is_empty());
+        let key = unified_shelf_key(UnifiedShelf::Working, Some("github.com/o/web"));
+        assert_eq!(key, "github.com/o/web|Working");
+        assert!(unified_shelf_open(&saved, UnifiedShelf::Working, &key));
+        assert!(!unified_shelf_open(
+            &saved,
+            UnifiedShelf::Working,
+            "Working"
+        ));
+    }
+}
+
+#[test]
+fn revealing_a_card_never_folds_drafts_and_leaves_an_open_list_alone() {
+    let spot = |shelf| UnifiedRevealSpot {
+        shelf,
+        repo_key: "k".to_string(),
+    };
+    // Drafts starts open, and sits above the groups.
+    let mut saved = UnifiedSavedState::default();
+    saved.folded_groups.insert("k".to_string());
+    assert!(!open_unified_reveal(
+        &mut saved,
+        &spot(UnifiedShelf::Drafts),
+        true
+    ));
+    assert!(saved.folded_groups.contains("k"));
+    // Drafts folded by hand opens.
+    saved.toggled_shelves.insert("Drafts".to_string());
+    assert!(open_unified_reveal(
+        &mut saved,
+        &spot(UnifiedShelf::Drafts),
+        true
+    ));
+    assert!(saved.toggled_shelves.is_empty());
+    // A card in the list itself needs nothing in a flat list, and its group unfolded otherwise.
+    assert!(!open_unified_reveal(
+        &mut saved,
+        &spot(UnifiedShelf::Active),
+        false
+    ));
+    assert!(open_unified_reveal(
+        &mut saved,
+        &spot(UnifiedShelf::Pinned),
+        true
+    ));
+    assert!(saved.folded_groups.is_empty());
+    assert!(saved.toggled_shelves.is_empty());
+}
+
+#[test]
+fn revealing_a_card_the_filter_leaves_out_lifts_only_the_picks_it_misses() {
+    let remote = MachineId::Remote("r".to_string());
+    let local_view = sidebar(vec![group(
+        "api",
+        "/dev/api",
+        Some("git@github.com:o/api.git"),
+        vec![row(&MachineId::Local, "api", "a")],
+    )]);
+    let remote_view = sidebar(vec![group(
+        "web2",
+        "/srv/web",
+        Some("git@github.com:o/web.git"),
+        vec![row(&remote, "web2", "rw")],
+    )]);
+    let machines = [
+        UnifiedMachineInput {
+            machine: MachineId::Local,
+            label: "Local".to_string(),
+            view: &local_view,
+            spaces: None,
+        },
+        UnifiedMachineInput {
+            machine: remote,
+            label: "hp".to_string(),
+            view: &remote_view,
+            spaces: None,
+        },
+    ];
+    let built = build_unified_sidebar(&machines, settings(), &UnifiedFilter::default(), NOW);
+    let web = find_unified_row(&built, "r:web2:rw").expect("listed");
+
+    let mut filter = UnifiedFilter::default();
+    filter.repos.insert("github.com/o/api".to_string());
+    filter.machines.insert("r".to_string());
+    filter.query = "zzz".to_string();
+    let lifted = filter.admitting(web).expect("the filter leaves it out");
+    assert!(
+        lifted.repos.is_empty(),
+        "the repository pick it misses goes"
+    );
+    assert_eq!(
+        lifted.machines, filter.machines,
+        "the machine pick it matches stays"
+    );
+    assert!(lifted.query.is_empty(), "a search it misses goes");
+    assert!(lifted.admitting(web).is_none());
+
+    // Only the search left it out: the picks all stay.
+    let mut search = UnifiedFilter::default();
+    search.repos.insert("github.com/o/web".to_string());
+    search.query = "zzz".to_string();
+    let lifted = search.admitting(web).expect("the search leaves it out");
+    assert_eq!(lifted.repos, search.repos);
+    assert!(lifted.query.is_empty());
+    assert!(UnifiedFilter::default().admitting(web).is_none());
 }

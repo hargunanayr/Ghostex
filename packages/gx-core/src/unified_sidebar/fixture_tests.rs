@@ -92,6 +92,14 @@ fn session_row(machine: &MachineId, session: &Value) -> SessionRow {
         is_draft: flag(session, "isDraft"),
         has_composer_draft: flag(session, "hasComposerDraft"),
         is_browser: flag(session, "isBrowser"),
+        // The phone knows a thread's coordinator on the thread's own computer only.
+        coordinator_parent: session["coordinatorSessionId"]
+            .as_str()
+            .map(|parent| SessionKey {
+                machine: machine.clone(),
+                project_id: text(session, "coordinatorProjectId").to_string(),
+                session_id: parent.to_string(),
+            }),
         timing: SessionTiming {
             created_ms: millis(session, "createdMs"),
             last_interaction_ms: millis(session, "lastInteractionMs"),
@@ -141,6 +149,8 @@ fn project_group(machine: &MachineId, project: &Value, sessions: &[&Value]) -> G
                 .collect(),
             remote_machine: None,
             is_stale: false,
+            machine_names: Vec::new(),
+            action_target: None,
         }),
         collection_color: None,
         collection_id: None,
@@ -330,6 +340,26 @@ fn expected_of(case: &Value) -> Value {
                     worktree_parent_path: project["worktreeParentPath"]
                         .as_str()
                         .map(str::to_string),
+                    has_sessions: machine["sessions"]
+                        .as_array()
+                        .map(Vec::as_slice)
+                        .unwrap_or_default()
+                        .iter()
+                        .any(|session| {
+                            session["projectId"] == project["projectId"]
+                                && session["isBrowser"].as_bool() != Some(true)
+                        }),
+                    last_activity_ms: machine["sessions"]
+                        .as_array()
+                        .map(Vec::as_slice)
+                        .unwrap_or_default()
+                        .iter()
+                        .filter(|session| {
+                            session["projectId"] == project["projectId"]
+                                && session["isBrowser"].as_bool() != Some(true)
+                        })
+                        .filter_map(|session| session["lastInteractionMs"].as_i64())
+                        .max(),
                 })
                 .collect(),
         })
@@ -343,7 +373,19 @@ fn expected_of(case: &Value) -> Value {
         })
         .unwrap_or_default();
     let current_machine = case["currentMachine"].as_str().unwrap_or("local");
-    let all_choices = unified_project_choices(&choice_inputs, &last_machines, current_machine);
+    let recent_repos: Vec<String> = case["recentRepos"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|repo| repo.as_str().map(str::to_string))
+        .collect();
+    let all_choices = unified_project_choices(
+        &choice_inputs,
+        &last_machines,
+        &recent_repos,
+        current_machine,
+    );
     let choices: Vec<Value> = filter_project_choices(&all_choices, text(case, "choiceQuery"))
         .iter()
         .map(|choice| {
@@ -351,6 +393,9 @@ fn expected_of(case: &Value) -> Value {
                 "repoKey": choice.repo_key,
                 "label": choice.label,
                 "selected": choice.selected,
+                "hasSessions": choice.has_sessions,
+                "recent": choice.recent,
+                "detail": choice.detail,
                 "machines": choice.machines.iter().map(|chip| json!({
                     "machineId": chip.machine_id,
                     "label": chip.label,
@@ -360,14 +405,59 @@ fn expected_of(case: &Value) -> Value {
             })
         })
         .collect();
-    let target =
-        unified_new_session_target(&filter, &all_choices, case["activeProjectId"].as_str())
-            .map(|target| json!({"machineId": target.machine_id, "projectId": target.project_id}));
+    let active_machine = case["activeMachine"].as_str().unwrap_or("local");
+    let active_repo = case["activeProjectId"].as_str().and_then(|project_id| {
+        let machine = machines_in
+            .iter()
+            .find(|machine| text(machine, "machine") == active_machine)?;
+        let project = machine["projects"]
+            .as_array()?
+            .iter()
+            .find(|project| text(project, "projectId") == project_id)?;
+        Some(
+            repo_identity(
+                project["gitRemoteOriginUrl"].as_str(),
+                text(project, "path"),
+                project["worktreeParentPath"].as_str(),
+                text(project, "title"),
+            )
+            .key,
+        )
+    });
+    let active = case["activeProjectId"]
+        .as_str()
+        .zip(active_repo.as_deref())
+        .map(|(project_id, repo_key)| ActiveProject {
+            repo_key,
+            machine_id: active_machine,
+            project_id,
+        });
+    let target = unified_new_session_target(&filter, &all_choices, active).map(|target| {
+        json!({
+            "repoKey": target.repo_key,
+            "machineId": target.machine_id,
+            "projectId": target.project_id,
+        })
+    });
+    let widened = case.get("createdIn").map(|created| {
+        let widened = widen_filter_for_new_session(
+            &filter,
+            text(created, "repoKey"),
+            text(created, "machineId"),
+            created["spaceKey"].as_str(),
+        );
+        json!({
+            "repos": widened.repos,
+            "machines": widened.machines,
+            "spaces": widened.spaces,
+        })
+    });
     json!({
         "groups": groups,
         "moves": moves,
         "choices": choices,
         "newSessionTarget": target,
+        "widenedFilter": widened,
         "drafts": ids(&view.drafts),
         "pinned": ids(&view.pinned),
         "active": ids(&view.active),
@@ -474,6 +564,55 @@ fn cases() -> Vec<Value> {
             "choiceQuery": "stu",
             "filter": {"repos": ["github.com/o/tools"]},
         })),
+        scale("the project list puts recent projects first and keeps projects with no session", json!({
+            "recentRepos": ["github.com/o/quiet", "github.com/o/billing", "gone/repo"],
+        })),
+        scale("a machine that is not connected is never where a project starts while another has it", json!({
+            "lastMachines": {"github.com/o/acme": "studio"},
+            "activeProjectId": "bil",
+        })),
+        scale("the picker starts on the open project, on its own machine", json!({
+            "activeProjectId": "ac-wt",
+        })),
+        scale("a new session outside the filter joins its repository and machine picks", json!({
+            "filter": {"repos": ["github.com/o/zebra"], "machines": ["local"]},
+            "createdIn": {"repoKey": "github.com/o/billing", "machineId": "studio"},
+        })),
+        scale("a new session leaves a kind with no pick empty", json!({
+            "filter": {"machines": ["studio"]},
+            "createdIn": {"repoKey": "github.com/o/billing", "machineId": "local"},
+        })),
+        json!({
+            "name": "an origin spelled with an SSH host alias, or not known yet, joins its repository's row, and a computer's name in the search picks it",
+            "nowMs": now,
+            "settings": {"workingSection": true, "parking": true},
+            "filter": {},
+            "choiceQuery": "ghostex win",
+            "machines": [
+                {
+                    "machine": "local", "label": "MacBook",
+                    "projects": [
+                        {"projectId": "m1", "title": "Ghostex", "path": "/Users/me/dev/Ghostex", "gitRemoteOriginUrl": "https://github.com/maddada/Ghostex.git"},
+                        {"projectId": "m2", "title": "ghostex", "path": "/Users/me/old/ghostex"},
+                    ],
+                    "sessions": [session("s1", "m1", json!({"createdMs": 1, "lastInteractionMs": 50}))],
+                },
+                {
+                    "machine": "win", "label": "Windows",
+                    "projects": [
+                        {"projectId": "w1", "title": "Ghostex", "path": "C:\\dev\\Ghostex", "gitRemoteOriginUrl": "git@github-work:maddada/Ghostex.git"},
+                    ],
+                    "sessions": [session("s2", "w1", json!({"createdMs": 1, "lastInteractionMs": 40}))],
+                },
+                {
+                    "machine": "box", "label": "Studio",
+                    "projects": [
+                        {"projectId": "b1", "title": "Ghostex", "path": "/home/me/Ghostex"},
+                    ],
+                    "sessions": [],
+                },
+            ],
+        }),
         json!({
             "name": "one repository on two machines is one project, named as this computer spells it",
             "nowMs": now,
@@ -592,6 +731,32 @@ fn cases() -> Vec<Value> {
                     "machine": "pi", "label": "pi",
                     "projects": [{"projectId": "pweb", "title": "web", "path": "/pi/web", "gitRemoteOriginUrl": "https://github.com/o/web"}],
                     "sessions": [session("p1", "pweb", json!({"createdMs": 10, "lastInteractionMs": 600}))],
+                },
+            ],
+        }),
+        json!({
+            "name": "a coordinator's workers are no cards of their own; a worker whose coordinator is gone, and a session started by hand, are",
+            "nowMs": now,
+            "settings": {"workingSection": true, "parking": true},
+            "filter": {},
+            "machines": [
+                {
+                    "machine": "local", "label": "Local",
+                    "projects": [{"projectId": "p", "title": "p", "path": "/p"}],
+                    "sessions": [
+                        session("lead", "p", json!({"isCoordinator": true, "createdMs": 10, "lastInteractionMs": 5_000})),
+                        session("worker", "p", json!({"activity": "working", "createdMs": 10, "workingStartedMs": 6_000, "coordinatorProjectId": "p", "coordinatorSessionId": "lead"})),
+                        session("sub-lead", "p", json!({"isCoordinator": true, "createdMs": 10, "lastInteractionMs": 4_500, "coordinatorProjectId": "p", "coordinatorSessionId": "lead"})),
+                        session("deep", "p", json!({"createdMs": 10, "lastInteractionMs": 4_400, "coordinatorProjectId": "p", "coordinatorSessionId": "sub-lead"})),
+                        session("orphan", "p", json!({"createdMs": 10, "lastInteractionMs": 4_000, "coordinatorProjectId": "p", "coordinatorSessionId": "closed"})),
+                        session("mine", "p", json!({"createdMs": 10, "lastInteractionMs": 3_000})),
+                    ],
+                },
+                {
+                    "machine": "studio", "label": "Studio",
+                    "projects": [{"projectId": "p", "title": "p", "path": "/p"}],
+                    // A link names a coordinator on the worker's own computer, so this one's is not here.
+                    "sessions": [session("elsewhere", "p", json!({"createdMs": 10, "lastInteractionMs": 2_000, "coordinatorProjectId": "p", "coordinatorSessionId": "lead"}))],
                 },
             ],
         }),

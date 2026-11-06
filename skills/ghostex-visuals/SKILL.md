@@ -164,6 +164,36 @@ use a question page instead (see "Question pages" below).
 First run `ghostex visual --help`: if it doesn't mention ```questions, this
 Ghostex can't show the form, so ask in prose instead.
 
+### One-click answers
+
+One quick pick with 2 to 4 short answers and nothing to explain or note (a
+yes/no, "merge it?", "delete the branch?") needs no form: write the answers
+right after the question, one Markdown link per answer pointing at
+`ghostex-answer:` and the question's tag. Only when `ghostex visual --help`
+mentions `ghostex-answer:`; older versions show plain links.
+
+```markdown
+❓ **Needs you:**
+- [PR #414](https://github.com/owner/repo/pull/414): Review and merge it? [Yes](ghostex-answer:Q901) [No](ghostex-answer:Q901) [Later](ghostex-answer:Q901)
+- Temporary branch `fix/tab-drag`: Delete it? [Delete](ghostex-answer:Q902 "recommended") [Keep](ghostex-answer:Q902=keep)
+```
+
+- The link's text is the answer. `=value` sends a value other than the label;
+  the title `"recommended"` marks the one you recommend.
+- The question is the line's words before its first answer link (or the line
+  above, when the links sit on a line of their own). Keep it one line.
+- The chat draws the answers as a small pill under the question. One tap sends
+  them back as a normal message in the same envelope a form's answers use,
+  keyed by the tag, with the question as its title:
+  `<ghostex-page-answers page="…" title="PR #414: Review and merge it?">{"Q901": "Yes"}</ghostex-page-answers>`.
+  The reader may change a sent answer: a change that reaches you after the
+  first arrives with `"Q901 (note)": "Changed from Yes"`.
+- Tags count up with the forms' tags. The "?" pill counts an inline question
+  until it is answered, and a later ```questions block can withdraw its tag.
+- Use a form instead for several related questions, multi-select, a text
+  answer, choices that need a line of detail, or anything the reader may want
+  to add a note to.
+
 ```questions
 {
   "title": "Settings redesign: layout and platforms",
@@ -190,6 +220,14 @@ Ghostex can't show the form, so ask in prose instead.
   short label such as an issue id; `name`, the answer's key (the title when
   there is none); `multiple` for several picks; `type: "text"` for a text box
   instead of choices (`placeholder` sets its hint). At most 20 questions.
+- Link what you ask about: when a question is about a PR, issue, file, page,
+  commit, thread or anything else the reader could open, link it in the
+  question itself, so they can check it before answering. Write a Markdown
+  link with the full URL (`[#407](https://github.com/owner/repo/pull/407)`)
+  or a file path link (`[kit.rs](/abs/path/kit.rs)`) in the `title` or
+  `detail`, or in a choice's `detail`; a bare `https://` address works too.
+  Newer Ghostex versions open these with a click. A bare `#407` is not
+  enough.
 - Each choice is its text, or `{"label", "detail", "value", "recommended"}`:
   `value` is what you receive (the label when there is none) and
   `recommended` adds a Recommended badge. At most 26 choices.
@@ -202,8 +240,17 @@ Ghostex can't show the form, so ask in prose instead.
   else, so don't add your own "Anything else?" question either. Newer Ghostex
   versions also have a Skip all button; a question the reader leaves blank
   arrives as `"skipped"`. Don't add your own Skip choice.
-- Check the block before replying: `ghostex visual check /tmp/questions.json`
-  lists the questions and their answer keys, or names the problem.
+- The block is one JSON object whose `"questions"` is a list, even of one
+  question: never a bare list of questions, a lone question object, or
+  `"questions"` holding one object. Newer Ghostex versions read those
+  near-misses (and trailing commas or smart quotes) anyway, but older ones
+  show "These questions could not be shown".
+- Check the block before replying: write the whole fenced block to a file
+  (`cat > /tmp/questions.md <<'EOF'` … `EOF`), then run
+  `ghostex visual check /tmp/questions.md`. It lists the questions and their
+  answer keys, or names the problem; when it also lists something to write
+  the standard way, fix that too. Run it again until it passes clean, then
+  paste the same block into your reply.
 - Give questions a `tag` and refer to them by it in your replies ("Q3 is still
   open"): newer Ghostex versions turn the tag into a link to the form, and a
   "Previous question" pill steps through the questions still waiting for an
@@ -361,6 +408,13 @@ Ghostex injects the page's look, so a page that styles itself fights it:
     `<header>`; `<h2>` for sections, `<h3>` for parts.
   - `<div class="gx-callout">` (add `data-tone="warn"`, `"good"` or `"bad"`).
   - `<div class="gx-card">`, several in a `<div class="gx-grid">`.
+  - Options compared side by side: `<div class="gx-options">` holding one tied
+    `<section data-question data-choice>` per option (see Question pages), a
+    `<span class="gx-ribbon">Recommended</span>` on the recommended one,
+    `<div class="gx-chips"><span class="gx-chip"><b>38</b> files</span></div>`
+    for small facts and
+    `<div class="gx-stats"><div class="gx-stat"><small>Time</small><b>28m</b></div></div>`
+    for the numbers each option is judged by.
   - `<figure class="gx-figure">` with an `<img>` or a `.gx-frame`, and a
     `<figcaption>`.
   - `<gx-tabs>` with one child per tab: `<section data-tab="Before">…`. The
@@ -372,21 +426,96 @@ Ghostex injects the page's look, so a page that styles itself fights it:
 
 ### Theme
 
+Ghostex paints every page itself: a soft neutral grey backdrop (or, in
+the desktop's page window, the reader's blurred wallpaper) behind frosted
+glass cards, so never paint `html` or `body`.
 Style what you draw with the theme tokens, so it reads right in dark and
-light: `--gx-bg`, `--gx-surface` (cards, soft fills), `--gx-raised`
-(controls), `--gx-line`, `--gx-line-strong`, `--gx-fg` (titles),
-`--gx-text`, `--gx-muted`, `--gx-accent`, `--gx-warn`, `--gx-good`,
+light: `--gx-bg`, `--gx-surface` (soft fills inside a card), `--gx-raised`
+(controls), `--gx-card` and `--gx-card-border` (a glass panel of your own;
+add `backdrop-filter: blur(22px)`), `--gx-line`, `--gx-line-strong`,
+`--gx-fg` (titles), `--gx-text`, `--gx-muted`, `--gx-accent`, `--gx-pick`
+(the neutral ink of a highlight or a pick), `--gx-warn`, `--gx-good`,
 `--gx-bad`, `--gx-code-bg`, `--chart-1` … `--chart-6`, `--font-sans` and
-`--font-mono`.
+`--font-mono`. Never an opaque black or grey slab around your own content:
+it hides the backdrop and reads as a hole in the glass. A mockup of an app
+window is the exception, framed as a window (below).
 
-A mockup of the app has its own palette: write the dark one on the mockup's
-class and the light one under `[data-gx-theme=light]`, so the reader's switch
-flips the mockups with the page:
+### Mockups that look like the app
+
+A mockup is judged against the app it draws. One that looks like a generic
+dashboard, or goes muddy on the glass, gets redone. Before drawing, look at
+the real view (a screenshot; for Ghostex, the GPUI web build) and read its
+colours, radii, fonts and sizes from the app's source.
+
+- **Opaque, in the app's own palette.** The window, cards and controls are
+  solid fills from the app's source: the dark set on the mockup's class, the
+  light set under `[data-gx-theme=light]`, so the reader's switch flips the
+  mockup with the page. Never `--gx-card`, translucent fills or
+  `backdrop-filter` inside a mockup: glass on the page's glass goes muddy.
+  Frame it as a window (a hairline, its real radius, a soft shadow).
+- **Real logos and icons, never letter avatars.** Embed the app's own
+  artwork by path. A one-colour SVG drawn in `currentColor` goes in as a mask,
+  so it takes the colour the app gives it. With no artwork, use the app's
+  generic icon for that kind (a desktop for a machine), never a coloured
+  letter in a square.
+- **State, quietly.** One word, or a small dot and a word, in the muted text
+  colour. At most one accent colour in the whole mockup (red for a failure),
+  never as a coloured border, a tinted card or a row of coloured pills.
+  Neutral buttons, one primary.
+- **Real sizes.** The app's real widths, type sizes and spacing. One main
+  mockup, sized to its content rather than to the window. Thumbnails that
+  compare options may be schematic (grey bars), in the same palette.
+- **Nothing stray.** Every word inside the mockup is one the app shows: no
+  notes, quotes or labels of your own in it, nothing peeking past its edges.
+- **Check it against the real thing.** Render it
+  (`ghostex visual check page.html --out page.png`, again with `--light` and
+  `--width 390`), open the PNG next to a screenshot of the real view, and
+  redo the mockup if it wouldn't pass for a screenshot of the app.
 
 ```css
-.panel { --p-bg: #141414; --p-text: #e8e8e8; background: var(--p-bg); color: var(--p-text); }
-[data-gx-theme=light] .panel { --p-bg: #f6f6f6; --p-text: #1d1d1d; }
+.app { --a-win: #0d0d0d; --a-card: #161616; --a-line: rgba(255,255,255,.08); --a-fg: #e5e5e5; --a-muted: #9ca2ab;
+  background: var(--a-win); color: var(--a-fg); font: 14px/1.35 Helvetica, Arial, sans-serif; }
+[data-gx-theme=light] .app { --a-win: #f5f5f5; --a-card: #fff; --a-line: rgba(0,0,0,.14); --a-fg: #262626; --a-muted: #626262; }
+.logo { display: inline-block; width: 16px; height: 16px; background: var(--c, var(--a-fg)); mask: center / contain no-repeat; }
+.l-claude { mask-image: url(/abs/path/to/Ghostex/packages/core-ui/assets/claude.svg); } /* <i class="logo l-claude" style="--c:#d97757"> */
 ```
+
+That palette is Ghostex's Settings. In a Ghostex checkout: colours and sizes
+in `apps/desktop/src/app/window/settings_modal/` (`palette.rs`,
+`fields/row.rs`); agent logos in `packages/core-ui/assets/<agent>.svg`, their
+brand colours in `settings_modal/tabs/agents/logos.rs` (white logos take the
+text colour in light); icons in `apps/desktop/assets/titlebar/` and
+`apps/desktop/assets/modals/settings/`; the app icon in
+`apps/desktop/resources/AppIcon.appiconset/`.
+
+### Make it look good
+
+A page is judged at a glance, first as the card in the chat, which shows its
+top (the header and the first lines), then in the window. Aim for the look of
+`examples/plan-review.html` beside this skill: copy its shape, not its words.
+
+- **A strong top.** A short `.gx-eyebrow` (area · purpose), a specific `<h1>`
+  that says what is being decided, a one-line `.gx-lede`, and a row of
+  `.gx-chip` facts. The first options start right under it, so the card
+  shows them too.
+- **Compare side by side.** Two to four options in one `.gx-options` row
+  inside `<gx-wide>`, each a tied section: a title (`A. Name`, the kit adds
+  its Pick button), one line on how it works, a small but real picture (a
+  mini UI, lanes on a timeline, a chart, a before and after), and the two or
+  three `.gx-stat` numbers it is judged by. Draw every option on the same
+  scale (the same axis, the same units), so the differences show without
+  reading. Mark the recommended one with a `.gx-ribbon` and `recommended`.
+- **Then one question.** The `<gx-question>` sits directly under the row,
+  its choices in the same order, each with a `<small>` one-line trade-off.
+- **Not too long.** Header, options and question fit roughly one screen.
+  Leave out what the reader won't use to decide: more pages are better than
+  one long one.
+- **Glass around, the app inside.** Rely on the kit's cards and tokens for
+  the page; a mockup follows "Mockups that look like the app" above.
+
+Older Ghostex versions don't have `.gx-options`, `.gx-ribbon`, `.gx-chip` or
+`.gx-stat` and show those blocks plainly, one under another; the page still
+works.
 
 ### Images, sandbox, publishing
 
@@ -443,10 +572,10 @@ and `data-choice` (first bullet below), which gives it a Pick button:
     <h1>Settings redesign</h1>
     <p class="gx-lede">Two layouts for the page, then the header.</p>
   </header>
-  <gx-wide>
+  <gx-wide><div class="gx-options">
     <section data-question="Q1" data-choice="tabs"><h3>A. Tabs</h3><!-- mockup A --></section>
     <section data-question="Q1" data-choice="one page"><h3>B. One long page</h3><!-- mockup B --></section>
-  </gx-wide>
+  </div></gx-wide>
   <gx-question tag="Q1" title="Which layout should I build?">
     <p>Why it matters, in a sentence or two.</p>
     <gx-choice value="tabs" recommended>A. Tabs<small>One page per area.</small></gx-choice>
@@ -458,7 +587,6 @@ and `data-choice` (first bullet below), which gives it a Pick button:
     <gx-choice>Compact</gx-choice>
     <gx-choice>Large title</gx-choice>
   </gx-question>
-  <gx-question title="Anything else?" type="text"></gx-question>
 </gx-questions>
 ```
 
@@ -493,14 +621,16 @@ and `data-choice` (first bullet below), which gives it a Pick button:
   question compares several variants, put them side by side (or stacked)
   immediately above that question, with nothing in between, and keep them
   compact enough to be seen together with it. Side-by-side variants go in a
-  `.gx-grid` (inside `<gx-wide>` when they are wide), so they stack on a
-  phone. Draw each variant once, in the
+  `.gx-options` row (inside `<gx-wide>`), so they stack on a phone; see
+  Make it look good. Draw each variant once, in the
   page's theme; the reader checks the other theme with the switch. Never
   collect all the mockups first and all the questions at the end.
 - `<gx-question>`: `title`; `tag`, an optional short label such as an issue
   id; `name`, the answer's key (the title when there is none); `multiple`
   for several picks; `type="text"` for a text box instead of choices. Content
-  before its choices, such as a `<p>`, explains the question.
+  before its choices, such as a `<p>`, explains the question. Link what the
+  question is about here too: a Markdown link or a bare `https://` address in
+  `title` becomes a link, and a `<p>` takes an `<a href>`.
 - `<gx-choice>`: its text is the choice and a `<small>` inside is a one-line
   detail. `value` is what you receive (the text without the `<small>` when
   there is none). `recommended` adds a Recommended badge.
@@ -510,11 +640,12 @@ and `data-choice` (first bullet below), which gives it a Pick button:
   mark it with `recommended` where it already sits. A question whose choices
   run C, B, A under mockups A, B, C makes the reader pick the wrong one.
 - Write only that markup. The kit letters the choices, ends every choice
-  question with "Other / none of these" and a note box, and adds the send
-  button. Nothing is ever preselected (the reader can also click a pick again
+  question with "Other / none of these" and a note box, ends the page with
+  an "Anything else?" box (the reader can type there and paste images) just
+  above the send button, and adds the send button. Nothing is ever preselected (the reader can also click a pick again
   to clear it), and a question left blank arrives as `"skipped"` (`null` in older
   Ghostex versions). Don't write your
-  own form, button, "Other" choice or note box. Newer Ghostex versions also add
+  own form, button, "Other" choice, note box or "Anything else?" question. Newer Ghostex versions also add
   a Skip all button; a skipped question arrives as `"skipped"`.
 - Once sent, the page is locked; opening it again shows the answers and an
   Answered note.
@@ -524,7 +655,9 @@ and `data-choice` (first bullet below), which gives it a Pick button:
 - After pasting the card, end your turn. Don't poll or wait in a loop: the
   answers arrive as the next user message, which the chat shows as an answers
   card while the page's card reads Answered. A note arrives under the
-  question's key plus ` (note)`:
+  question's key plus ` (note)`, and the "Anything else?" box, when filled
+  in, arrives last as `"Additional notes"`. A pasted image arrives as an
+  `[Image #N](path)` reference you can open:
 
   ```text
   <ghostex-page-answers page="7ea5c5be1f2d68ebc9e40f790db0ef29" title="Settings redesign">
@@ -533,7 +666,7 @@ and `data-choice` (first bullet below), which gives it a Pick button:
     "Which layout should I build? (note)": "keep search at the top",
     "Which platforms first?": ["macOS", "Other / none of these"],
     "Which platforms first? (note)": "Linux too",
-    "Anything else?": null
+    "Additional notes": "keep search at the top [Image #1](/Users/me/…/shot.png)"
   }
   </ghostex-page-answers>
   ```

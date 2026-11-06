@@ -27,9 +27,9 @@ use serde_json::{Value, json};
 
 /// The transcript's prose size at 100% zoom, which the text inside a visual block takes too
 /// (`gxv::Theme::text_size`, `visual.rs`).
-pub(super) const PROSE_SIZE: f32 = 14.0;
+pub(super) const PROSE_SIZE: f32 = super::chat_text_look::PROSE_SIZE;
 /// The transcript's prose line height, which a fenced block's code lines take too.
-pub(super) const PROSE_LINE_HEIGHT: f32 = 22.75;
+pub(super) const PROSE_LINE_HEIGHT: f32 = super::chat_text_look::PROSE_LINE_HEIGHT;
 /// The padding a fenced block's code sits in under its header (GPUI Kit's `p_3`).
 const CODE_PADDING: f32 = 12.0;
 
@@ -99,6 +99,12 @@ pub(super) enum Segment {
     },
     /// A line that has a picture in it, as the run of text and pictures it is made of.
     Flow(Vec<FlowPart>),
+    /// One-click answers under an agent's question (`inline_answers.rs`): the marked line's JSON,
+    /// and how many list items the question sits in.
+    Answers {
+        depth: usize,
+        mark: Value,
+    },
     /// Consecutive lines made of pictures and nothing else, drawn as one filmstrip (`images.rs`).
     Strip(PictureLines),
 }
@@ -361,6 +367,15 @@ pub(super) fn parse(lines: &[&str], strips: bool) -> Vec<Segment> {
             index = end + 1;
             continue;
         }
+        if let Some(mark) = ghostex_gx_chat_core::transcript::inline_answers::marked_answers(line) {
+            flush(&mut prose, &mut segments);
+            segments.push(Segment::Answers {
+                depth: list_depth(&lines[..index], indent_of(line)),
+                mark,
+            });
+            index += 1;
+            continue;
+        }
         /*
         CDXC:SessionChat 2026-10-16 DECISION:
         User picked option B, Filmstrip (Q134): pictures an agent writes on lines of their own sit
@@ -602,16 +617,12 @@ impl NativeChatView {
         label_color: Option<gpui::Hsla>,
         cx: &gpui::Context<Self>,
     ) -> AnyElement {
-        let chat = cx.weak_entity();
-        let menu_chat = chat.clone();
-        let header_chat = chat.clone();
+        let header_chat = cx.weak_entity();
         let header_appearance = p.clone();
         let mut style = super::markdown_style::text_style(p);
         style.is_dark = !p.light;
         style.highlight_theme = super::markdown_style::highlight_theme(p.light);
         // CDXC:SessionChat 2026-10-01 DECISION: "For larger tables that flow out of the screen, please add the ability for text to wrap. No need to scroll on VS Code (better)." A table fits the transcript's width: short columns (ids, refs) stay on one line, long ones share the rest and wrap, and it scrolls sideways only when even those floors are wider than the pane (the component's adaptive layout, set in `markdown_style::text_style`). Supersedes the 2026-09-25 capped columns that kept a wide table wider than the pane; cells still always wrap, never collapse.
-        let references = super::markdown_links::presentations(references, p);
-        let command_appearance = p.clone();
         let header_id = id.clone();
         let wrap_id = id.clone();
         let wrap_choices = self.code_wrap.clone();
@@ -627,12 +638,65 @@ impl NativeChatView {
         let cap_id = id.clone();
         let header_expanded = expanded_blocks.clone();
         let scale = p.scale;
-        TextView::markdown(id, content)
-            .parse_synchronously(true)
-            .when_some(self.row_find.clone(), |view, find| view.find(find))
-            .when_some(self.issue_link_base.clone(), |view, base| view.issue_links(base))
-            .min_w_0()
-            .max_w(gpui::relative(1.0))
+        self.chat_links(
+            TextView::markdown(id, content)
+                .parse_synchronously(true)
+                .when_some(self.row_find.clone(), |view, find| view.find(find))
+                .min_w_0()
+                .max_w(gpui::relative(1.0)),
+            references,
+            p,
+            cx,
+        )
+        .code_block_actions(move |block, _, _| {
+            let long = super::markdown_style::code_block_collapses(block.code().lines().count());
+            let expanded = long
+                .then(|| header_expanded.contains(&super::code_block::wrap_key(&header_id, block)));
+            super::code_block::header(
+                block,
+                &header_id,
+                header_wraps(block),
+                expanded,
+                &header_chat,
+                &header_appearance,
+            )
+        })
+        // React's fences scroll sideways until the reader asks for wrapping
+        // (session-chat-code-wrap.ts (deleted 2026-10-01)); the native ones follow the same choice.
+        .code_block_wrap(wraps)
+        // A long block's code scrolls under its header until the reader shows it whole.
+        .code_block_max_height(move |block| {
+            let key = super::code_block::wrap_key(&cap_id, block);
+            (super::markdown_style::code_block_collapses(block.code().lines().count())
+                && !expanded_blocks.contains(&key))
+            .then(|| super::markdown_style::code_block_cap(PROSE_LINE_HEIGHT, CODE_PADDING, scale))
+        })
+        .selectable(true)
+        .style(style)
+        .text_size(px(PROSE_SIZE * p.scale))
+        .line_height(px(PROSE_LINE_HEIGHT * p.scale))
+        .text_color(label_color.unwrap_or(p.prose))
+        .when(label_color.is_some(), |view| {
+            view.font_weight(FontWeight::SEMIBOLD)
+        })
+        .into_any_element()
+    }
+
+    /// A chat Markdown view's links: `#123` to the project's GitHub issues, the reference pills of
+    /// `references` (a message's `markdownReferences`), and a click that opens a link the way the
+    /// transcript does (`openMarkdownLink`, or the link menu on a right press).
+    pub(super) fn chat_links(
+        &self,
+        view: TextView,
+        references: &Value,
+        p: &ChatAppearance,
+        cx: &gpui::Context<Self>,
+    ) -> TextView {
+        let chat = cx.weak_entity();
+        let menu_chat = chat.clone();
+        let references = super::markdown_links::presentations(references, p);
+        let command_appearance = p.clone();
+        view.when_some(self.issue_link_base.clone(), |view, base| view.issue_links(base))
             .link_presentation(move |href, label| {
                 references
                     .get(&(href.to_owned(), label.to_owned()))
@@ -641,9 +705,17 @@ impl NativeChatView {
                         super::run_command::inline_presentation(href, label, &command_appearance)
                     })
             })
-            .on_link_click(move |href, event, _, cx| {
+            .on_link_click(move |href, event, window, cx| {
                 // Only a primary click opens a link; a right press opens the link menu below.
                 if !event.standard_click() {
+                    return;
+                }
+                // A Q-tag pill on its own one-click question answers it there instead of jumping.
+                if let Some(tag) = super::open_questions::here_tag(href) {
+                    let at = event.position();
+                    let _ = chat.update(cx, |chat, cx| {
+                        chat.open_question_reply(None, tag, at, window, cx)
+                    });
                     return;
                 }
                 if super::run_command::handle_link_press(href, &chat, cx) {
@@ -657,39 +729,6 @@ impl NativeChatView {
                 });
             })
             .on_link_secondary_click(super::markdown_links::secondary_click(menu_chat))
-            .code_block_actions(move |block, _, _| {
-                let long = super::markdown_style::code_block_collapses(block.code().lines().count());
-                let expanded = long.then(|| {
-                    header_expanded.contains(&super::code_block::wrap_key(&header_id, block))
-                });
-                super::code_block::header(
-                    block,
-                    &header_id,
-                    header_wraps(block),
-                    expanded,
-                    &header_chat,
-                    &header_appearance,
-                )
-            })
-            // React's fences scroll sideways until the reader asks for wrapping
-            // (session-chat-code-wrap.ts (deleted 2026-10-01)); the native ones follow the same choice.
-            .code_block_wrap(wraps)
-            // A long block's code scrolls under its header until the reader shows it whole.
-            .code_block_max_height(move |block| {
-                let key = super::code_block::wrap_key(&cap_id, block);
-                (super::markdown_style::code_block_collapses(block.code().lines().count())
-                    && !expanded_blocks.contains(&key))
-                .then(|| super::markdown_style::code_block_cap(PROSE_LINE_HEIGHT, CODE_PADDING, scale))
-            })
-            .selectable(true)
-            .style(style)
-            .text_size(px(PROSE_SIZE * p.scale))
-            .line_height(px(PROSE_LINE_HEIGHT * p.scale))
-            .text_color(label_color.unwrap_or(p.prose))
-            .when(label_color.is_some(), |view| {
-                view.font_weight(FontWeight::SEMIBOLD)
-            })
-            .into_any_element()
     }
 
     fn segment(
@@ -762,6 +801,9 @@ impl NativeChatView {
                 }))
                 .into_any_element(),
             Segment::Strip(strip) => self.picture_strip(&format!("{id}:{index}"), strip, p, cx),
+            Segment::Answers { depth, mark } => {
+                self.inline_answers(&format!("{id}:{index}"), mark, *depth, p, cx)
+            }
             Segment::Section { meta, lines } => {
                 let key = format!("{id}:{index}");
                 let lines: Vec<&str> = lines.iter().map(String::as_str).collect();

@@ -73,6 +73,55 @@ pub struct ChatPill {
     /// The panel's muted detail ("2 active · 212 total"), the menu's header line.
     pub meta: String,
     pub aria_label: String,
+    /// What in the menu needs a look, drawn inside the pill after its label as coloured dots, each
+    /// followed by its count, in place of `count`; empty for a pill with nothing to flag. Renderers
+    /// draw no corner dot on any pill (`extras::chat_pills::pill_dots`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dots: Vec<PillDot>,
+}
+
+/// One status dot inside a pill: its tone and the count after it.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PillDot {
+    /// `question` (the sidebar's pink), `approval` (its red), `blocked` (red) or `working` (amber).
+    pub tone: String,
+    pub count: String,
+}
+
+/// One status chip at the left of the chat box's pill strip (`extras::chat_pills::view_chips`): a
+/// view mode that is on, with the action that turns it off.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ViewChip {
+    /// `summary` or `detailed`.
+    pub id: String,
+    /// "Summary view" or "Detailed view".
+    pub label: String,
+    /// What a screen reader says for the chip's turn-off button.
+    pub aria_label: String,
+    /// The action the chip (or its hover X) dispatches to turn the mode off.
+    pub command: Value,
+}
+
+/// The Saved draft pill pinned at the left of the chat box's pill strip
+/// (`extras::chat_pills::saved_draft_pill`) and the menu it opens: a draft of this chat saved
+/// elsewhere, offered with Use draft and Dismiss.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedDraftPill {
+    /// "Saved draft", where the strip has room.
+    pub label: String,
+    /// "Draft", where it is narrow; narrower still the pill is its icon alone.
+    pub short_label: String,
+    /// What a screen reader says for the pill.
+    pub aria_label: String,
+    /// The menu's muted detail beside its title: "from another device or the terminal".
+    pub detail: String,
+    /// The draft's text for the menu, its first `SAVED_DRAFT_PREVIEW_CHARS` characters.
+    pub preview: String,
+    /// "Replaces what's in the box" while the box holds text Use draft would replace, else empty.
+    pub hint: String,
 }
 
 /// The agent terminal's last lines, offered when the chat cannot explain what is happening.

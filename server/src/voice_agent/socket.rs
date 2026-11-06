@@ -20,7 +20,7 @@ use super::conversation::{ClientFrame, Conversation, Input};
 use super::focus::FocusScope;
 use super::provider::{self, ConnectError, Provider};
 use super::{announcements, dictation, keys, prompt, registry, tools};
-use crate::auth::{is_authorized_headers, is_expected_gxserver_auth_token};
+use crate::auth::{is_authorized_client_headers, is_authorized_client_token};
 use crate::protocol::{protocol_mismatch_error, rpc_error};
 use crate::server::{
     is_expected_protocol_version, json_response, query_value, read_protocol_version, request_id,
@@ -47,10 +47,11 @@ pub(crate) async fn handle_voice(
         );
     };
     let query_token = query_value(&uri, "authToken");
-    let authorized = is_authorized_headers(&headers, &state.auth_token)
-        || query_token
-            .as_deref()
-            .is_some_and(|token| is_expected_gxserver_auth_token(token, &state.auth_token));
+    let authorized =
+        is_authorized_client_headers(&headers, &state.auth_token, &state.device_api_tokens)
+            || query_token.as_deref().is_some_and(|token| {
+                is_authorized_client_token(token, &state.auth_token, &state.device_api_tokens)
+            });
     if !authorized {
         return json_response(
             StatusCode::UNAUTHORIZED,
@@ -323,7 +324,7 @@ async fn start_conversation(
             }
         }
     };
-    let key = match keys::read_key(&state.paths, provider) {
+    let key = match keys::read_key_async(&state.paths, provider).await {
         Ok(Some(key)) => key,
         Ok(None) => {
             fail(socket, "noKey", &no_key_message(provider, client_remote)).await;
@@ -331,8 +332,8 @@ async fn start_conversation(
         }
         Err(message) if client_remote => {
             let message = message.replace(
-                "Settings > Extensions > Voice agent",
-                "Ghostex Settings > Extensions > Voice agent on that computer",
+                "Settings > Voice",
+                "Ghostex Settings > Voice on that computer",
             );
             fail(
                 socket,
@@ -488,26 +489,23 @@ async fn start_conversation(
 pub(super) fn no_key_message(provider: Provider, client_remote: bool) -> String {
     if client_remote {
         format!(
-            "The computer this session runs on has no {} API key for the voice agent. Add it in Ghostex Settings > Extensions > Voice agent on that computer.",
+            "The computer this session runs on has no {} API key for the voice agent. Add it in Ghostex Settings > Voice on that computer.",
             provider.label()
         )
     } else {
-        format!(
-            "Add your {} API key in Settings > Extensions > Voice agent.",
-            provider.label()
-        )
+        format!("Add your {} API key in Settings > Voice.", provider.label())
     }
 }
 
 pub(super) fn bad_key_message(provider: Provider, client_remote: bool) -> String {
     if client_remote {
         format!(
-            "The {label} API key on the computer this session runs on was refused by {label}. Check it in Ghostex Settings > Extensions > Voice agent on that computer.",
+            "The {label} API key on the computer this session runs on was refused by {label}. Check it in Ghostex Settings > Voice on that computer.",
             label = provider.label()
         )
     } else {
         format!(
-            "{} refused the API key. Check it in Settings > Extensions > Voice agent.",
+            "{} refused the API key. Check it in Settings > Voice.",
             provider.label()
         )
     }

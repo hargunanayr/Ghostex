@@ -40,6 +40,8 @@ fn gpui_remote_gxserver_post_typed_operation_once(
         return Err("Invalid remote gxserver API path.".to_string());
     }
     let address = format!("127.0.0.1:{}", target.local_port);
+    ghostex_paths::loopback_owner::check_host_port("127.0.0.1", target.local_port)
+        .map_err(|error| error.to_string())?;
     let mut stream = TcpStream::connect(&address)
         .map_err(|_| "Remote gxserver tunnel is not reachable.".to_string())?;
     stream
@@ -59,23 +61,29 @@ fn gpui_remote_gxserver_post_typed_operation_once(
         target.token.as_str(),
         body.len()
     );
-    stream
-        .write_all(request.as_bytes())
-        .map_err(|_| "Could not send remote gxserver request.".to_string())?;
+    let write_error = stream.write_all(request.as_bytes()).err();
 
     let mut response = String::new();
-    stream.read_to_string(&mut response).map_err(|error| {
-        // Say which layer failed (GitHub #361): silence past the timeout is a slow link, not a
-        // broken tunnel, and the chat treats both as "not answering" and retries.
-        if matches!(
-            error.kind(),
-            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-        ) {
-            "Remote gxserver did not answer in time over a slow connection.".to_string()
-        } else {
-            "Could not read remote gxserver response.".to_string()
+    let read_error = stream.read_to_string(&mut response).err();
+    if !response.contains("\r\n\r\n") {
+        if let Some(error) = write_error {
+            return Err(format!("Could not send remote gxserver request: {error}"));
         }
-    })?;
+        if let Some(error) = read_error {
+            return Err({
+                // Say which layer failed (GitHub #361): silence past the timeout is a slow link, not a
+                // broken tunnel, and the chat treats both as "not answering" and retries.
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) {
+                    "Remote gxserver did not answer in time over a slow connection.".to_string()
+                } else {
+                    "Could not read remote gxserver response.".to_string()
+                }
+            });
+        }
+    }
     if !response.is_empty() {
         // Any answer through the tunnel proves it to the watchdog (tunnel_liveness.rs).
         gpui_remote_tunnel_note_answer(target.local_port);
@@ -119,7 +127,7 @@ pub(crate) fn gpui_remote_gxserver_project_path_by_id(
         .ok()
         .flatten()
     })
-    .ok_or_else(|| "GPUI could not resolve that remote project path.".to_string())
+    .ok_or_else(|| "Ghostex couldn't resolve that remote project path.".to_string())
 }
 
 pub(crate) fn gpui_remote_gxserver_project_path_by_id_from_endpoint(
@@ -188,7 +196,7 @@ pub(crate) fn gpui_open_remote_existing_project_pull_request_in_browser(
     )
     .ok_or_else(|| "No open remote pull request is available for this project.".to_string())?;
     gpui_spawn_os_open(std::ffi::OsStr::new(&url))
-        .map_err(|_| "GPUI could not open the remote pull request.".to_string())
+        .map_err(|_| "Ghostex couldn't open the remote pull request.".to_string())
 }
 
 pub(crate) fn gpui_open_remote_project_in_ide(
@@ -730,7 +738,7 @@ pub(crate) fn gpui_remote_project_git_changed_file_paths(
 ) -> Result<HashSet<String>, String> {
     let status = gpui_remote_gxserver_git_action_result(target, project_id, "statusPorcelain")?;
     if gpui_typed_operation_exit_code(&status) != Some(0) {
-        return Err("GPUI could not refresh remote changed files.".to_string());
+        return Err("Ghostex couldn't refresh remote changed files.".to_string());
     }
     let mut files = HashSet::new();
     gpui_collect_git_status_porcelain_paths(gpui_typed_operation_stdout(&status), &mut files);

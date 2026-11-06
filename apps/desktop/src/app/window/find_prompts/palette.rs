@@ -145,18 +145,7 @@ impl FindPalette {
     }
 }
 
-/// The chat font setting the React page read (`--ghostex-find-font-family`), or the system UI font.
-pub(crate) fn find_prompts_font_family(setting: &str) -> SharedString {
-    let family = setting
-        .split(',')
-        .next()
-        .unwrap_or_default()
-        .trim()
-        .trim_matches(|character| character == '"' || character == '\'');
-    match family {
-        "" | "system-ui" | "ui-sans-serif" | "sans-serif" | "-apple-system" => {
-            SharedString::new_static(MODAL_UI_FONT)
-        }
-        family => SharedString::from(family.to_string()),
-    }
+/// Search by Prompt's family, which a picked app font replaces through `crate::ui_fonts`.
+pub(crate) fn find_prompts_font_family() -> SharedString {
+    SharedString::new_static(MODAL_UI_FONT)
 }

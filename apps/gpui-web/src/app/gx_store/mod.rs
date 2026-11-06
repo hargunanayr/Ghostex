@@ -2,11 +2,13 @@
 // The desktop's executor files are compiled here for the paths a page takes; their remote-machine, board and pane paths stay unused.
 #![allow(dead_code, unused_imports)]
 mod client_document;
+mod cloud_boxes;
 mod collection_menu;
 mod coordinator_actions;
 mod create;
 mod custom_tags_sync;
 mod diagnostics;
+mod draft_arrivals;
 /// Items of desktop store files the page does not compile whole (`extracted-items.txt`).
 #[allow(dead_code, unused_imports)]
 mod gx_store_lifted {
@@ -19,6 +21,7 @@ mod gx_store_lifted {
 pub(crate) mod git;
 pub(crate) mod host;
 mod hud;
+pub(crate) mod machine_short_names;
 mod primary_launcher;
 mod project_docs;
 mod quick_access_data;
@@ -53,6 +56,7 @@ mod sidebar_accounts;
 mod sidebar_actions;
 mod sidebar_bulk;
 mod sidebar_clock;
+mod sidebar_close_confirm;
 mod sidebar_close_project;
 mod sidebar_drag;
 mod sidebar_drop_queue;
@@ -76,6 +80,7 @@ mod work_mode;
 mod workspace_groups;
 mod workspaces;
 
+pub(crate) use cloud_boxes::{cloud_box_endpoint, cloud_box_request_target, cloud_box_send_target};
 pub(crate) use host::GxStoreHost;
 #[allow(unused_imports)]
 pub(crate) use primary_launcher::{

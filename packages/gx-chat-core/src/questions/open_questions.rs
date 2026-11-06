@@ -23,12 +23,14 @@
 //! CDXC:SessionChat 2026-10-27 DECISION:
 //! User, of the list: "we're not indicating HTML pages from normal questions here", "also please show "All" "Html" "Q&A" "Charts" as 4 selections so i can jump to previous generated content", "also i wanna see even Htmls that don't have any questions in them so i can jump back to them". Every row says what it is (`kind`: an HTML page, a Q&A form or a chart), and four filters sit over the list (`filters`, the reader's pick `filter`): All, Html (pages, with or without questions), Q&A (```questions forms) and Charts (```visual drawings: charts, stats, tables). Forms and question pages keep the Unanswered, For later, Answered and Withdrawn sections; pages that ask nothing are listed under Pages and charts under Charts, newest first. The pill's count, dot and ping stay about unanswered questions only.
 
+// A title shows a link's words, not its Markdown (`questions/form_links.rs`).
+use crate::questions::form_links::plain_words;
 use serde::{Deserialize, Serialize};
 
 use crate::effect::Effect;
+use crate::questions::resource_index::ResourceEntry;
 use crate::state::{ChatContext, ChatState};
 use crate::transcript::open_questions::{tag_target, Asker, AskerKind};
-use crate::questions::resource_index::ResourceEntry;
 use crate::transcript::page_answers::PageAnswers;
 
 /// The document's `openQuestions`.
@@ -253,11 +255,16 @@ pub fn unanswered(state: &ChatState) -> Vec<&Asker> {
 /// ones included and removed ones left out, oldest first.
 pub fn waiting(state: &ChatState) -> Vec<&Asker> {
     let removed = crate::questions::later::removed_ids(state);
+    let (settled_forms, settled_pages) = settled_by_index(state);
     state
         .transcript_view
         .askers
         .iter()
         .filter(|asker| !asker.answered && !asker.obsolete && !asker.inherited)
+        .filter(|asker| match asker.kind {
+            AskerKind::Form => !settled_forms.contains_key(asker.id.as_str()),
+            AskerKind::Page => !settled_pages.contains_key(asker.id.as_str()),
+        })
         .filter(|asker| !removed.contains(&asker.id))
         .filter(|asker| {
             asker.kind != AskerKind::Form
@@ -268,6 +275,24 @@ pub fn waiting(state: &ChatState) -> Vec<&Asker> {
                     .is_none_or(|form| form.send.is_none() && form.sent.is_none())
         })
         .collect()
+}
+
+/// The forms and question pages the session's resource index records as answered or withdrawn
+/// (`resource_index::settled_by_index`), each kind by id.
+///
+/// CDXC:SessionChat 2026-11-02 WHY:
+/// The ? pill counted questions answered hours ago (8, then 2, with every question answered) and its click went nowhere. The loaded rows can hold a question without its answer: a jump read's window ends at the question's turn, and a reload forgets the form's own send state. A question the loaded rows show unanswered is settled when the index, which reads the whole conversation, records it answered or withdrawn, so the pill's count, the Resources row and the form card agree; the loaded rows still win when they say answered.
+fn settled_by_index(
+    state: &ChatState,
+) -> (
+    std::collections::HashMap<&str, &str>,
+    std::collections::HashMap<&str, &str>,
+) {
+    let index = &state.session.resource_index;
+    (
+        crate::questions::resource_index::settled_by_index(index, "form"),
+        crate::questions::resource_index::settled_by_index(index, "page"),
+    )
 }
 
 /// The forms and pages put off For later that still wait: their cards say For later
@@ -289,6 +314,7 @@ fn status_of(
     later: &std::collections::BTreeSet<String>,
     removed: &std::collections::BTreeSet<String>,
     on_the_way: &[String],
+    withdrawn_by_index: bool,
 ) -> Option<&'static str> {
     if waiting.iter().any(|known| known.id == asker.id) {
         return Some(if later.contains(&asker.id) {
@@ -307,7 +333,7 @@ fn status_of(
     // later, or a form whose answers are on their way (answered, as the pill counts it).
     if removed.contains(&asker.id) {
         Some("canceled")
-    } else if asker.obsolete {
+    } else if asker.obsolete || withdrawn_by_index {
         Some("withdrawn")
     } else {
         Some("answered")
@@ -316,32 +342,74 @@ fn status_of(
 
 /// The session's resource index (gxserver's, `resource_index.rs`) as records.
 pub(crate) fn indexed(state: &ChatState) -> Vec<ResourceEntry> {
-    state
-        .session
-        .resource_index
-        .iter()
-        .filter_map(|value| serde_json::from_value(value.clone()).ok())
-        .collect()
+    indexed_entries(state).as_ref().clone()
+}
+
+thread_local! {
+    /// The last resource indexes read as records, newest first, each with the JSON it was read from.
+    static INDEXED: std::cell::RefCell<Vec<(Vec<serde_json::Value>, std::rc::Rc<Vec<ResourceEntry>>)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// How many chats' indexes `INDEXED` keeps: the worker drives every open chat on one thread.
+const INDEXED_KEPT: usize = 4;
+
+/// The session's resource index as records, read once per index rather than once per use.
+///
+/// CDXC:SessionChat 2026-11-04 WHY:
+/// The ? pill and the Resources list are projected again on every chat event (each streamed token), and each projection read the whole index from JSON two or three times: on a coordinator chat with hundreds of pages and questions that was most of the chat worker's CPU while a visible chat streamed (issues-1027/macos-perf). The records are kept with the JSON they came from and reused while the index is equal to it, so what the list shows is exactly what reading it again would give.
+fn indexed_entries(state: &ChatState) -> std::rc::Rc<Vec<ResourceEntry>> {
+    let index = &state.session.resource_index;
+    if index.is_empty() {
+        return std::rc::Rc::default();
+    }
+    INDEXED.with_borrow_mut(|kept| {
+        if let Some(at) = kept.iter().position(|(source, _)| source == index) {
+            let hit = kept.remove(at);
+            let entries = std::rc::Rc::clone(&hit.1);
+            kept.insert(0, hit);
+            return entries;
+        }
+        let entries = std::rc::Rc::new(
+            index
+                .iter()
+                .filter_map(|value| serde_json::from_value(value.clone()).ok())
+                .collect::<Vec<ResourceEntry>>(),
+        );
+        kept.insert(0, (index.clone(), std::rc::Rc::clone(&entries)));
+        kept.truncate(INDEXED_KEPT);
+        entries
+    })
 }
 
 /// The index records the loaded rows do not hold: older than what the chat has loaded, or from a
 /// thread. A loaded row is always the fresher reading of its id.
-fn index_only(state: &ChatState) -> Vec<ResourceEntry> {
+fn index_only<'a>(state: &ChatState, entries: &'a [ResourceEntry]) -> Vec<&'a ResourceEntry> {
     let mut known: std::collections::HashSet<&str> = state
         .transcript_view
         .askers
         .iter()
         .map(|asker| asker.id.as_str())
         .collect();
-    known.extend(state.questions.content.items.iter().map(|item| item.id.as_str()));
-    indexed(state)
-        .into_iter()
+    known.extend(
+        state
+            .questions
+            .content
+            .items
+            .iter()
+            .map(|item| item.id.as_str()),
+    );
+    entries
+        .iter()
         .filter(|entry| !known.contains(entry.id.as_str()))
         .collect()
 }
 
 /// The status a record reads as here: the reader's For later and Remove marks are this session's
 /// (`laterQuestionIds`, `removedQuestionIds`) and apply to the records too.
+///
+/// CDXC:SessionChat 2026-11-02 WHY:
+/// A waiting record with no `offset` reads withdrawn. gxserver records the offset of everything its transcript read holds, so a record without one is from a transcript it no longer reads: nothing there can answer it, "Go to chat" and the Resources modal cannot read it back, and the ? pill counted it while its click only said "Ghostex has not recorded where that sits in the chat yet".
 fn indexed_status(
     entry: &ResourceEntry,
     later: &std::collections::BTreeSet<String>,
@@ -349,6 +417,7 @@ fn indexed_status(
 ) -> String {
     match entry.status.as_str() {
         "waiting" if removed.contains(&entry.id) => "canceled",
+        "waiting" if entry.offset.is_none() && entry.thread.is_none() => "withdrawn",
         "waiting" if later.contains(&entry.id) => "later",
         "withdrawn" if removed.contains(&entry.id) => "canceled",
         "" => "other",
@@ -359,27 +428,28 @@ fn indexed_status(
 
 /// How many forms and question pages the index says wait on the reader that the loaded rows do not
 /// hold, not counting the ones put off For later or removed.
-fn indexed_waiting(state: &ChatState) -> u32 {
+fn indexed_waiting<'a>(state: &ChatState, entries: &'a [ResourceEntry]) -> Vec<&'a ResourceEntry> {
     let later = crate::questions::later::later_ids(state);
     let removed = crate::questions::later::removed_ids(state);
     let on_the_way: Vec<String> = answers_on_the_way(state)
         .into_iter()
         .map(|answers| answers.page_id)
         .collect();
-    index_only(state)
-        .iter()
+    index_only(state, entries)
+        .into_iter()
         .filter(|entry| entry.thread.is_none())
         .filter(|entry| indexed_status(entry, &later, &removed) == "waiting")
         .filter(|entry| !on_the_way.contains(&entry.id))
-        .count() as u32
+        .collect()
 }
 
 fn indexed_row(
     entry: &ResourceEntry,
     status: String,
     context: &ChatContext,
+    labels: bool,
 ) -> QuestionListRow {
-    let time = crate::transcript::message_time::message_time(entry.at_ms, context);
+    let (time, age, time_title) = time_fields(entry.at_ms, context, labels);
     let fallback = match entry.kind.as_str() {
         "form" => "Questions",
         "chart" => "Chart",
@@ -391,14 +461,14 @@ fn indexed_row(
         title: if entry.title.is_empty() {
             fallback.to_string()
         } else {
-            entry.title.clone()
+            plain_words(&entry.title)
         },
         status,
         tags: entry.tags.clone(),
-        time: time["label"].as_str().unwrap_or_default().to_string(),
-        age: age_of(entry.at_ms, context),
+        time,
+        age,
         at_ms: entry.at_ms,
-        time_title: time["title"].as_str().unwrap_or_default().to_string(),
+        time_title,
         thread: entry
             .thread
             .as_ref()
@@ -424,6 +494,11 @@ const GROUPS: [(&str, &str); 3] = [
 /// CDXC:SessionChat 2026-10-30 DECISION:
 /// User, of the Chat Resources panel's Unanswered group (Q194, Q192, Q191, Q190 from the top): it lists oldest first (Q190, Q191, Q192, Q194), "so the questions read in the order they were asked". Only Unanswered flips (waiting ones, then the For later ones, each oldest first); Earlier stays newest first. The ? pill's click order (`previous`) and its `newest` ping id do not read this list.
 pub fn list(state: &ChatState, context: &ChatContext) -> Vec<QuestionListSection> {
+    list_rows(state, context, true)
+}
+
+/// `list`, with each row's time fields only when `labels` asks for them.
+fn list_rows(state: &ChatState, context: &ChatContext, labels: bool) -> Vec<QuestionListSection> {
     let waiting = waiting(state);
     let later = crate::questions::later::later_ids(state);
     let removed = crate::questions::later::removed_ids(state);
@@ -431,34 +506,41 @@ pub fn list(state: &ChatState, context: &ChatContext) -> Vec<QuestionListSection
         .into_iter()
         .map(|answers| answers.page_id)
         .collect();
+    let (settled_forms, settled_pages) = settled_by_index(state);
     let mut placed: Vec<(Option<i64>, usize, QuestionListRow)> = state
         .transcript_view
         .askers
         .iter()
         .enumerate()
         .filter_map(|(index, asker)| {
-            let status = status_of(asker, &waiting, &later, &removed, &on_the_way)?;
-            let mut row = list_row(asker, context);
+            let settled = match asker.kind {
+                AskerKind::Form => &settled_forms,
+                AskerKind::Page => &settled_pages,
+            };
+            let withdrawn = settled.get(asker.id.as_str()) == Some(&"withdrawn");
+            let status = status_of(asker, &waiting, &later, &removed, &on_the_way, withdrawn)?;
+            let mut row = list_row(asker, context, labels);
             row.status = status.to_string();
             Some((asker.at, index, row))
         })
         .collect();
     let askers = state.transcript_view.askers.len();
     for (index, item) in state.questions.content.items.iter().enumerate() {
-        let mut row = content_row(item, context);
+        let mut row = content_row(item, context, labels);
         row.status = "other".to_string();
         placed.push((item.at, askers + index, row));
     }
     // What the whole conversation held beyond the loaded rows (the session's resource index), and
     // the pages the coordinator's threads posted.
     let mut thread_pages: Vec<QuestionListRow> = Vec::new();
-    for entry in index_only(state) {
-        let mut status = indexed_status(&entry, &later, &removed);
+    let entries = indexed_entries(state);
+    for entry in index_only(state, &entries) {
+        let mut status = indexed_status(entry, &later, &removed);
         // Answers sent from the modal wait in the queue: the form reads answered at once.
         if status == "waiting" && on_the_way.contains(&entry.id) {
             status = "answered".to_string();
         }
-        let row = indexed_row(&entry, status, context);
+        let row = indexed_row(entry, status, context, labels);
         if entry.thread.is_some() {
             thread_pages.push(row);
         } else {
@@ -470,18 +552,19 @@ pub fn list(state: &ChatState, context: &ChatContext) -> Vec<QuestionListSection
         b_at.cmp(a_at).then(b_index.cmp(a_index))
     });
     thread_pages.sort_by(|a, b| b.at_ms.cmp(&a.at_ms));
-    let rows: Vec<QuestionListRow> = placed.into_iter().map(|(_, _, row)| row).collect();
-    // Waiting first, then the put-off ones, each oldest first (`rows` is newest first).
-    let unanswered: Vec<QuestionListRow> = ["waiting", "later"]
-        .iter()
-        .flat_map(|status| rows.iter().rev().filter(move |row| row.status == *status))
-        .cloned()
-        .collect();
-    let earlier: Vec<QuestionListRow> = rows
-        .iter()
-        .filter(|row| row.status != "waiting" && row.status != "later")
-        .cloned()
-        .collect();
+    // Waiting first, then the put-off ones, each oldest first (`placed` is newest first).
+    let (mut waiting_rows, mut later_rows, mut earlier) = (Vec::new(), Vec::new(), Vec::new());
+    for (_, _, row) in placed {
+        match row.status.as_str() {
+            "waiting" => waiting_rows.push(row),
+            "later" => later_rows.push(row),
+            _ => earlier.push(row),
+        }
+    }
+    waiting_rows.reverse();
+    later_rows.reverse();
+    let mut unanswered = waiting_rows;
+    unanswered.append(&mut later_rows);
     GROUPS
         .iter()
         .zip([unanswered, earlier, thread_pages])
@@ -503,15 +586,34 @@ fn age_of(at: Option<i64>, context: &ChatContext) -> String {
     })
 }
 
-fn list_row(asker: &Asker, context: &ChatContext) -> QuestionListRow {
-    let time = crate::transcript::message_time::message_time(asker.at, context);
+/// A row's `time`, `age` and `time_title`, all read from when it was asked; empty without `labels`.
+fn time_fields(at: Option<i64>, context: &ChatContext, labels: bool) -> (String, String, String) {
+    if !labels {
+        return Default::default();
+    }
+    let time = crate::transcript::message_time::message_time(at, context);
+    (
+        time["label"].as_str().unwrap_or_default().to_string(),
+        age_of(at, context),
+        time["title"].as_str().unwrap_or_default().to_string(),
+    )
+}
+
+/// Fills the time fields of a row listed without them (`list_rows`), exactly as listing it with
+/// them would have.
+fn label_row(row: &mut QuestionListRow, context: &ChatContext) {
+    (row.time, row.age, row.time_title) = time_fields(row.at_ms, context, true);
+}
+
+fn list_row(asker: &Asker, context: &ChatContext, labels: bool) -> QuestionListRow {
+    let (time, age, time_title) = time_fields(asker.at, context, labels);
     let title = if asker.title.is_empty() {
         match asker.kind {
             AskerKind::Form => "Questions".to_string(),
             AskerKind::Page => "Page".to_string(),
         }
     } else {
-        asker.title.clone()
+        plain_words(&asker.title)
     };
     QuestionListRow {
         id: asker.id.clone(),
@@ -523,10 +625,10 @@ fn list_row(asker: &Asker, context: &ChatContext) -> QuestionListRow {
         title,
         status: String::new(),
         tags: asker.tags.clone(),
-        time: time["label"].as_str().unwrap_or_default().to_string(),
-        age: age_of(asker.at, context),
+        time,
+        age,
         at_ms: asker.at,
-        time_title: time["title"].as_str().unwrap_or_default().to_string(),
+        time_title,
         thread: String::new(),
     }
 }
@@ -534,9 +636,10 @@ fn list_row(asker: &Asker, context: &ChatContext) -> QuestionListRow {
 fn content_row(
     item: &crate::questions::content::ContentItem,
     context: &ChatContext,
+    labels: bool,
 ) -> QuestionListRow {
     use crate::transcript::question_forms::ContentKind;
-    let time = crate::transcript::message_time::message_time(item.at, context);
+    let (time, age, time_title) = time_fields(item.at, context, labels);
     let (kind, fallback) = match item.kind {
         ContentKind::Chart => ("chart", "Chart"),
         _ => ("page", "Page"),
@@ -547,14 +650,14 @@ fn content_row(
         title: if item.title.is_empty() {
             fallback.to_string()
         } else {
-            item.title.clone()
+            plain_words(&item.title)
         },
         status: String::new(),
         tags: Vec::new(),
-        time: time["label"].as_str().unwrap_or_default().to_string(),
-        age: age_of(item.at, context),
+        time,
+        age,
         at_ms: item.at,
-        time_title: time["title"].as_str().unwrap_or_default().to_string(),
+        time_title,
         thread: String::new(),
     }
 }
@@ -601,9 +704,13 @@ pub fn answers_on_the_way(state: &ChatState) -> Vec<PageAnswers> {
 pub fn project(state: &ChatState, context: &ChatContext) -> OpenQuestions {
     let open = unanswered(state);
     // The loaded rows' unanswered questions, plus the ones older than what the chat has loaded.
-    let count = open.len() as u32 + indexed_waiting(state);
+    let count = (open.len() + indexed_waiting(state, &indexed_entries(state)).len()) as u32;
     let filter = state.questions.open_questions.filter.as_str();
-    let all = list(state, context);
+    /*
+    CDXC:SessionChat 2026-11-04 WHY:
+    This runs on every chat event (each streamed token) to learn whether the document changed, and it listed every form, page and chart with its time labels and copied each row twice to keep the first page: on a coordinator chat with hundreds of them that was the chat worker's main cost while a visible chat streamed (issues-1027/macos-perf). Rows are listed without their time fields, moved rather than copied, and only the rows on the page get their time fields (`label_row`), which reads them exactly as listing them would.
+    */
+    let all = list_rows(state, context, false);
     let total = all.iter().map(|section| section.count).sum();
     let later = all
         .iter()
@@ -618,20 +725,26 @@ pub fn project(state: &ChatState, context: &ChatContext) -> OpenQuestions {
     .flatten()
     .collect::<Vec<_>>()
     .join(" \u{b7} ");
+    let filters = FILTERS
+        .iter()
+        .map(|(id, label)| QuestionListFilter {
+            id: id.to_string(),
+            label: label.to_string(),
+            count: all
+                .iter()
+                .flat_map(|section| &section.rows)
+                .filter(|row| filter_shows(id, &row.kind))
+                .count() as u32,
+        })
+        .collect();
     let (sections, remaining) = page_sections(
-        all.iter()
-            .filter_map(|section| {
-                let rows: Vec<QuestionListRow> = section
-                    .rows
-                    .iter()
-                    .filter(|row| filter_shows(filter, &row.kind))
-                    .cloned()
-                    .collect();
-                (!rows.is_empty()).then(|| QuestionListSection {
-                    count: rows.len() as u32,
-                    rows,
+        all.into_iter()
+            .filter_map(|mut section| {
+                section.rows.retain(|row| filter_shows(filter, &row.kind));
+                (!section.rows.is_empty()).then(|| QuestionListSection {
+                    count: section.rows.len() as u32,
                     remaining: 0,
-                    ..section.clone()
+                    ..section
                 })
             })
             .collect(),
@@ -639,6 +752,12 @@ pub fn project(state: &ChatState, context: &ChatContext) -> OpenQuestions {
     );
     // "Earlier" has a header only beside another group.
     let mut sections = sections;
+    for row in sections
+        .iter_mut()
+        .flat_map(|section| section.rows.iter_mut())
+    {
+        label_row(row, context);
+    }
     if sections.len() == 1 {
         for section in &mut sections {
             section.title.clear();
@@ -656,18 +775,7 @@ pub fn project(state: &ChatState, context: &ChatContext) -> OpenQuestions {
         jump: state.questions.open_questions.jump.clone(),
         total,
         summary,
-        filters: FILTERS
-            .iter()
-            .map(|(id, label)| QuestionListFilter {
-                id: id.to_string(),
-                label: label.to_string(),
-                count: all
-                    .iter()
-                    .flat_map(|section| &section.rows)
-                    .filter(|row| filter_shows(id, &row.kind))
-                    .count() as u32,
-            })
-            .collect(),
+        filters,
         filter: if filter.is_empty() {
             "all".to_string()
         } else {
@@ -688,20 +796,15 @@ pub fn project(state: &ChatState, context: &ChatContext) -> OpenQuestions {
 pub fn previous(state: &mut ChatState, context: &ChatContext) -> Vec<Effect> {
     let open: Vec<Asker> = unanswered(state).into_iter().cloned().collect();
     if open.is_empty() {
-        // The only questions waiting are older than the loaded rows (the pill counts them):
-        // there is no row to scroll to, so say where they are.
-        // The only questions waiting are older than the loaded rows: "Go to chat" brings the
-        // newest of them in and scrolls to it, as the Resources modal's button does.
-        let newest = indexed(state)
+        // The only questions waiting are older than the loaded rows (the pill counts them): "Go to
+        // chat" brings the newest of them in and scrolls to it, as the Resources modal's button does.
+        let entries = indexed_entries(state);
+        let newest = indexed_waiting(state, &entries)
             .into_iter()
-            .filter(|entry| entry.thread.is_none() && entry.status == "waiting")
-            .filter(|entry| {
-                !crate::questions::later::later_ids(state).contains(&entry.id)
-                    && !crate::questions::later::removed_ids(state).contains(&entry.id)
-            })
-            .max_by_key(|entry| entry.at_ms.unwrap_or(i64::MIN));
+            .max_by_key(|entry| entry.at_ms.unwrap_or(i64::MIN))
+            .map(|entry| entry.id.clone());
         return match newest {
-            Some(entry) => crate::questions::resource_modal::go_to(state, context, &entry.id),
+            Some(id) => crate::questions::resource_modal::go_to(state, context, &id),
             None => Vec::new(),
         };
     }
@@ -709,7 +812,12 @@ pub fn previous(state: &mut ChatState, context: &ChatContext) -> Vec<Effect> {
     let at = open
         .iter()
         .position(|asker| Some(asker.id.as_str()) == last);
-    jump_to(state, context, &open[step(open.len(), at)], None)
+    let selected = &open[step(open.len(), at)];
+    if jump_to(state, context, selected, None) {
+        return Vec::new();
+    }
+    // Its reply is loaded but has no row yet: bring in the window that holds it, by its place.
+    crate::questions::resource_modal::go_to(state, context, &selected.id)
 }
 
 /// Which of `count` unanswered questions (oldest first) the pill goes to, given where the last
@@ -730,7 +838,11 @@ pub fn jump_to_id(state: &mut ChatState, context: &ChatContext, id: &str) -> Vec
         .find(|asker| asker.id == id)
         .cloned()
     {
-        return jump_to(state, context, &asker, None);
+        if !jump_to(state, context, &asker, None) {
+            // Its reply is loaded but has no row yet: bring in the window that holds it.
+            return crate::questions::resource_modal::go_to(state, context, id);
+        }
+        return Vec::new();
     }
     let Some(item) = state
         .questions
@@ -743,7 +855,8 @@ pub fn jump_to_id(state: &mut ChatState, context: &ChatContext, id: &str) -> Vec
     else {
         return open_indexed(state, context, id);
     };
-    jump_to_row(state, context, &item.message_id, &item.id, None)
+    jump_to_row(state, context, &item.message_id, &item.id, None);
+    Vec::new()
 }
 
 /// `openResource {id}`: a row of the list clicked. A form or chart opens in the floating modal and
@@ -751,7 +864,12 @@ pub fn jump_to_id(state: &mut ChatState, context: &ChatContext, id: &str) -> Vec
 /// or a thread's, by its address; a loaded one by scrolling to its card).
 pub fn open_resource(state: &mut ChatState, context: &ChatContext, id: &str) -> Vec<Effect> {
     let effects = crate::questions::resource_modal::open(state, id);
-    if state.questions.resource_modal.as_ref().is_some_and(|modal| modal.id == id) {
+    if state
+        .questions
+        .resource_modal
+        .as_ref()
+        .is_some_and(|modal| modal.id == id)
+    {
         return effects;
     }
     jump_to_id(state, context, id)
@@ -792,7 +910,14 @@ fn read_only_url(url: &str) -> String {
 
 /// A Q-tag link's click (`#gx-question=Q80`, `transcript/open_questions.rs`): the latest form or
 /// page that asked the tag, answered or not.
+///
+/// CDXC:SessionChat 2026-11-05 DECISION:
+/// User: "clicking Q1289 even tho the question is right there infront of me takes me up to the first time this q was asked ... shouldn't jump me up there". A tag pill on the question it names (`;here`, `HERE_SUFFIX`) never scrolls: the desktop and the phone open the Reply popover for that question instead, so the reader can answer in their own words. A tag pill elsewhere (a later message, the composer) goes to the newest reply that asks the tag: a one-click question asked again in the same words is one form, whose asker keeps the reply that first asked it, so the newest reply holding it is looked up here.
 pub fn jump_to_tag(state: &mut ChatState, context: &ChatContext, tag: &str) -> Vec<Effect> {
+    if let Some((message_id, form_id)) = newest_one_click_ask(state, tag) {
+        jump_to_row(state, context, &message_id, &form_id, Some(tag.to_string()));
+        return Vec::new();
+    }
     let Some(asker) = tag_target(&state.transcript_view.askers, tag).cloned() else {
         return vec![Effect::Toast {
             level: "info".to_string(),
@@ -805,7 +930,39 @@ pub fn jump_to_tag(state: &mut ChatState, context: &ChatContext, tag: &str) -> V
         .iter()
         .find(|known| known.eq_ignore_ascii_case(tag))
         .cloned();
-    jump_to(state, context, &asker, question)
+    jump_to(state, context, &asker, question);
+    Vec::new()
+}
+
+/// The newest reply asking `tag` as a one-click question, with that question's form id, when it is
+/// newer than the reply of the tag's latest asker.
+fn newest_one_click_ask(state: &ChatState, tag: &str) -> Option<(String, String)> {
+    use crate::transcript::inline_answers::{inline_questions, ANSWER_SCHEME};
+    let asker = tag_target(&state.transcript_view.askers, tag);
+    for message in state.messages.composed.iter().rev() {
+        if asker.is_some_and(|asker| asker.message_id == message.id) {
+            return None;
+        }
+        if message.role != ghostex_gx_protocol::ChatRole::Assistant {
+            continue;
+        }
+        let prose = crate::transcript::prose::prose_markdown(&message.blocks);
+        if !prose.contains(ANSWER_SCHEME) {
+            continue;
+        }
+        if let Some(question) = inline_questions(&prose)
+            .into_iter()
+            .find(|question| question.tag.eq_ignore_ascii_case(tag))
+        {
+            return Some((message.id.clone(), question.form().id));
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+pub(crate) fn newest_one_click_ask_for_test(state: &ChatState, tag: &str) -> Option<(String, String)> {
+    newest_one_click_ask(state, tag)
 }
 
 fn jump_to(
@@ -813,21 +970,21 @@ fn jump_to(
     context: &ChatContext,
     asker: &Asker,
     question: Option<String>,
-) -> Vec<Effect> {
+) -> bool {
     jump_to_row(state, context, &asker.message_id, &asker.id, question)
 }
 
-/// Scrolls to the row holding `message_id` and flashes `target` there.
+/// Scrolls to the row holding `message_id` and flashes `target` there; false when no row holds it.
 pub(crate) fn jump_to_row(
     state: &mut ChatState,
     context: &ChatContext,
     message_id: &str,
     target: &str,
     question: Option<String>,
-) -> Vec<Effect> {
+) -> bool {
     let rows = crate::transcript::rows(state, context);
     let Some(item) = crate::composer::files_links::row_of(&rows, message_id, None) else {
-        return Vec::new();
+        return false;
     };
     let revision = state
         .questions
@@ -844,7 +1001,7 @@ pub(crate) fn jump_to_row(
         question,
     });
     state.core.request_publish();
-    Vec::new()
+    true
 }
 
 /// The tag a Markdown link names, when it is a Q-tag link (`#gx-question=Q80;open`).
@@ -884,6 +1041,7 @@ mod tests {
             skipped: Vec::new(),
             superseded: Vec::new(),
             inherited: false,
+            said: Vec::new(),
             title: format!("About {id}"),
             at,
         }
@@ -985,6 +1143,48 @@ mod tests {
         assert_eq!(pill.total, 3, "Resources still lists them all");
         assert_eq!(clicked(&mut state), None);
         assert!(state.questions.open_questions.jump.is_none());
+    }
+
+    #[test]
+    fn the_index_settles_loaded_questions_whose_answer_is_outside_the_window() {
+        let mut state = chat_asking(vec![
+            asker("form", AskerKind::Form, Some(1_000)),
+            asker("page", AskerKind::Page, Some(2_000)),
+            asker("asked-again", AskerKind::Form, Some(3_000)),
+        ]);
+        state.session.resource_index = vec![
+            indexed("form", "form", "answered", 1_000),
+            indexed("page", "page", "answered", 2_000),
+            indexed("asked-again", "form", "withdrawn", 3_000),
+        ];
+        // No form send state survives a reload, and no answer or withdrawal is in this window.
+        assert!(state.questions.forms.is_empty());
+        let pill = project(&state, &ChatContext::default());
+        assert_eq!(pill.count, 0);
+        assert_eq!(pill.total, 3);
+        assert!(section(&pill, "unanswered").is_empty());
+        assert_eq!(with_status(&pill, "answered"), vec!["page", "form"]);
+        assert_eq!(with_status(&pill, "withdrawn"), vec!["asked-again"]);
+        assert!(previous(&mut state, &ChatContext::default()).is_empty());
+        assert!(state.questions.open_questions.jump.is_none());
+    }
+
+    #[test]
+    fn a_counted_question_without_a_rendered_row_uses_its_indexed_offset() {
+        let mut state = ChatState::default();
+        state
+            .transcript_view
+            .askers
+            .push(asker("old", AskerKind::Form, Some(1_000)));
+        state.session.resource_index = vec![indexed("old", "form", "waiting", 1_000)];
+        assert_eq!(project(&state, &ChatContext::default()).count, 1);
+        let effects = previous(&mut state, &ChatContext::default());
+        assert!(!effects.is_empty(), "the click loads the older window");
+        assert!(state
+            .questions
+            .resource_go
+            .as_ref()
+            .is_some_and(|go| go.read_issued));
     }
 
     #[test]
@@ -1477,8 +1677,11 @@ mod tests {
         assert_eq!(section(&list(&state), "earlier").len(), LIST_PAGE);
     }
 
+    /// An index record as gxserver writes it for a reply its transcript read holds: with the
+    /// reply's place (`offset`).
     fn indexed(id: &str, kind: &str, status: &str, at: i64) -> serde_json::Value {
         serde_json::json!({"id": id, "kind": kind, "title": format!("About {id}"), "status": status, "atMs": at,
+            "offset": at.max(0) * 10,
             "url": if kind == "page" { Some(format!("http://127.0.0.1:1/visual/{id}")) } else { None }})
     }
 
@@ -1498,7 +1701,10 @@ mod tests {
             indexed("loaded", "form", "waiting", 9_000),
         ];
         let pill = project(&state, &ChatContext::default());
-        assert_eq!(pill.total, 4, "the loaded row once, plus the three older ones");
+        assert_eq!(
+            pill.total, 4,
+            "the loaded row once, plus the three older ones"
+        );
         assert_eq!(pill.count, 1, "the older waiting question counts");
         assert_eq!(pill.summary, "1 unanswered");
         assert_eq!(section(&pill, "unanswered"), vec!["old-open"]);
@@ -1513,10 +1719,16 @@ mod tests {
         // The reader's marks apply to indexed rows too.
         state.session.later_question_ids = vec!["old-open".to_string()];
         let pill = project(&state, &ChatContext::default());
-        assert_eq!((pill.count, pill.summary.as_str()), (0, "0 unanswered · 1 for later"));
+        assert_eq!(
+            (pill.count, pill.summary.as_str()),
+            (0, "0 unanswered · 1 for later")
+        );
         assert_eq!(with_status(&pill, "later"), vec!["old-open"]);
         state.session.removed_question_ids = vec!["old-open".to_string()];
-        assert_eq!(with_status(&project(&state, &ChatContext::default()), "canceled"), vec!["old-open"]);
+        assert_eq!(
+            with_status(&project(&state, &ChatContext::default()), "canceled"),
+            vec!["old-open"]
+        );
     }
 
     /// The count survives a compaction and a partly loaded chat: nothing loaded, all in the index.
@@ -1524,12 +1736,23 @@ mod tests {
     fn a_chat_with_nothing_loaded_still_counts_the_whole_conversation() {
         let mut state = ChatState::default();
         state.session.resource_index = (0..300)
-            .map(|n| indexed(&format!("r{n}"), if n % 3 == 0 { "page" } else { "form" }, "answered", n))
+            .map(|n| {
+                indexed(
+                    &format!("r{n}"),
+                    if n % 3 == 0 { "page" } else { "form" },
+                    "answered",
+                    n,
+                )
+            })
             .collect();
         let pill = project(&state, &ChatContext::default());
         assert_eq!(pill.total, 300);
         assert_eq!(pill.filters[0].count, 300);
-        assert_eq!(section(&pill, "earlier").len(), LIST_PAGE, "still one page of rows");
+        assert_eq!(
+            section(&pill, "earlier").len(),
+            LIST_PAGE,
+            "still one page of rows"
+        );
         assert_eq!(pill.remaining as usize, 300 - LIST_PAGE);
     }
 
@@ -1541,7 +1764,8 @@ mod tests {
         done.answered = true;
         state.transcript_view.askers.push(done);
         let mut page = indexed("tp", "page", "other", 7_000);
-        page["thread"] = serde_json::json!({"title": "Fix the sidebar", "projectId": "p", "sessionId": "s"});
+        page["thread"] =
+            serde_json::json!({"title": "Fix the sidebar", "projectId": "p", "sessionId": "s"});
         state.session.resource_index = vec![page];
         let pill = project(&state, &ChatContext::default());
         assert_eq!(pill.total, 2);
@@ -1552,17 +1776,19 @@ mod tests {
         assert_eq!(pill.count, 0, "a thread's page never counts as waiting");
     }
 
-    /// Opening an indexed row: a page opens (a thread's read-only), anything older than the loaded
-    /// rows says so.
+    /// Opening an indexed row: a page opens (a thread's read-only), a form older than the loaded
+    /// rows is read in by its place, and one with no recorded place says so.
     #[test]
     fn opening_an_indexed_row_opens_the_page_or_says_why_not() {
         let mut state = ChatState::default();
         let mut thread_page = indexed("tp", "page", "other", 1);
-        thread_page["thread"] = serde_json::json!({"title": "T", "projectId": "p", "sessionId": "s"});
+        thread_page["thread"] =
+            serde_json::json!({"title": "T", "projectId": "p", "sessionId": "s"});
         state.session.resource_index = vec![
             indexed("own-page", "page", "other", 2),
             thread_page,
             indexed("old-form", "form", "waiting", 3),
+            no_place("placeless", "waiting", 4),
         ];
         let context = ChatContext::default();
         let open = |state: &mut ChatState, id: &str| jump_to_id(state, &context, id);
@@ -1574,23 +1800,64 @@ mod tests {
         }
         match &open(&mut state, "tp")[..] {
             [Effect::Open(crate::effect::OpenTarget::Url { url, .. })] => {
-                assert_eq!(url, &format!("http://127.0.0.1:1/visual/tp?{READ_ONLY_QUERY}"));
+                assert_eq!(
+                    url,
+                    &format!("http://127.0.0.1:1/visual/tp?{READ_ONLY_QUERY}")
+                );
             }
             other => panic!("{other:?}"),
         }
-        assert!(matches!(&open(&mut state, "old-form")[..], [Effect::Toast { .. }]));
-        // The ? pill with only an older question waiting says where it is.
-        assert!(matches!(&previous(&mut state, &context)[..], [Effect::Toast { .. }]));
+        assert!(matches!(
+            &open(&mut state, "placeless")[..],
+            [Effect::Toast { .. }]
+        ));
+        // The ? pill with only an older question waiting brings its window in.
+        assert_eq!(
+            project(&state, &context).count,
+            1,
+            "the placeless one is not counted"
+        );
+        assert!(!previous(&mut state, &context).is_empty());
+        let go = state.questions.resource_go.as_ref().unwrap();
+        assert_eq!((go.id.as_str(), go.read_issued), ("old-form", true));
+    }
+
+    /// A record of a reply the transcript gxserver reads no longer holds: it has no place.
+    fn no_place(id: &str, status: &str, at: i64) -> serde_json::Value {
+        let mut entry = indexed(id, "form", status, at);
+        entry.as_object_mut().unwrap().remove("offset");
+        entry
+    }
+
+    /// A waiting record nothing can reach any more reads withdrawn: the ? pill neither counts it
+    /// nor steps to it, and the list shows it under Earlier.
+    #[test]
+    fn a_waiting_record_with_no_place_is_not_counted() {
+        let mut state = ChatState::default();
+        state.session.resource_index = vec![no_place("gone", "waiting", 5)];
+        let pill = project(&state, &ChatContext::default());
+        assert_eq!(pill.count, 0);
+        assert_eq!(with_status(&pill, "withdrawn"), vec!["gone"]);
+        assert!(previous(&mut state, &ChatContext::default()).is_empty());
+        assert!(state.questions.resource_go.is_none());
     }
 
     #[test]
     fn thread_pages_are_on_the_first_page_beside_a_long_earlier_list() {
         let (paged, left) = page_sections(
-            vec![sized("unanswered", 2), sized("earlier", 200), sized("threads", 30)],
+            vec![
+                sized("unanswered", 2),
+                sized("earlier", 200),
+                sized("threads", 30),
+            ],
             0,
         );
         let shown: Vec<usize> = paged.iter().map(|s| s.rows.len()).collect();
-        assert_eq!(shown, [2, LIST_PAGE, LIST_PAGE], "each paged group has its own page");
+        assert_eq!(
+            shown,
+            [2, LIST_PAGE, LIST_PAGE],
+            "each paged group has its own page"
+        );
         assert_eq!(left as usize, (200 - LIST_PAGE) + (30 - LIST_PAGE));
     }
 
@@ -1600,16 +1867,135 @@ mod tests {
     #[test]
     fn each_group_counts_its_own_cut_rows() {
         let (paged, left) = page_sections(
-            vec![sized("unanswered", 2), sized("earlier", 413), sized("threads", 4)],
+            vec![
+                sized("unanswered", 2),
+                sized("earlier", 413),
+                sized("threads", 4),
+            ],
             0,
         );
-        let remaining: Vec<(&str, u32)> = paged.iter().map(|s| (s.id.as_str(), s.remaining)).collect();
+        let remaining: Vec<(&str, u32)> =
+            paged.iter().map(|s| (s.id.as_str(), s.remaining)).collect();
         assert_eq!(
             remaining,
-            [("unanswered", 0), ("earlier", 413 - LIST_PAGE as u32), ("threads", 0)]
+            [
+                ("unanswered", 0),
+                ("earlier", 413 - LIST_PAGE as u32),
+                ("threads", 0)
+            ]
         );
-        assert_eq!(left, 413 - LIST_PAGE as u32, "the list-wide total is their sum");
+        assert_eq!(
+            left,
+            413 - LIST_PAGE as u32,
+            "the list-wide total is their sum"
+        );
         let (later, _) = page_sections(vec![sized("earlier", 30)], 1);
         assert_eq!(later[0].remaining, 30 - 2 * LIST_PAGE as u32);
+    }
+}
+
+#[cfg(test)]
+mod paged_labels_tests {
+    use super::*;
+    use crate::transcript::open_questions::{Asker, AskerKind};
+
+    /// What `project` showed before it listed rows without their time fields: every row listed with
+    /// them, then filtered and paged.
+    fn sections_listed_whole(
+        state: &ChatState,
+        context: &ChatContext,
+    ) -> (Vec<QuestionListSection>, u32) {
+        let filter = state.questions.open_questions.filter.as_str();
+        let mut sections = Vec::new();
+        for mut section in list(state, context) {
+            section.rows.retain(|row| filter_shows(filter, &row.kind));
+            if !section.rows.is_empty() {
+                section.count = section.rows.len() as u32;
+                sections.push(section);
+            }
+        }
+        let (mut sections, remaining) =
+            page_sections(sections, state.questions.open_questions.pages);
+        if sections.len() == 1 {
+            sections[0].title.clear();
+        }
+        (sections, remaining)
+    }
+
+    #[test]
+    fn an_index_that_changes_in_place_is_read_again() {
+        let entry = |status: &str| serde_json::json!({"id": "r1", "kind": "form", "title": "One", "atMs": 5, "status": status, "offset": 1});
+        let mut state = ChatState::default();
+        state.session.resource_index = vec![entry("answered")];
+        assert_eq!(project(&state, &ChatContext::default()).count, 0);
+        state.session.resource_index = vec![entry("waiting")];
+        assert_eq!(project(&state, &ChatContext::default()).count, 1);
+        state.session.resource_index = vec![entry("answered")];
+        assert_eq!(project(&state, &ChatContext::default()).count, 0);
+        state.session.resource_index.clear();
+        assert_eq!(project(&state, &ChatContext::default()).total, 0);
+    }
+
+    #[test]
+    fn the_paged_list_reads_exactly_as_listing_every_row_with_its_time_would() {
+        let now = 1_762_300_000_000_i64;
+        let kinds = ["form", "page", "chart"];
+        let mut state = ChatState::default();
+        state.session.resource_index = (0..120)
+            .map(|n| {
+                serde_json::json!({
+                    "id": format!("r{n}"),
+                    "kind": kinds[n as usize % 3],
+                    "title": format!("Resource **{n}**"),
+                    "atMs": now - n * 3_600_000,
+                    "status": if n % 7 == 0 { "waiting" } else { "answered" },
+                    "offset": n * 10,
+                })
+            })
+            .collect();
+        for n in 0..6 {
+            state.transcript_view.askers.push(Asker {
+                id: format!("a{n}"),
+                kind: if n % 2 == 0 {
+                    AskerKind::Form
+                } else {
+                    AskerKind::Page
+                },
+                message_id: format!("m-a{n}"),
+                tags: vec![format!("Q-a{n}")],
+                answered: n % 3 == 0,
+                obsolete: false,
+                withdrawn: Vec::new(),
+                keys: Vec::new(),
+                skipped: Vec::new(),
+                superseded: Vec::new(),
+                inherited: false,
+                said: Vec::new(),
+                title: format!("Asked {n}"),
+                at: Some(now - n * 60_000),
+            });
+        }
+        state.session.later_question_ids = vec!["a1".to_string(), "r14".to_string()];
+        let context = ChatContext {
+            now_ms: now as f64,
+            utc_offset_minutes: 240,
+            ..Default::default()
+        };
+        for (filter, pages) in [("", 0), ("", 2), ("page", 0), ("form", 1), ("chart", 0)] {
+            state.questions.open_questions.filter = filter.to_string();
+            state.questions.open_questions.pages = pages;
+            let projected = project(&state, &context);
+            let (sections, remaining) = sections_listed_whole(&state, &context);
+            assert_eq!(
+                projected.sections, sections,
+                "filter {filter:?}, pages {pages}"
+            );
+            assert_eq!(projected.remaining, remaining);
+            assert!(projected
+                .sections
+                .iter()
+                .flat_map(|section| &section.rows)
+                .all(|row| !row.time.is_empty() && !row.time_title.is_empty()));
+        }
     }
 }

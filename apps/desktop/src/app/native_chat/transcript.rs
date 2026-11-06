@@ -91,7 +91,6 @@ impl NativeChatView {
         // and summarized modes off. React reached that by mounting its own list inside the dialog;
         // GPUI shares one renderer, so the child's rows drop both modes here.
         if !main {
-            p.verbose = false;
             p.simple = false;
             p.work_open = false;
         }
@@ -110,6 +109,7 @@ impl NativeChatView {
                 outcome,
                 latest_reply,
                 cards,
+                read_images,
             } => {
                 let reply = final_message.as_deref().filter(|reply| reply.is_object());
                 // A running turn's "Active work" fold starts open and has a key of its own, so
@@ -170,6 +170,21 @@ impl NativeChatView {
                             cx,
                         ),
                     );
+                    // The closed "Active work" fold keeps the pictures its rows read in view
+                    // (gx-chat-core `read_images.rs`).
+                    if !expanded && motion.is_none() {
+                        let pictures = serde_json::Value::Array(read_images.clone());
+                        if let Some(strip) = self.read_picture_strip(
+                            &format!("{key}:read"),
+                            &pictures,
+                            4.0,
+                            p.background,
+                            &p,
+                            cx,
+                        ) {
+                            row = row.child(strip);
+                        }
+                    }
                     if expanded || motion.is_some() {
                         let mut body = div().flex().flex_col().w_full().gap(px(8.0 * s));
                         for message in fold_rows {
@@ -426,7 +441,8 @@ impl NativeChatView {
         if message["role"] == "user" && message["suppressed"].is_null() {
             // The prompt renders as markdown like the React bubble, which also makes it a selectable TextView; a plain string child cannot be selected.
             let mut bubble_appearance = p.clone();
-            bubble_appearance.prose = p.primary;
+            bubble_appearance.prose = p.strengthened(p.primary);
+            bubble_appearance.code_text = p.primary;
             // The delivery indicator sits left of the bubble, level with its last line, so it never drifts away from a short prompt. It hangs off the bubble's own left edge (6px gap, the 1px border counted) because a flex row around the bubble measured a prompt with an inline picture at min-content, one word per line.
             let indicator = self
                 .delivery_indicator(message, p, cx)
@@ -448,14 +464,19 @@ impl NativeChatView {
                 .border_color(gpui::transparent_black())
                 .p(px(12.0 * s))
                 .bg(p.input)
+                // A slash command reads as one, in the chat's monospace (gx-chat-core `is_slash_command_line`).
+                .when(message["slashCommand"] == true, |bubble| {
+                    bubble.font_family(super::fonts::CHAT_MONO)
+                })
                 .child(self.prompt_body(&id, message, body.clone(), &bubble_appearance, p, cx))
                 .children(indicator);
             let failed_delivery = self.render_startup_delivery(message, false, p, cx);
             // The prompt's own pictures sit above the bubble, where their author put them.
             let thumbnails = self.user_image_thumbnails(message, p, cx);
             let actions = self.user_actions(message, p, cx);
+            // A send that did not go out says why under its own bubble, at the bubble's side and
+            // within its width (`delivery_note`, startup_delivery.rs).
             return row
-                .when_some(failed_delivery, |this, status| this.child(status))
                 .when_some(thumbnails, |this, images| this.child(images))
                 .child(
                     div()
@@ -464,6 +485,7 @@ impl NativeChatView {
                         .items_end()
                         .gap(px(4.0 * s))
                         .child(bubble)
+                        .children(failed_delivery)
                         .children(actions),
                 )
                 .into_any_element();
@@ -511,9 +533,11 @@ impl NativeChatView {
             // mode that owns no calls (gx-chat-core `transcript/thinking_card.rs`).
             let card = reasoning && (message["thinkingCard"].is_object() || (p.simple && !tools));
             if card {
-                // The calls the thought made stay in view below its card, drawn by the run below
-                // as a reply's flat calls are.
+                // A running thought folds the calls it made behind its line, as a reply's sentence
+                // does (gx-chat-core `thinkingCard.calls`); any other card leaves them to the run
+                // below.
                 row = row.child(self.thinking_card(&id, message, body.clone(), p, cx));
+                tools_rendered = message["thinkingCard"]["calls"].is_string();
             } else if reasoning && tools {
                 let key = format!("reasoning:{id}");
                 // A running summary turn's newest row opens its tools (gx-chat-core `summary_mode_turns`).
@@ -556,6 +580,17 @@ impl NativeChatView {
                         );
                         row = row.child(self.disclosure_body_motion(&key, motion, 8.0 * s, body));
                     }
+                } else if let Some(pictures) = self.read_picture_strip(
+                    &format!("{key}:read"),
+                    &message["readImages"],
+                    super::read_pictures::FOLDED_CALLS_INSET,
+                    p.background,
+                    p,
+                    cx,
+                ) {
+                    // The closed headline keeps the pictures its calls read in view
+                    // (gx-chat-core `read_images.rs`).
+                    row = row.child(pictures);
                 }
                 tools_rendered = true;
             } else if reasoning {
@@ -634,6 +669,17 @@ impl NativeChatView {
                             row =
                                 row.child(self.disclosure_body_motion(&key, motion, 8.0 * s, body));
                         }
+                    } else if let Some(pictures) = self.read_picture_strip(
+                        &format!("{key}:read"),
+                        &message["readImages"],
+                        super::read_pictures::FOLDED_CALLS_INSET,
+                        p.background,
+                        p,
+                        cx,
+                    ) {
+                        // The sentence's closed calls keep the pictures they read in view
+                        // (gx-chat-core `read_images.rs`).
+                        row = row.child(pictures);
                     }
                     tools_rendered = true;
                 }
