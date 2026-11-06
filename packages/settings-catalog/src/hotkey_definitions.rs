@@ -429,8 +429,8 @@ pub const HOTKEY_DEFINITIONS: &[HotkeyDefinition] = &[
     // User (Ryan): Cmd+Shift+B switches between the Board and the chat view, what the Board button next to Toggle sidebar does. It is window chrome, so it wins from every responder like Toggle View Panel, the Code editor's own Run Build Task included.
     HotkeyDefinition {
         id: "toggleSessionBoard",
-        title: "Toggle Board",
-        description: "Switch between the Board and your chats.",
+        title: "Toggle Session Board",
+        description: "Switch between the Session Board and your chats.",
         default_key: "cmd+shift+b",
         windows_linux_default_key: None,
         alternate_default_keys: &[],

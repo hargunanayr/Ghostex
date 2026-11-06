@@ -464,7 +464,7 @@ How to use this file:
 - **VS Code** `code` (Settings UI row without a settings key; use `ghostex settings open`): Explore, edit, and search your project in a familiar, full-featured workspace without ever leaving Ghostex.
 - **Browser** `browser` (Settings UI row without a settings key; use `ghostex settings open`): Open websites alongside your project and keep useful pages organized without leaving Ghostex.
 - **Kanban** `kanban` (Settings UI row without a settings key; use `ghostex settings open`): Plan upcoming work and track task progress at a glance.
-- **Board** `sessionBoard` (Settings UI row without a settings key; use `ghostex settings open`): Every thread of the Space on one board: Pending, In progress, Review and Completed, with tasks you start later. Opened from the Board button at the top left.
+- **Session Board** `sessionBoard` (Settings UI row without a settings key; use `ghostex settings open`): Every thread of the Space on one board: Pending, In progress, Review and Completed, with tasks you start later. Opened from the Session Board button at the top left.
 - **Automate** `automate` (Settings UI row without a settings key; use `ghostex settings open`): Turn repeatable project routines into simple workflows you can run whenever you need them.
 - **Bots** `bots` (Settings UI row without a settings key; use `ghostex settings open`): Swap the sidebar to your Hermes agents: one row each, with a new session one click away. Needs the Hermes CLI.
 - **Bot automations** `botAutomations` (Settings UI row without a settings key; use `ghostex settings open`): A feed of every Hermes cron run, one channel per job, opened from the Bots sidebar. Needs Bots.
@@ -486,7 +486,7 @@ How to use this file:
 - **OS Integration** `osIntegration` (Settings UI row without a settings key; use `ghostex settings open`): Make Ghostex your default editor, terminal-link handler and script runner, and check how this computer opens its files and links.
 - **Debugging** `debugging` (Settings UI row without a settings key; use `ghostex settings open`): The Debugging page in Settings: debug UI controls and the diagnostic logs you turn on while reproducing an issue.
 - **Extensions** `extensionsButton` (Settings UI row without a settings key; use `ghostex settings open`): An entry in the work area header’s ⋯ menu that lists your installed extensions.
-- **Hide Board** `sessionBoardHidden` (boolean, default false): Stop offering the Board, where every thread of the Space sits in Pending, In progress, Review or Completed, so its button next to Toggle sidebar is gone.
+- **Hide Session Board** `sessionBoardHidden` (boolean, default false): Stop offering the Session Board, where every thread of the Space sits in Pending, In progress, Review or Completed, so its button next to Toggle sidebar is gone.
 - **Hide Bots** `botsHidden` (boolean, default true): Stop offering Bots, the sidebar mode with one row per Hermes profile. Hidden by default; offered only where the Hermes CLI is installed.
 - **Hide Bot automations** `botAutomationsHidden` (boolean, default true): Stop offering Bot automations, the Automations row in the Bots sidebar that opens a feed of every Hermes cron run. Hidden by default; needs Bots.
 - **Turn off Actions** `actionsHidden` (boolean, default true): Turn off Actions everywhere: the Start button, the Actions page in Settings, Actions pinned to project rows, the Start Action hotkeys and the Quick Access rows. Off by default; your saved actions are kept.

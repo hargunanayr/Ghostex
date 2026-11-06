@@ -3604,32 +3604,32 @@ start-work <bead-id>`); the session is linked to the card and the card shows
 Related settings: Settings > Projects (beads directory and display key),
 `globalBeadsDirectory`, `globalBeadsDisplayKey`.
 
-## Board (threads by status)
+## Session Board (threads by status)
 
-The Board shows every agent thread of the Space the sidebar has selected as
+The Session Board shows every agent thread of the Space the sidebar has selected as
 a card in four columns: **Pending** (a new thread that has not had its first
 prompt, or a task waiting to start), **In progress** (the agent is working),
 **Review** (the agent finished its turn or is waiting on your answer) and
 **Completed** (threads you marked done). It never mixes Spaces; with Spaces off
-it covers every project. Open it with the **Board** button at the top left, next
+it covers every project. Open it with the **Session Board** button at the top left, next
 to Toggle sidebar and the Agents Panel (chat) button. It is the alternative to
 your chats rather than a view of one project: it covers the whole work area in
 every project and stays open while you switch projects. Opening it hides the
-sidebar; the Board button again, or the chat button beside it, takes you back to
+sidebar; the Session Board button again, or the chat button beside it, takes you back to
 your chats and puts the sidebar back. **Cmd+Shift+B** (Ctrl+Shift+B on Windows
-and Linux) switches between the Board and your chats from anywhere, the Code
+and Linux) switches between the Session Board and your chats from anywhere, the Code
 editor included. The heading is a project filter: click
 **All projects** to search the Space's projects by name, group or folder and pick
 one. Cards and pickers name a project after its group (the sidebar folder it
 sits in), such as "XMOR - forever", and show the git branch the agent works on,
-plus the worktree when the session runs in one. With Spaces on, click **Board · <Space>**
-above the heading to switch the Board (and the sidebar) to another Space.
+plus the worktree when the session runs in one. With Spaces on, click **Session Board · <Space>**
+above the heading to switch the Session Board (and the sidebar) to another Space.
 
 - Click a card to open its chat beside the columns, the same chat its session
   shows, where you can read the transcript, answer and send messages. The panel
   shows the card's column and project, **Complete** or **Reopen**, and **Open in
-  chats**, which leaves the Board on that thread. Clicking a session in the
-  sidebar while the Board is open does the same.
+  chats**, which leaves the Session Board on that thread. Clicking a session in the
+  sidebar while the Session Board is open does the same.
 - Review lists the threads waiting on your answer first, then finished turns you
   have not seen, then the rest. Press **Complete** on a card, or drag it to
   Completed. Completing a thread puts it to sleep. A thread that works again
@@ -3653,7 +3653,7 @@ above the heading to switch the Board (and the sidebar) to another Space.
   thread.
 
 Related settings: Settings > Extensions > Store (`sessionBoardHidden` hides the
-Board button); Settings > Hotkeys, Toggle Board (`toggleSessionBoard`).
+Session Board button); Settings > Hotkeys, Toggle Session Board (`toggleSessionBoard`).
 
 ## Automations
 

@@ -303,8 +303,8 @@ impl NativeSessionBoardView {
 
     fn render_header(&self, p: &KanbanPalette, cx: &mut Context<Self>) -> AnyElement {
         let caption = match &self.board.space_name {
-            Some(space) => format!("Board · {space}"),
-            None => "Board".to_string(),
+            Some(space) => format!("Session Board · {space}"),
+            None => "Session Board".to_string(),
         };
         let note = format!("{} threads", self.board.total);
         div()

@@ -10544,8 +10544,8 @@
     },
     {
       "key": "sessionBoard",
-      "title": "Board",
-      "subtitle": "Every thread of the Space on one board: Pending, In progress, Review and Completed, with tasks you start later. Opened from the Board button at the top left.",
+      "title": "Session Board",
+      "subtitle": "Every thread of the Space on one board: Pending, In progress, Review and Completed, with tasks you start later. Opened from the Session Board button at the top left.",
       "tab": "extensions",
       "tabTitle": "Extensions",
       "section": "official",
@@ -10786,8 +10786,8 @@
     },
     {
       "key": "sessionBoardHidden",
-      "title": "Hide Board",
-      "subtitle": "Stop offering the Board, where every thread of the Space sits in Pending, In progress, Review or Completed, so its button next to Toggle sidebar is gone.",
+      "title": "Hide Session Board",
+      "subtitle": "Stop offering the Session Board, where every thread of the Space sits in Pending, In progress, Review or Completed, so its button next to Toggle sidebar is gone.",
       "tab": "extensions",
       "tabTitle": "Extensions",
       "section": "official",
@@ -13042,8 +13042,8 @@
     },
     {
       "id": "toggleSessionBoard",
-      "title": "Toggle Board",
-      "description": "Switch between the Board and your chats.",
+      "title": "Toggle Session Board",
+      "description": "Switch between the Session Board and your chats.",
       "defaultKey": "cmd+shift+b",
       "terminalDefaultKey": "cmd+shift+b",
       "windowsLinuxTerminalDefaultKey": "cmd+alt+shift+b"

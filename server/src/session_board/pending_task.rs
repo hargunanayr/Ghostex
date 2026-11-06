@@ -102,7 +102,7 @@ fn require_waiting_task(
         })?;
     if pending_task_prompt(&session).is_none() {
         return Err(DomainStateError::bad_request(format!(
-            "Session {project_id}/{session_id} is not a Board task waiting to start."
+            "Session {project_id}/{session_id} is not a Session Board task waiting to start."
         )));
     }
     Ok(session)

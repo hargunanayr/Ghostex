@@ -115,12 +115,12 @@ pub const GHOSTEX_OFFICIAL_EXTENSIONS: J = J::Arr(&[
     ]),
     J::Obj(&[
         ("appWide", J::Bool(true)),
-        ("description", J::Str("Every thread of the Space on one board: Pending, In progress, Review and Completed, with tasks you start later. Opened from the Board button at the top left.")),
+        ("description", J::Str("Every thread of the Space on one board: Pending, In progress, Review and Completed, with tasks you start later. Opened from the Session Board button at the top left.")),
         ("category", J::Str("planning")),
         ("id", J::Str("sessionBoard")),
         ("placement", J::Str("sidebar")),
         ("settingsKey", J::Str("sessionBoardHidden")),
-        ("title", J::Str("Board")),
+        ("title", J::Str("Session Board")),
     ]),
     J::Obj(&[
         ("description", J::Str("Turn repeatable project routines into simple workflows you can run whenever you need them.")),

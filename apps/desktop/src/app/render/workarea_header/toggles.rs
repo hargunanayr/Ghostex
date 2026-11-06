@@ -249,6 +249,9 @@ impl GhostexGpuiApp {
     ///
     /// CDXC:SessionBoard 2026-10-28 DECISION:
     /// User (Ryan): the Board opens from the top left, next to Toggle sidebar, like PandaCode's board button, instead of from the view panel.
+    ///
+    /// CDXC:SessionBoard 2026-11-06 DECISION:
+    /// User (Ryan): the custom Board is called "Session Board" everywhere a user sees it (button, hotkey, Settings, its header, Help) so it doesn't clash with upstream's coordinator work board; internal ids and settings keys (`toggleSessionBoard`, `sessionBoard`, `sessionBoardHidden`) stay so saved settings and hotkeys keep working.
     pub(crate) fn render_workarea_header_board_toggle(
         &self,
         in_sidebar: Option<&SidebarAppearance>,
@@ -259,7 +262,11 @@ impl GhostexGpuiApp {
         }
         let showing = self.session_board_showing();
         let tooltip = titlebar_tooltip_label(
-            if showing { "Back to chats" } else { "Board" },
+            if showing {
+                "Back to chats"
+            } else {
+                "Session Board"
+            },
             "toggleSessionBoard",
         );
         header_panel_toggle_button(

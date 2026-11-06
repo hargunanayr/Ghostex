@@ -226,7 +226,7 @@ pub fn usage() -> String {
         ),
         format_help_command(
             "create-agent <agentId> --project-id id [--group-id id] [--model m] [--effort e] [--first-input-draft text] [--task text] [--run-on location] [--defer-start] [--replace-empty-sessions] [--allow-hidden]",
-            "Create and start a configured agent session; --group-id puts it in one of the project's session groups; an agent turned off in Settings > Agents is refused unless --allow-hidden is passed (ghostex agents types lists the visible ones); --model/--effort (Claude, Codex, Antigravity CLI, Copilot, Grok Build, Hermes Agent; Pi and OMP take provider/model and a thinking level; Cursor CLI and Gemini take --model only) apply to this session only; Empryo takes provider/model and starts on it without changing Empryo's default; --first-input-draft stages text in its input without sending; --task makes a Board task that waits in Pending with that prompt and does not start the agent (start it with start-task); --run-on local|docker|hetzner|vercel|daytona|e2b|digitalocean|docker:<host> runs Claude, Codex, OpenCode or Pi in an agentbox box",
+            "Create and start a configured agent session; --group-id puts it in one of the project's session groups; an agent turned off in Settings > Agents is refused unless --allow-hidden is passed (ghostex agents types lists the visible ones); --model/--effort (Claude, Codex, Antigravity CLI, Copilot, Grok Build, Hermes Agent; Pi and OMP take provider/model and a thinking level; Cursor CLI and Gemini take --model only) apply to this session only; Empryo takes provider/model and starts on it without changing Empryo's default; --first-input-draft stages text in its input without sending; --task makes a Session Board task that waits in Pending with that prompt and does not start the agent (start it with start-task); --run-on local|docker|hetzner|vercel|daytona|e2b|digitalocean|docker:<host> runs Claude, Codex, OpenCode or Pi in an agentbox box",
         ),
         format_help_command(
             "board start-work <bead-id> [--agent id [--allow-hidden]] [--model m] [--effort e] [--project-path path|--project-id id] [--json]",
@@ -497,11 +497,11 @@ pub fn usage() -> String {
         ),
         format_help_command(
             "complete-session <selector> [true|false] --json",
-            "Mark a thread completed on the Board and put it to sleep, or reopen it with false",
+            "Mark a thread completed on the Session Board and put it to sleep, or reopen it with false",
         ),
         format_help_command(
             "start-task <selector> --json",
-            "Start a Board task: send its prompt and start its agent",
+            "Start a Session Board task: send its prompt and start its agent",
         ),
         format_help_command(
             "issues status | linear-key [--project-id id] [--clear]",

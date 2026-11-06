@@ -6,6 +6,10 @@
 
 - **The Commit dialog stages like VS Code:** files are listed under Staged Changes and Changes with a status letter each; hover a file to stage, unstage or discard it (or use Stage All, Unstage All and Discard All), and when anything is staged, Commit takes only the staged changes. Discard asks first and never touches staged changes. A List / Tree switch replaces Select and is remembered.
 
+### 🗂️ Session Board
+
+- **The Board is now called Session Board** (its button, Toggle Session Board in Hotkeys, Hide Session Board in Settings and its heading), so it no longer shares a name with a coordinator's work board. Your saved setting and shortcut keep working.
+
 ## 10.48.0 - 2026-11-06
 
 **Ghostex 10.48.0 is out.** One Projects list across all your computers with shared Spaces and settings sync, a Settings > Updates page for the app and every agent, a simpler Accounts page with Cursor, Gemini and Copilot usage, a local Dictate engine, chats for Pi, OMP and OpenCode that no longer drive the terminal, coordinators that heal stuck threads, and one Interface scale.
