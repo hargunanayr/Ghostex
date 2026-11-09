@@ -384,7 +384,7 @@ impl GhostexGpuiApp {
                 "The header's Commit menu commits and opens pull requests here.",
                 cx,
             ),
-            // A file change card's Open diff: the Commit dialog, as on the desktop.
+            // A file change card's Review all: the Commit dialog, as on the desktop.
             Some("reviewChanges") => {
                 self.gx_store_git_titlebar_action("commit", cx);
             }

@@ -606,9 +606,9 @@ impl GhostexGpuiApp {
             }
             return;
         }
-        // A file change card's Review all or Open diff, and Session details' Changes card: the
-        // Commit dialog, the header's Commit button, lists the project's changes with their diffs
-        // (CDXC:SessionChat 2026-10-27 on `file_change_list` in gx-chat-core).
+        // A file change card's Review all, and Session details' Changes card: the Commit dialog,
+        // the header's Commit button, lists the project's changes with their diffs
+        // (CDXC:SessionChat 2026-11-09 on `turn_files_fold` in gx-chat-core).
         if action == "reviewChanges" {
             self.dispatch_gpui_titlebar_git_action_selector("commit", cx);
             return;

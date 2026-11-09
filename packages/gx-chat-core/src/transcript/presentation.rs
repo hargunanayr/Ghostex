@@ -1308,7 +1308,7 @@ fn turn_items(
                         &projection.items[index + 1..],
                     ),
                     stats,
-                    files_card: crate::transcript::file_change_list::file_change_turn_card(&files),
+                    files_card: crate::transcript::file_change_rows::file_change_card(&files),
                     files,
                     files_label: format!(
                         "{changed_files} {} changed",

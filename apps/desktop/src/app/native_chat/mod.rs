@@ -48,7 +48,6 @@ mod edit_shortcuts;
 mod error_card;
 mod file_actions;
 mod file_change_card;
-mod file_change_list;
 mod files_links;
 mod focus;
 pub(crate) mod fonts;

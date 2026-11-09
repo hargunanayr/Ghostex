@@ -223,8 +223,8 @@ the work into commits) and **Merge into main…** on any branch other than main.
 Keys while the view has focus: J and K step through hunks, ] and [ through files,
 C comments on the current hunk, V marks the file viewed, O opens it in Files and
 Esc clears the selection. Open it from Open a view or its tab; the header's Commit
-button, the Git menu's Commit, Push and Create PR, and a chat's **Review all** and
-**Open diff** open the Commit dialog instead (see Git). Opening a file to edit it
+button, the Git menu's Commit, Push and Create PR, and a chat's **Review all**
+open the Commit dialog instead (see Git). Opening a file to edit it
 keeps following the File opening settings. In
 Ghostex Web the right-panel button in the header shows Changes beside the chat.
 Hide it with `changesViewTabHidden`; give it a key with the **Switch to Changes**
@@ -828,7 +828,8 @@ project's sessions only; its browser tabs are slept and closed from the tab
 strip above the view, where they live.
 Settings > Sidebar > Sidebar layout switches the Project sidebar between Classic
 (the list above) and Two columns; the Unified sidebar always shows its own single
-list. In Two columns the left column holds Needs you, Running and
+list. In Two columns the left column holds Chief of Staff's row at the top
+(while Main Hub is on and the column is not narrowed to icons), Needs you, Running and
 All sessions, your pinned coordinators, then your projects in a card per
 project group, with the Spaces row at its foot. Each project shows how many of
 its sessions need you (pink while one waits on an answer or a permission, light
@@ -2381,20 +2382,17 @@ and its command; click the row to see the full command and its result. File writ
 edits appear outside the tool groups while the agent works. As soon as the agent
 finishes a turn, its tool work folds away under "Worked for Xs" above the final
 reply (open by default in Detailed view); click that
-line to open or close it. When a turn changed files, an "N files changed" card
-closes the turn under the final reply, folded by default: its header shows the
-turn's total added and removed lines and, on the desktop, Open diff opens the
-Commit dialog with the project's changes and their diffs. Click the card's
-header to open the list of files: each row shows the file name, its folder, an
-A, M or D letter (added, modified, deleted) and its added and removed lines.
-Click a file to open its diff. Older history loads with completed turns already
+line to open or close it. When a turn changed files, opening its "Worked for"
+line shows a collapsed "N files changed" section right under it, above the work
+log; click it to see the turn's files. A closed turn shows how many files it
+changed on its own line instead. Older history loads with completed turns already
 collapsed, so you can scroll through prompts and answers without passing through
 their tool logs first. Expanding older work or its files loads those details on
 demand; the original history remains available. The count includes each file once, even if it was
-edited repeatedly. While the agent is still working, file changes show as one
-card per message: its header says how many files changed, the folder they share,
+edited repeatedly. File changes show as one card per message (or per turn in
+that section): its header says how many files changed, the folder they share,
 and the total added and removed lines with a green/red ratio bar, and on the
-desktop Review all opens the Commit dialog too. Each
+desktop Review all opens the Commit dialog. Each
 file is a row with its name, its folder, its
 green/red counts and a five-block change bar. Click a row to open its diff,
 with the file's own line numbers and the function each change sits in (for

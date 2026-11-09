@@ -1,1 +1,0 @@
-../../../../desktop/src/app/native_chat/file_change_list.rs

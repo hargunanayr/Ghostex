@@ -312,8 +312,7 @@ fn common_folder(files: &[Value]) -> String {
 /// "Edited N files" fold, which opens to this card (shown only while its turn's card is open since
 /// 2026-11-08, `turn_files_fold`). It replaces the activity-rail stack of one card
 /// per file. The rows had an Edited/New/Deleted tag until the user said "remove Edit/New etc next
-/// to the file names please, no need"; the file icon's colour still tells them apart. A finished
-/// turn's card has its own header and file list (`file_change_list`, 2026-10-27).
+/// to the file names please, no need"; the file icon's colour still tells them apart.
 /// SEE-ALSO: apps/desktop/src/app/native_chat/file_change_card.rs,
 /// apps/mobile/app/src/chat/native/transcript/FileChanges.tsx, server/src/session_chat_file_patch.rs.
 pub fn file_change_card(files: &[Value]) -> Value {
@@ -366,6 +365,7 @@ pub enum TurnFilesFold {
 /// above the work log, and the fold itself starts collapsed; a closed card leaves the files to its
 /// "N files" pill. A file row still opens onto its diff as before. Supersedes the fold always
 /// drawn under the card (the 2026-10-11 decision on `file_change_card` above).
+/// CDXC:SessionChat 2026-11-09 DECISION: Ryan chose upstream's fold for this fork: a finished turn's changed files show once, in this fold inside the opened turn, and the fork's own "N files changed" card at the end of the reply (2026-10-27, with its Open diff button) is gone. Supersedes that card's decision. A file card's Review all still opens the Commit dialog.
 /// SEE-ALSO: apps/desktop/src/app/native_chat/completed_work_row.rs,
 /// apps/mobile/app/src/chat/native/transcript/TranscriptItemRow.tsx (`CompletedWorkRow`).
 pub fn turn_files_fold(item: &crate::TranscriptItem, turn_open: bool) -> TurnFilesFold {

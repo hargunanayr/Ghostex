@@ -155,6 +155,13 @@ impl GhostexGpuiApp {
                     .border_color(hairline())
             })
             .h_full()
+            // CDXC:Sidebar 2026-11-09 DECISION: Ryan chose to show Chief of Staff in Two columns: its row sits at the top of the project column, above the smart views, and behaves as the Unified sidebar's row does (click opens its chat, resting opens its card, its menu, the other computers folding under it). The icon rail has no room for the row, so it shows only while the column is full width. Supersedes leaving it out of this layout after the 11.2.0 merge.
+            .when(!frame.rail, |nav| {
+                nav.children(
+                    self.render_native_sidebar_chief(selectors, appearance, true, cx)
+                        .map(|row| div().px(px(pad * scale)).pb(px(2.0 * scale)).child(row)),
+                )
+            })
             .child(
                 v_flex()
                     .px(px(pad * scale))
