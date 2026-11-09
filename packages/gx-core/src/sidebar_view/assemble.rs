@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::collections::{project_sidebar_collections, CollectionItem, CollectionsState};
 use super::daemon_wait::{DaemonWait, TRY_NOW_LABEL};
-use super::groups::{group_summary, GroupBuild, GroupPlan};
+use super::groups::{group_summary, GroupBuild, GroupKind, GroupPlan};
 use super::inputs::{
     effective_sidebar_mode, SidebarHostInputs, SidebarMode, SidebarSettings, SidebarUiState,
     UnavailableState, LOCAL_MACHINE_ID,
@@ -64,8 +64,26 @@ pub(crate) fn assemble(input: AssembleInput<'_>) -> SidebarView {
     let mut bot_runs_today = 0;
     // The Ghost home groups, which only the Ghosts section draws.
     let mut ghost_groups: BTreeSet<&str> = BTreeSet::new();
+    // The home project's group (the computers' homes merged into one with the computers combined, merged.rs), whose header is
+    // Main Hub's row (`chief.rs`).
+    let mut home_groups: BTreeSet<&str> = BTreeSet::new();
+    // GBots' groups, drawn only in Main Hub's GBots section (gbots.rs), in bot-name order.
+    let mut gbot_groups: Vec<&str> = Vec::new();
+    let mut gbot_looks: BTreeMap<&str, &ghostex_gx_protocol::presentation::PresentationGbotsBot> =
+        BTreeMap::new();
     for plan in input.plans {
         if let Some(project) = &plan.project {
+            if project.is_home && plan.kind == GroupKind::Project {
+                home_groups.insert(plan.group_id.as_str());
+            }
+            if let Some(gbot) = project
+                .gbot
+                .as_ref()
+                .filter(|_| plan.kind == GroupKind::Project)
+            {
+                gbot_groups.push(plan.group_id.as_str());
+                gbot_looks.insert(plan.group_id.as_str(), gbot);
+            }
             projects_by_group.insert(
                 plan.group_id.as_str(),
                 (
@@ -123,6 +141,7 @@ pub(crate) fn assemble(input: AssembleInput<'_>) -> SidebarView {
     };
     let bots_mode = effective_sidebar_mode(input.settings, input.ui) == SidebarMode::Bots;
     let is_bot_group = |group_id: &str| bot_groups.contains(group_id);
+    let is_gbot_group = |group_id: &str| gbot_groups.contains(&group_id);
 
     // A section has a Space row only when its machine has Spaces on and its daemon published a
     // Space document at all; an older daemon has no Spaces and is never filtered.
@@ -141,8 +160,13 @@ pub(crate) fn assemble(input: AssembleInput<'_>) -> SidebarView {
     });
     // Bots and Ghosts belong to no Space: a Space only ever shows and counts projects.
     let shows_group = |selection: &SpaceSelection, group_id: &str| -> bool {
-        if is_bot_group(group_id) || is_ghost_group(group_id) {
+        if is_bot_group(group_id) || is_gbot_group(group_id) || is_ghost_group(group_id) {
             return false;
+        }
+        // CDXC:Chief 2026-11-08 DECISION:
+        // User: the home row "should remain top of the space that it's a part of you know? so i should be able to move it to a space if i want and it'll remain in that space, not show on top of all spaces like we have now (make this a setting, default off, 'Show on all spaces')". The home project is a Space member like any project (Move to Space moves it, and the adopted project keeps the Space it was in); `chiefShowOnAllSpaces` shows it in every Space. Either way it is drawn first (below).
+        if input.settings.chief_show_on_all_spaces && home_groups.contains(group_id) {
+            return true;
         }
         let project = space_project_of_group(group_id);
         selection_shows_project(
@@ -166,7 +190,11 @@ pub(crate) fn assemble(input: AssembleInput<'_>) -> SidebarView {
             .is_some_and(GroupBuild::contains_focused_session)
     });
     let active_space_id = match (&selection, active_group_id) {
-        (Some(selection), Some(group_id)) if !is_bot_group(group_id) && !is_ghost_group(group_id) => {
+        (Some(selection), Some(group_id))
+            if !is_bot_group(group_id)
+                && !is_gbot_group(group_id)
+                && !is_ghost_group(group_id) =>
+        {
             let project = space_project_of_group(group_id);
             Some(space_for_group(
                 &spaces_state,
@@ -311,6 +339,20 @@ pub(crate) fn assemble(input: AssembleInput<'_>) -> SidebarView {
             });
             continue;
         }
+        // A GBot follows Main Hub wherever it is drawn: no Space, Bots mode or hiding of projects
+        // without sessions applies to it (gbots.rs).
+        if is_gbot_group(&plan.group_id) {
+            if !bots_mode && !build.tag_filtered_out {
+                groups.push(GroupView {
+                    core: build.core.clone(),
+                    collection_color: None,
+                    collection_id: None,
+                    space_project: None,
+                    holds_active_session_group: false,
+                });
+            }
+            continue;
+        }
         if is_bot_group(&plan.group_id) != bots_mode {
             continue;
         }
@@ -322,8 +364,10 @@ pub(crate) fn assemble(input: AssembleInput<'_>) -> SidebarView {
         if !input.ui.show_hidden && input.ui.hidden_items.group_ids.contains(&plan.group_id) {
             continue;
         }
+        // The home group is Main Hub's row: it stays with no loose sessions.
         if hiding_on
             && plan.project.is_some()
+            && !home_groups.contains(plan.group_id.as_str())
             && !build.core.is_active
             && !projects_with_sessions.contains(&plan.group_id)
         {
@@ -358,6 +402,64 @@ pub(crate) fn assemble(input: AssembleInput<'_>) -> SidebarView {
     let mut collections: Vec<CollectionView> = Vec::new();
     let mut order: Vec<OrderItem> = Vec::new();
     // Collections group projects; the bots are one flat list.
+    // The home groups (with their session groups) lead the list and belong to no collection.
+    let in_home = |group_id: &str| {
+        home_groups.contains(group_id)
+            || owner_project_group_id(group_id)
+                .is_some_and(|owner| home_groups.contains(owner.as_str()))
+    };
+    let home_ids: Vec<String> = rendered_ids
+        .iter()
+        .filter(|group_id| home_groups.contains(group_id.as_str()))
+        .flat_map(|home| {
+            std::iter::once(home.clone()).chain(
+                rendered_ids
+                    .iter()
+                    .filter(|group_id| {
+                        owner_project_group_id(group_id).as_deref() == Some(home.as_str())
+                    })
+                    .cloned(),
+            )
+        })
+        .collect();
+    for group_id in &home_ids {
+        order.push(OrderItem {
+            kind: OrderKind::Project,
+            id: group_id.clone(),
+        });
+    }
+    let gbots = gbots_section(
+        &home_ids,
+        &rendered_ids,
+        &gbot_groups,
+        &gbot_looks,
+        input.ui,
+    );
+    for section in gbots.iter().filter(|section| {
+        !section.collapsed
+            && !input
+                .ui
+                .collapse
+                .collapsed_groups
+                .contains(&section.home_group_id)
+    }) {
+        // A folded department hides its bots' rows from the walk too.
+        let drawn = section.loose_group_ids.iter().chain(
+            section
+                .departments
+                .iter()
+                .filter(|department| !department.collapsed)
+                .flat_map(|department| department.group_ids.iter()),
+        );
+        order.extend(drawn.map(|group_id| OrderItem {
+            kind: OrderKind::Project,
+            id: group_id.clone(),
+        }));
+    }
+    let rendered_ids: Vec<String> = rendered_ids
+        .into_iter()
+        .filter(|group_id| !in_home(group_id) && !is_gbot_group(group_id))
+        .collect();
     let collection_items = if bots_mode {
         rendered_ids
             .iter()
@@ -539,6 +641,7 @@ pub(crate) fn assemble(input: AssembleInput<'_>) -> SidebarView {
         spaces,
         bots_enabled: input.settings.bots_enabled,
         bots_mode,
+        // Bot automations is Hermes' cron feed.
         automations_row: bots_mode && input.settings.bot_automations_enabled,
         automations_today: bot_runs_today,
         ghosts,
@@ -550,6 +653,11 @@ pub(crate) fn assemble(input: AssembleInput<'_>) -> SidebarView {
             input.ui,
         ),
         hidden_collection_group_ids,
+        gbots,
+        // Filled by the caller from the store (`chief.rs`).
+        chiefs: Vec::new(),
+        home_headers: Vec::new(),
+        machines_with_home: Vec::new(),
         show_all_projects_row: (empty_projects > 0).then_some(ShowAllProjectsRow {
             empty_projects,
             showing: input.ui.show_all_projects,
@@ -726,6 +834,76 @@ pub fn collection_groups<'a>(
             || owner_project_group_id(&group.core.group_id)
                 .is_some_and(|owner| group_ids.contains(&owner))
     })
+}
+
+/// Main Hub's GBots section: the drawn bot groups under the first drawn home group (one per list:
+/// with the computers combined the homes are one group). Empty without a drawn home or a bot.
+fn gbots_section(
+    home_ids: &[String],
+    rendered_ids: &[String],
+    gbot_groups: &[&str],
+    gbot_looks: &BTreeMap<&str, &ghostex_gx_protocol::presentation::PresentationGbotsBot>,
+    ui: &SidebarUiState,
+) -> Vec<super::gbots::GbotsSectionView> {
+    let Some(home) = home_ids
+        .iter()
+        .find(|group_id| owner_project_group_id(group_id).is_none())
+    else {
+        return Vec::new();
+    };
+    let group_ids: Vec<String> = gbot_groups
+        .iter()
+        .filter(|group_id| rendered_ids.iter().any(|rendered| rendered == *group_id))
+        .map(|group_id| (*group_id).to_string())
+        .collect();
+    if group_ids.is_empty() {
+        return Vec::new();
+    }
+    // The groups come in drawing order (gbots.rs `order_gbot_projects`): the loose bots, then
+    // each department's bots together.
+    let mut loose_group_ids = Vec::new();
+    let mut departments: Vec<super::gbots::GbotsDepartmentView> = Vec::new();
+    for group_id in &group_ids {
+        let look = gbot_looks.get(group_id.as_str());
+        let Some((department_id, bot)) = look.and_then(|bot| {
+            bot.department_id
+                .as_ref()
+                .filter(|id| !id.is_empty())
+                .map(|id| (id.clone(), *bot))
+        }) else {
+            loose_group_ids.push(group_id.clone());
+            continue;
+        };
+        if let Some(department) = departments
+            .iter_mut()
+            .find(|department| department.department_id == department_id)
+        {
+            department.group_ids.push(group_id.clone());
+            continue;
+        }
+        let storage_id = super::gbots::gbots_department_storage_id(home, &department_id);
+        departments.push(super::gbots::GbotsDepartmentView {
+            name: bot
+                .department_name
+                .clone()
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| "Department".to_string()),
+            icon: bot.department_icon.clone().filter(|icon| !icon.is_empty()),
+            collapsed: ui.collapse.collapsed_groups.contains(&storage_id),
+            storage_id,
+            department_id,
+            group_ids: vec![group_id.clone()],
+        });
+    }
+    let storage_id = super::gbots::gbots_section_storage_id(home);
+    vec![super::gbots::GbotsSectionView {
+        home_group_id: home.clone(),
+        collapsed: ui.collapse.collapsed_groups.contains(&storage_id),
+        storage_id,
+        group_ids,
+        loose_group_ids,
+        departments,
+    }]
 }
 
 /// Whether `group_id` is a session group whose project is collapsed.

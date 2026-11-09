@@ -5,12 +5,14 @@
 //! `packages/gx-chat-core/src/transcript/tool_rows.rs`; this file only lays them out.
 
 use super::disclosure_body::{DisclosureRail, disclosure_body};
-use super::disclosure_motion::motion_clip_trailing;
+use super::disclosure_motion::motion_clip;
 use super::file_actions::FileMenuExt as _;
 use super::{
     appearance::ChatAppearance, fonts::CHAT_MONO, state::NativeChatView, transcript::text,
 };
+use crate::app::helpers::ThrottledAnimationExt as _;
 use crate::app::native_chat::cursor::ChatCursor as _;
+use ghostex_gx_chat_core::transcript::tool_rows::tool_fold_toggle_before;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, ClipboardItem, Context, InteractiveElement as _, IntoElement, ParentElement as _,
@@ -24,6 +26,9 @@ use serde_json::Value;
 /// it is outside one so opening a group never re-flows the rows it reveals. Each
 /// row carries its own padding (the 2026-10-11 work look), so the gap is small.
 const ROW_GAP: f32 = 2.0;
+
+/// How many lines of a tool's output Tool call lines show before "Show all N lines".
+const LINE_OUTPUT_LINES: usize = 12;
 
 /// A tool row's padding beside its glyph tile; its detail's rail is moved in by the same
 /// amount so the line still runs down from the middle of the tile.
@@ -53,7 +58,10 @@ impl NativeChatView {
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         // Settings > Chat > Tool call cards: the calls and edits are one card (`tool_card.rs`).
-        if message["toolCard"].is_object() {
+        // Tool call lines leave a background task's run as these rows (the core's `background`).
+        if message["toolCard"].is_object()
+            && !(p.tool_lines && message["toolCard"]["background"] == true)
+        {
             return self.tool_card(message, p, cx).into_iter().collect();
         }
         let tools = message["tools"].as_array().cloned().unwrap_or_default();
@@ -137,25 +145,29 @@ impl NativeChatView {
                 "collapsedLabel"
             },
         );
-        // The toggle sits right before the last call, open or closed, so what it reveals lands
-        // above it (gx-chat-core `tool_run_fold`, `toggleBefore`).
-        let before = fold["toggleBefore"].as_u64().unwrap_or(u64::MAX) as usize;
-        let split = |indices: &[usize]| -> (Vec<usize>, Vec<usize>) {
+        // Closed, the toggle sits right before the last call; open, it moves to the top of the
+        // group and every call follows below it in order, so it is never between the calls it
+        // reveals (gx-chat-core `tool_fold_toggle_before`).
+        let split = |indices: &[usize], open: bool| -> (Vec<usize>, Vec<usize>) {
+            let before = tool_fold_toggle_before(&fold, open);
             indices.iter().copied().partition(|index| *index < before)
         };
-        // While the group opens or closes, the rows it hides ease in above the ones it always
-        // shows, on the rail the open group has; the rail itself is the one part that appears whole.
+        // While the group opens or closes, the rows it hides ease in below the toggle, which stays
+        // put, ahead of the ones it always shows, on the rail the open group has; the rail itself
+        // is the one part that appears whole.
         if let Some(frame) = self.disclosure_frame(&run_key, run_expanded, cx) {
             let (kept, hidden): (Vec<usize>, Vec<usize>) = visible
                 .iter()
                 .copied()
                 .partition(|index| fold["visible"][*index] == true);
-            let mut body: Vec<AnyElement> = Vec::new();
+            let mut body: Vec<AnyElement> =
+                vec![self.tool_fold_toggle(run_key.clone(), label, run_expanded, p, cx)];
             let hidden_rows = self.tool_row_list(&id, &tools, &hidden, p, cx);
             if !hidden_rows.is_empty() {
-                body.push(motion_clip_trailing(
+                body.push(motion_clip(
                     self.disclosure_height(&run_key),
                     frame,
+                    0.0,
                     ROW_GAP * p.scale,
                     div()
                         .flex()
@@ -166,40 +178,41 @@ impl NativeChatView {
                         .into_any_element(),
                 ));
             }
-            let (kept_above, kept_below) = split(&kept);
-            body.extend(self.tool_row_list(&id, &tools, &kept_above, p, cx));
-            body.push(self.tool_fold_toggle(run_key.clone(), label, run_expanded, p, cx));
-            body.extend(self.tool_row_list(&id, &tools, &kept_below, p, cx));
-            return vec![disclosure_body(
+            body.extend(self.tool_row_list(&id, &tools, &kept, p, cx));
+            // The whole group is measured, toggle to last call, so a reveal shows the last
+            // call's end and keeps the toggle on screen (disclosure_reveal.rs).
+            let group = disclosure_body(
                 p,
                 DisclosureRail::Marker,
                 ROW_GAP,
-                run_key,
+                run_key.clone(),
                 "Show fewer tool calls",
                 body,
                 cx,
-            )];
+            );
+            return vec![self.reveal_extent(&run_key, true, group)];
         }
         if run_expanded {
-            let (above, below) = split(&visible);
+            let (above, below) = split(&visible, true);
             let mut body = self.tool_row_list(&id, &tools, &above, p, cx);
             body.push(self.tool_fold_toggle(run_key.clone(), label, true, p, cx));
             body.extend(self.tool_row_list(&id, &tools, &below, p, cx));
-            return vec![disclosure_body(
+            let group = disclosure_body(
                 p,
                 DisclosureRail::Marker,
                 ROW_GAP,
-                run_key,
+                run_key.clone(),
                 "Show fewer tool calls",
                 body,
                 cx,
-            )];
+            );
+            return vec![self.reveal_extent(&run_key, true, group)];
         }
         let kept: Vec<usize> = visible
             .into_iter()
             .filter(|index| fold["visible"][*index] == true)
             .collect();
-        let (above, below) = split(&kept);
+        let (above, below) = split(&kept, false);
         // The pictures the folded calls read stay in view under the toggle, except one the
         // user's own message already shows, which only its open row keeps (gx-chat-core
         // `read_images.rs`, `is_user_shown`).
@@ -371,6 +384,7 @@ impl NativeChatView {
                         content,
                         error,
                         None,
+                        false,
                         p,
                     ));
                 }
@@ -619,7 +633,31 @@ impl NativeChatView {
         let fills = subagent.is_empty();
         let name_key = key.clone();
         let preview_key = format!("tool-preview:{message_id}:{index}");
-        trigger = if !preview.is_empty() && subagent.is_empty() {
+        // A call still running sweeps the Tool call cards' shimmer across its words, in every
+        // look (the 2026-11-09 decision in gx-chat-core `transcript/tool_card.rs`).
+        let shimmer =
+            status == "running" && self.snapshot["working"] == true && !cx.reduce_motion();
+        trigger = if shimmer {
+            let (dim, bright) = (p.muted.opacity(0.8), p.foreground);
+            let (label, font) = (name, p.font.clone());
+            trigger.child(
+                div()
+                    .when(fills, |this| this.flex_1())
+                    .min_w_0()
+                    .truncate()
+                    .font_weight(name_weight)
+                    .when(described, |this| this.text_size(px(14.0 * s)))
+                    .with_throttled_animation(
+                        SharedString::from(format!("{key}:shimmer")),
+                        super::tool_card::SHIMMER,
+                        move |title, phase| {
+                            title.child(super::tool_card::shimmer_text(
+                                &label, &font, phase, dim, bright,
+                            ))
+                        },
+                    ),
+            )
+        } else if !preview.is_empty() && subagent.is_empty() {
             let name_marks = self.label_highlights(&name_key, &name);
             let preview_marks = self.label_highlights(&preview_key, &preview);
             trigger.child(
@@ -737,7 +775,20 @@ impl NativeChatView {
         let failed = tool["failed"] == true;
         let detail = self.row_detail(key, "tool", message_id, index as u64);
         let input = text(&detail, "input");
-        let output = text(&detail, "output");
+        let mut output = text(&detail, "output");
+        // Tool call lines show a long output's first lines and a button for the rest, instead of a
+        // box that scrolls inside the chat (Q1962 in gx-chat-core `transcript/tool_card.rs`).
+        let show_all_key = format!("show-all:{key}");
+        let output_lines = output.lines().count();
+        let shown_all = self.expanded.contains(&show_all_key);
+        let capped = p.tool_lines && output_lines > LINE_OUTPUT_LINES && !shown_all;
+        if capped {
+            output = output
+                .lines()
+                .take(LINE_OUTPUT_LINES)
+                .collect::<Vec<_>>()
+                .join("\n");
+        }
         let has_call = tool["hasCall"] == true;
         let command = tool["glyph"] == "terminal";
         // The first block's label row carries the copy button, which copies the whole call.
@@ -757,6 +808,7 @@ impl NativeChatView {
                 input,
                 false,
                 copy.take(),
+                false,
                 p,
             ));
         }
@@ -768,8 +820,36 @@ impl NativeChatView {
                 output,
                 failed,
                 copy.take(),
+                // The 12 lines and the full output after "Show all" both show without a scroll box.
+                p.tool_lines,
                 p,
             ));
+            if capped {
+                let toggle = show_all_key.clone();
+                detail.push(
+                    div()
+                        .id(SharedString::from(toggle.clone()))
+                        .role(gpui::Role::Button)
+                        .aria_label(format!("Show all {output_lines} lines"))
+                        .flex_none()
+                        .self_start()
+                        .px(px(10.0 * s))
+                        .py(px(3.0 * s))
+                        .rounded_full()
+                        .border_1()
+                        .border_color(p.border)
+                        .text_size(px(12.0 * s))
+                        .text_color(p.foreground)
+                        .chat_cursor_pointer()
+                        .hover(|style| style.bg(p.foreground.opacity(0.04)))
+                        .child(format!("Show all {output_lines} lines"))
+                        .on_click(cx.listener(move |view, _, _, cx| {
+                            view.expanded.insert(toggle.clone());
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                );
+            }
         }
         if !detail.is_empty() {
             let body = disclosure_body(
@@ -808,6 +888,7 @@ impl NativeChatView {
         content: String,
         failed: bool,
         copy: Option<String>,
+        uncapped: bool,
         p: &ChatAppearance,
     ) -> AnyElement {
         let s = p.scale;
@@ -872,8 +953,9 @@ impl NativeChatView {
                     key,
                     div()
                         .min_w_0()
-                        // React capped the block at 16.25 of its own lines plus its padding.
-                        .max_h(px(220.75 * s))
+                        // React capped the block at 16.25 of its own lines plus its padding; Tool
+                        // call lines cut the output at 12 lines instead (`LINE_OUTPUT_LINES`).
+                        .when(!uncapped, |this| this.max_h(px(220.75 * s)))
                         .px(px(10.0 * s))
                         .py(px(8.0 * s))
                         .bg(p.input)

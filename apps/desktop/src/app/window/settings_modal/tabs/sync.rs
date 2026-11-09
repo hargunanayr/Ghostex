@@ -4,6 +4,7 @@
 //! each action. The switches are this computer's own settings (`syncSpaces` and the rest).
 //! SEE-ALSO: server/src/settings_sync/ (the routes), gx-core settings_sync (`SYNC_CATEGORIES`, the
 //! rules and CDXC:SettingsSync 2026-11-06).
+use super::super::fields::notice::{greyed_out, is_service_unreachable, service_unreachable_state};
 use super::super::fields::{
     ButtonVariant, FieldStates, ListItemStatus, RowSpec, SettingsPage, setting_row,
     settings_button, settings_list_item, settings_section, static_note, switch_control,
@@ -197,18 +198,19 @@ impl SyncTab {
             } else if let Some(refused) = refused {
                 (ListItemStatus::Warning, refused)
             } else {
-                let synced = computer
-                    .get("lastSyncMs")
-                    .and_then(Value::as_u64)
+                let last_sync = computer.get("lastSyncMs").and_then(Value::as_u64);
+                let synced = last_sync
                     .map(|at| format!("Synced {}", ago(now, at)))
                     .unwrap_or_else(|| "Not synced yet".to_string());
+                let connected = flag(&computer, "connected");
+                let dot = sync_dot(connected, last_sync, now);
                 // A phone carries changes between computers each time it reaches one.
                 if flag(&computer, "phone") {
-                    (ListItemStatus::Neutral, format!("Phone · {synced}"))
-                } else if flag(&computer, "connected") {
-                    (ListItemStatus::Success, format!("Connected · {synced}"))
+                    (dot, format!("Phone · {synced}"))
+                } else if connected {
+                    (dot, format!("Connected · {synced}"))
                 } else {
-                    (ListItemStatus::Neutral, format!("Not connected · {synced}"))
+                    (dot, format!("Not connected · {synced}"))
                 }
             };
             let control = (!this_computer).then(|| {
@@ -290,13 +292,47 @@ impl SyncTab {
                 Some(control),
             ));
         }
-        settings_section(
+        let conflicts = settings_section(
             p,
             "Changed on two computers",
             Some("When two computers changed the same thing while apart, the later change wins on both. Undo puts the other one back everywhere.".into()),
             None,
             rows,
-        )
+        );
+        // CDXC:SettingsSync 2026-11-08 WHY: #488's reporter found 14 projects moved into one Space with no trace but the backup file. A sync step that moves three or more projects at once is listed here, with what went where and when.
+        let moves: Vec<AnyElement> = list(&status, "moves")
+            .into_iter()
+            .take(10)
+            .map(|moved| {
+                let at = moved.get("atMs").and_then(Value::as_u64).unwrap_or(now);
+                settings_list_item(
+                    p,
+                    None,
+                    None,
+                    text(&moved, "text"),
+                    Some(div().child(ago(now, at)).into_any_element()),
+                    None,
+                )
+            })
+            .collect();
+        let moves = settings_section(
+            p,
+            "Projects moved by sync",
+            Some("When one sync moves three or more projects between Spaces at once. Ghostex keeps a copy of your Spaces from before sync first changed them in the backups folder of its state folder.".into()),
+            None,
+            moves,
+        );
+        match (conflicts, moves) {
+            (None, None) => None,
+            (conflicts, moves) => Some(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(24.0))
+                    .children(conflicts)
+                    .children(moves),
+            ),
+        }
     }
 }
 
@@ -354,9 +390,19 @@ impl Render for SyncTab {
                 .child(div().flex_1().min_w_0().child(intro))
                 .child(refresh),
         ));
-        if let Some(error) = self.error.clone() {
+        let unreachable = self.error.as_deref().is_some_and(is_service_unreachable);
+        if unreachable {
+            blocks.push(PageBlock::plain(service_unreachable_state(
+                &p,
+                "sync-unreachable",
+                |page: &mut Self, _window, cx| page.reload(cx),
+                cx,
+            )));
+        } else if let Some(error) = self.error.clone() {
             blocks.push(PageBlock::plain(static_note(&p, error, true)));
         }
+        // What follows needs the service to save: dimmed while it does not answer.
+        let first_control_block = blocks.len();
         let shown = |section: &str| {
             let result = search.section(section);
             !result.is_searching || result.has_visible()
@@ -376,6 +422,12 @@ impl Render for SyncTab {
         {
             blocks.push(PageBlock::section("syncChanges", section));
         }
+        if unreachable {
+            for block in &mut blocks[first_control_block..] {
+                let element = std::mem::replace(&mut block.element, gpui::Empty.into_any_element());
+                block.element = greyed_out(element);
+            }
+        }
         settings_page(&self.store, SettingsTabId::Sync, &p, blocks, cx)
     }
 }
@@ -392,16 +444,37 @@ fn describe(prefix: &str) -> &'static str {
         "agents" => {
             "The default agent, how new sessions open, the title agent, Accept all, and each agent's default model and effort."
         }
+        "agentRoster" => {
+            "Which agents are on in Settings > Agents, their names, commands and flags, and their order. An agent this computer doesn't have shows Not installed here, with Install."
+        }
+        "skills" => {
+            "Your own skills in ~/.agents/skills and the Ghostex skills you installed. Skills over 512 KB stay on each computer."
+        }
+        "accounts" => {
+            "Your Claude and Codex account list: names, numbers, Use this account and the sidebar pins. Logins stay on each computer, because Claude and Codex sign one of two computers out when they share a login."
+        }
         "sounds" => {
             "Completion and copy sounds, attention notifications and the finished-work border."
         }
         "keybindings" => {
             "Keyboard shortcuts, between computers on the same system (a Mac with a Mac, Windows with Windows)."
         }
-        "coordinator" => {
-            "Coordinator settings and your edited playbooks: the one for all projects and each project's own, matched by repository."
-        }
+        "coordinator" => "Coordinator settings and your playbook overrides.",
         _ => "",
+    }
+}
+
+/// How recent a sync still counts as "in touch" for the green dot.
+const RECENT_SYNC_MS: u64 = 10 * 60_000;
+
+/// CDXC:SettingsSync 2026-11-07 WHY:
+/// One rule colours every device's dot, phones and computers alike: green while the device is in touch with this one (connected now, or synced in the last ten minutes), grey otherwise. Before, only a connected computer could be green, so a phone that had "Synced just now" sat grey beside a green desktop.
+fn sync_dot(connected: bool, last_sync: Option<u64>, now: u64) -> ListItemStatus {
+    let recent = last_sync.is_some_and(|at| now.saturating_sub(at) < RECENT_SYNC_MS);
+    if connected || recent {
+        ListItemStatus::Success
+    } else {
+        ListItemStatus::Neutral
     }
 }
 

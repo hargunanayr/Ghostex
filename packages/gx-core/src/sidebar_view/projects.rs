@@ -46,6 +46,8 @@ pub(crate) struct ProjectMeta {
     /// Ghost home projects, in creation order. Their groups are built (the Ghosts section reads
     /// the chat row's status from them) but never drawn as projects.
     pub(crate) ghost_order: Vec<String>,
+    /// GBots' projects (`gbotsBot`), which only Main Hub's GBots section draws (gbots.rs).
+    pub(crate) gbot_order: Vec<String>,
     /// How many projects the Projects settings page would list; the empty state reads it.
     pub(crate) project_settings_count: usize,
 }
@@ -55,14 +57,20 @@ impl ProjectMeta {
         self.overlays.get(project_id)
     }
 
-    /// Every project that gets a project group, projects first, then bots, then Ghost homes. Every
-    /// kind is built in either mode; `assemble` draws the kind the mode lists, the way it applies a
-    /// Space.
+    /// Every project that gets a project group, projects first, then bots, then GBots, then Ghost
+    /// homes. Every kind is built in either mode; `assemble` draws the kind the mode lists, the
+    /// way it applies a Space, draws GBots under Main Hub and Ghost homes only in the Ghosts
+    /// section.
     pub(crate) fn grouped_project_ids(&self) -> impl Iterator<Item = &String> {
         self.project_order
             .iter()
             .chain(&self.bot_order)
+            .chain(&self.gbot_order)
             .chain(&self.ghost_order)
+    }
+
+    pub(crate) fn is_gbot(&self, project_id: &str) -> bool {
+        self.gbot_order.iter().any(|id| id == project_id)
     }
 
     pub(crate) fn bot_profile(&self, project_id: &str) -> Option<&str> {
@@ -254,6 +262,11 @@ pub(crate) fn build_project_meta(
         );
     }
     for project in loaded.projects() {
+        // CDXC:GBots 2026-11-09 WHY:
+        // A GBot's project is its folder, never one of the user's projects: while GBots are on it is drawn as the bot's row under Chief of Staff (gbots.rs), and while they are off (`gbotsProject` without `gbotsBot`) nothing of it shows.
+        if project.gbots_project && project.gbots_bot.is_none() {
+            meta.hidden_project_ids.insert(project.project_id.clone());
+        }
         let index = order_index.get(project.project_id.as_str()).copied();
         let worktree =
             resolve_worktree_parent(normalize_worktree(project.worktree.as_ref()), &candidates);
@@ -289,10 +302,15 @@ pub(crate) fn build_project_meta(
         .iter()
         .copied()
         .partition(|project| meta.ghost(&project.project_id).is_some());
+    let (gbots, visible): (Vec<&PresentationProject>, Vec<&PresentationProject>) = visible
+        .iter()
+        .copied()
+        .partition(|project| project.gbots_bot.is_some());
     let (bots, projects): (Vec<&PresentationProject>, Vec<&PresentationProject>) = visible
         .iter()
         .copied()
         .partition(|project| meta.bot_profile(&project.project_id).is_some());
+    meta.gbot_order = super::gbots::order_gbot_projects(gbots);
     let project_order = order_sidebar_projects(projects.into_iter(), &meta);
     let bot_order = order_sidebar_projects(bots.into_iter(), &meta);
     meta.project_order = project_order;

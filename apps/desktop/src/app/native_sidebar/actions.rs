@@ -24,6 +24,12 @@ impl GhostexGpuiApp {
             if let Some(id) = action.command["collectionId"].as_str() {
                 self.begin_native_collection_rename(id, window, cx);
             }
+        } else if action.command["type"] == "chief" {
+            // Chief's row and menu (native_sidebar/chief.rs).
+            self.run_native_sidebar_chief_command(&action.command, window, cx);
+        } else if action.command["type"] == "gbots" {
+            // Main Hub's GBots rows and menus (native_sidebar/gbots_rows.rs).
+            self.run_native_sidebar_gbots_command(&action.command, window, cx);
         } else if action.command["type"] == "openNotifications" {
             // The sidebar menu carries Notifications only while the bell is out of the row, so the
             // dropdown hangs from the menu button instead of the bell's last painted spot.
@@ -132,6 +138,20 @@ impl GhostexGpuiApp {
             self.gx_store_drop_sidebar_command_before_ready(&command);
             return;
         }
+        // A pin call that carries a place in Pinned (a pinned drop in either sidebar, gx-core
+        // sidebar_drag/pinned_order.rs) moves the local row first, on whichever machine the
+        // session is, so the row lands under the pointer before gxserver answers.
+        if command["type"] == "command"
+            && command["message"]["type"] == "setSessionPinned"
+            && let (Some(order), Some(key)) = (
+                command["message"]["sidebarOrder"].as_i64(),
+                command["message"]["sessionId"]
+                    .as_str()
+                    .and_then(ghostex_gx_core::SessionKey::parse_sidebar_session_id),
+            )
+        {
+            self.gx_store_set_session_sidebar_orders(vec![(key, order)], cx);
+        }
         // A Close that would stop a coordinator or a busy agent asks first, and comes back through
         // here once confirmed (gx_store/sidebar_close_confirm.rs).
         if self.gx_store_ask_before_sidebar_close(&command, cx) {
@@ -174,6 +194,10 @@ impl GhostexGpuiApp {
         }
         // The workspace tile's menu and a project's Move to workspace (gx_store/workspaces.rs).
         if self.gx_store_run_workspaces(&command, cx) {
+            return;
+        }
+        // A project's Advanced > Autopilot row (gx_store/autopilot.rs).
+        if self.gx_store_run_autopilot(&command, cx) {
             return;
         }
         // A session's Link to menu rows and a merged PR's Clean up / Keep chips (gx_store/work_links.rs).

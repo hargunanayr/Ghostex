@@ -11,8 +11,8 @@ use super::super::extensions::cards::CARD_MIN_HEIGHT;
 use super::UpdatesTab;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, Context, FontWeight, IntoElement, ParentElement as _, SharedString, Styled as _,
-    div, img, px,
+    AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
+    SharedString, StatefulInteractiveElement as _, Styled as _, div, img, px,
 };
 use gpui_component::{h_flex, v_flex};
 use serde_json::Value;
@@ -45,11 +45,13 @@ pub(super) fn item_icon(p: &SettingsPalette, item: &Value, size: f32) -> AnyElem
         "spaceo" => "modals/settings/device-laptop.svg",
         "code" => "titlebar/brand-vscode.svg",
         "cef" => "modals/settings/browser.svg",
+        "collab" => "modals/settings/users.svg",
         "extension" => "modals/settings/puzzle.svg",
         "node" => "modals/settings/brand-nodejs.svg",
         "uv" => "modals/settings/brand-python.svg",
         "gh" => "modals/settings/brand-github.svg",
         "glab" => "modals/settings/brand-gitlab.svg",
+        "hex" => "modals/settings/microphone.svg",
         _ => "modals/settings/tools.svg",
     };
     settings_icon(glyph, size, p.foreground)
@@ -98,6 +100,54 @@ pub(super) fn up_to_date_pill(p: &SettingsPalette, item: &Value) -> AnyElement {
                 .text_color(hsla(p.muted))
                 .child(version.to_string())
         }))
+        .into_any_element()
+}
+
+/// One Not installed pill: logo, name and "Install"; a click installs it on its computer.
+pub(super) fn install_pill(
+    p: &SettingsPalette,
+    item: &Value,
+    cx: &mut Context<UpdatesTab>,
+) -> AnyElement {
+    let id = text(item, "id").unwrap_or_default().to_string();
+    let name = text(item, "name").unwrap_or_default().to_string();
+    let hover = p.foreground_alpha(0.08);
+    let tooltip = text(item, "note")
+        .map(|note| format!("Install {name} here. {note}"))
+        .unwrap_or_else(|| format!("Install {name} here"));
+    h_flex()
+        .id(SharedString::from(format!("updates-install-{id}")))
+        .flex_shrink_0()
+        .items_center()
+        .gap(px(6.0))
+        .h(px(26.0))
+        .pl(px(7.0))
+        .pr(px(10.0))
+        .rounded_full()
+        .border_1()
+        .border_color(hsla(p.hairline))
+        .cursor_pointer()
+        .hover(move |this| this.bg(hsla(hover)))
+        .text_size(px(12.0))
+        .line_height(px(16.0))
+        .child(item_icon(p, item, 13.0))
+        .child(
+            div()
+                .whitespace_nowrap()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(hsla(p.foreground_alpha(0.78)))
+                .child(name),
+        )
+        .child(
+            div()
+                .whitespace_nowrap()
+                .text_color(hsla(p.muted))
+                .child("Install"),
+        )
+        .tooltip(move |window, cx| {
+            gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+        })
+        .on_click(cx.listener(move |tab, _, _, cx| tab.install(&id, cx)))
         .into_any_element()
 }
 
@@ -292,7 +342,7 @@ impl UpdatesTab {
         } else {
             let install = id.clone();
             let can_update = item["canUpdate"] == true;
-            Some(settings_button_sized(
+            let update = settings_button_sized(
                 p,
                 SharedString::from(format!("updates-update-{id}")),
                 if failed { "Retry" } else { "Update" },
@@ -307,26 +357,59 @@ impl UpdatesTab {
                 )),
                 move |tab: &mut Self, _window, cx| tab.install(&install, cx),
                 cx,
-            ))
+            );
+            // Dismiss clears the failure here and in the top bar's Updates list (its red button)
+            // until this item's next update (titlebar/updates_menu_rows.rs).
+            Some(if failed {
+                let (dismiss, error) = (
+                    id.clone(),
+                    text(item, "error").unwrap_or_default().to_string(),
+                );
+                h_flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .child(settings_button_sized(
+                        p,
+                        SharedString::from(format!("updates-dismiss-{id}")),
+                        "Dismiss",
+                        None,
+                        ButtonVariant::Outline,
+                        ButtonSize::Xs,
+                        false,
+                        None,
+                        move |tab: &mut Self, _window, cx| tab.dismiss(&dismiss, &error, cx),
+                        cx,
+                    ))
+                    .child(update)
+                    .into_any_element()
+            } else {
+                update
+            })
         };
 
         let auto = (item["canAuto"] == true).then(|| {
             let toggle = id.clone();
             let checked = self.auto(item);
+            let auto_switch = small_switch_control(
+                p,
+                SharedString::from(format!("updates-auto-{id}")),
+                format!("Update {name} automatically"),
+                checked,
+                false,
+                None,
+                move |tab: &mut Self, enabled, _window, cx| tab.set_auto(&toggle, enabled, cx),
+                cx,
+            );
+            let auto_press = auto_switch.press();
             h_flex()
+                .id(SharedString::from(format!("updates-auto-row-{id}")))
                 .min_w_0()
                 .items_center()
                 .gap(px(6.0))
-                .child(small_switch_control(
-                    p,
-                    SharedString::from(format!("updates-auto-{id}")),
-                    format!("Update {name} automatically"),
-                    checked,
-                    false,
-                    None,
-                    move |tab: &mut Self, enabled, _window, cx| tab.set_auto(&toggle, enabled, cx),
-                    cx,
-                ))
+                .when_some(auto_press, |row, press| {
+                    row.switch_row_press(switch_row_wash(p.foreground), false, press)
+                })
+                .child(auto_switch)
                 .child(
                     div()
                         .overflow_hidden()

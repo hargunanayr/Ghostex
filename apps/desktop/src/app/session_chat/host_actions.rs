@@ -197,6 +197,23 @@ impl GhostexGpuiApp {
             }
             return;
         }
+        // The offline-computer card (remote_conn/chat_computers.rs): a message to the chat's
+        // computer got no answer, or the card's Retry.
+        if matches!(action, "checkComputer" | "reconnectComputer") {
+            if let Some(machine_id) = message
+                .get("machineId")
+                .and_then(serde_json::Value::as_str)
+                .filter(|machine_id| *machine_id != crate::app::gx_chat::LOCAL_MACHINE_ID)
+                .map(str::to_string)
+            {
+                if action == "checkComputer" {
+                    self.check_session_chat_computer(machine_id, cx);
+                } else {
+                    self.retry_session_chat_computer(&machine_id, cx);
+                }
+            }
+            return;
+        }
         // A page card on screen whose page has no picture yet (visual_page_background_pictures.rs).
         if action == "pictureUnopenedPage" {
             self.picture_unopened_page(session_id, &message, cx);
@@ -498,7 +515,7 @@ impl GhostexGpuiApp {
                 .get("forceEmbedded")
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false);
-            // CDXC:SessionChat 2026-10-26 WHY: An agent that writes its page's address as a plain link (`…/visual/<id>`) instead of the card sent it to the side panel's Browser, past Settings > Chat > Open chat pages in. Such a link opens where that setting says, as the card does; Shift+click still sends it to the system browser.
+            // CDXC:SessionChat 2026-10-26 WHY: An agent that writes its page's address as a plain link (`…/visual/<id>`) instead of the card sent it to the side panel's Browser, past Settings > Chat > Open Ghostex pages in. Such a link opens where that setting says, as the card does; Shift+click still sends it to the system browser.
             if !external
                 && !force_embedded
                 && crate::app::window::visual_page_modal::page_id(url).is_some()
@@ -519,6 +536,56 @@ impl GhostexGpuiApp {
                 window,
                 cx,
             );
+            return;
+        }
+        // A "GBot added" card's Open settings (native_chat/gbot_card.rs): the bot's GBot Settings
+        // window, on the chat's own computer.
+        if action == "openGbotSettings" {
+            if let Some(bot_id) = message
+                .get("botId")
+                .and_then(serde_json::Value::as_str)
+                .filter(|bot_id| !bot_id.is_empty())
+            {
+                let machine_id = message
+                    .get("machineId")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or(ghostex_gx_core::LOCAL_MACHINE_ID)
+                    .to_string();
+                self.open_gpui_gbot_settings_modal(bot_id.to_string(), machine_id, cx);
+            }
+            return;
+        }
+        // A "Routine set" card's Edit (native_chat/gbot_card.rs): the Automate view with the
+        // routine selected when the GBot's project is the active one, else its GBot Settings on the
+        // Routines tab (CDXC:GBots 2026-11-09 in gx-chat-core transcript/routine_cards.rs).
+        if action == "editGbotRoutine" {
+            let field = |key: &str| {
+                message
+                    .get(key)
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string()
+            };
+            let (bot_id, routine_id, project_id) =
+                (field("botId"), field("routineId"), field("projectId"));
+            let machine_id = Some(field("machineId"))
+                .filter(|id| !id.is_empty())
+                .unwrap_or_else(|| ghostex_gx_core::LOCAL_MACHINE_ID.to_string());
+            let local = machine_id == ghostex_gx_core::LOCAL_MACHINE_ID;
+            if local
+                && !project_id.is_empty()
+                && self.open_native_automate_for_routine(&project_id, &routine_id, window, cx)
+            {
+                return;
+            }
+            if !bot_id.is_empty() {
+                self.open_gpui_gbot_settings_modal_on(
+                    bot_id,
+                    machine_id,
+                    crate::app::window::GbotSettingsTab::Routines,
+                    cx,
+                );
+            }
             return;
         }
         // A command in a reply goes to a terminal of the Commands panel, run or only typed
@@ -551,6 +618,13 @@ impl GhostexGpuiApp {
                 return;
             };
             self.locate_session_chat_file(session_id, path, cx);
+            return;
+        }
+        if action == "openInBrowser" {
+            let Some(path) = message.get("path").and_then(serde_json::Value::as_str) else {
+                return;
+            };
+            self.open_session_chat_file_in_browser(session_id, path, window, cx);
             return;
         }
         if action == "annotateReply" {

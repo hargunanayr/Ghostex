@@ -89,6 +89,7 @@ async fn this_computer() -> (tempfile::TempDir, Arc<AppState>) {
     std::fs::create_dir_all(paths.config_file.parent().expect("config directory"))
         .expect("create config directory");
     let state = test_app_state_on(paths, "S6l", Some(port));
+    approve_test_computers(&state);
     let served = state.clone();
     let app = axum::Router::new().fallback_service(tower::service_fn(move |request| {
         handle_http_request(served.clone(), request)
@@ -234,7 +235,7 @@ async fn voice_mode_lists_and_works_on_a_connected_computers_sessions() {
         answered["error"]
             .as_str()
             .unwrap()
-            .contains("Question forms and pages in a chat on Omarchy"),
+            .contains("Ghostex forms and Ghostex pages in a chat on Omarchy"),
         "{answered}"
     );
     let shown = tool("show_session", json!({"session": "Linux build fix"})).await;

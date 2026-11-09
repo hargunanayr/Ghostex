@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::HashMap,
     fs, io,
     path::Path,
     sync::{Arc, RwLock},
@@ -75,24 +75,64 @@ pub fn is_authorized_headers(headers: &HeaderMap, expected_token: &str) -> bool 
     is_expected_gxserver_auth_token(provided, expected_token)
 }
 
-/// The main token in the `Authorization` header, or a paired phone's own token.
+/// The main token in the `Authorization` header, a paired phone's own token, or the desktop's
+/// owner session.
 pub fn is_authorized_client_headers(
     headers: &HeaderMap,
     expected_token: &str,
     device_tokens: &DeviceApiTokens,
+    owner_sessions: &crate::security::SessionTokens,
 ) -> bool {
-    bearer_token(headers)
-        .is_some_and(|provided| is_authorized_client_token(provided, expected_token, device_tokens))
+    bearer_token(headers).is_some_and(|provided| {
+        is_authorized_client_token(provided, expected_token, device_tokens, owner_sessions)
+    })
 }
 
-/// The main token, or a paired phone's own token.
+/*
+CDXC:Security 2026-11-08 WHY:
+After #495 phase 2 the desktop sends its `gxo_` owner session instead of the token file on every call to this computer's gxserver, its sidebar store's `/api/events` socket included. The sockets accepted only the token file and phone tokens, so the store's socket was refused (401) as soon as the owner session opened and the sidebar lost every local project and session while remote ones stayed. The owner session holds more than the token file, so every socket the token file opens opens for it too. A session's own `gxs_` token is still refused here, as before.
+*/
+/// The main token, a paired phone's own token, or the desktop's owner session (`gxo_`).
 pub fn is_authorized_client_token(
     provided_token: &str,
     expected_token: &str,
     device_tokens: &DeviceApiTokens,
+    owner_sessions: &crate::security::SessionTokens,
 ) -> bool {
     is_expected_gxserver_auth_token(provided_token, expected_token)
         || device_tokens.accepts(provided_token)
+        || owner_sessions.is_owner_session(provided_token)
+}
+
+/*
+CDXC:Security 2026-11-08 WHY:
+The `ghostex` CLI inside a Ghostex session (an agent's or the user's own terminal) sends that session's `gxs_` token, not the token file (`ghostex_cli/rpc.rs`), so `ghostex voice` and `ghostex browser mcp` were refused on `/api/voice` and the `/api/cefDevtools` pages. Those two take a session token as well: it is agent level, as the token file that opened them before is. The other sockets (events, terminal, browserTcp, the DevTools host) have no client inside a session and keep refusing it.
+*/
+/// [`is_authorized_client_headers`], or an open session's own `gxs_` token.
+pub fn is_authorized_session_client_headers(
+    headers: &HeaderMap,
+    expected_token: &str,
+    device_tokens: &DeviceApiTokens,
+    session_tokens: &crate::security::SessionTokens,
+) -> bool {
+    bearer_token(headers).is_some_and(|provided| {
+        is_authorized_session_client_token(provided, expected_token, device_tokens, session_tokens)
+    })
+}
+
+/// [`is_authorized_client_token`], or an open session's own `gxs_` token.
+pub fn is_authorized_session_client_token(
+    provided_token: &str,
+    expected_token: &str,
+    device_tokens: &DeviceApiTokens,
+    session_tokens: &crate::security::SessionTokens,
+) -> bool {
+    is_authorized_client_token(
+        provided_token,
+        expected_token,
+        device_tokens,
+        session_tokens,
+    ) || session_tokens.is_session_token(provided_token)
 }
 
 /// Prefix of the API tokens `/api/pairDevice` gives each paired phone.
@@ -105,8 +145,23 @@ SEE-ALSO: server/src/remote_access/pair_device.rs (minting), server/src/remote_a
 */
 #[derive(Clone, Default)]
 pub struct DeviceApiTokens {
-    hashes: Arc<RwLock<HashSet<String>>>,
+    entries: Arc<RwLock<HashMap<String, DeviceTokenEntry>>>,
 }
+
+/*
+CDXC:RemotePairing 2026-11-08 DECISION:
+User (GitHub #495, Q1721): pairing v2 binds each phone's token to the device key it paired with. The token is issued only after the owner approved that key, names its device (so the caller is `Principal::Device` with the real device id), and lapses after `DEVICE_API_TOKEN_TTL` unless the device key signs a renewal (`/api/renewDeviceToken`), so a copied token stops working on its own. Tokens of phones paired before 11.0.1 are not loaded at all.
+*/
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DeviceTokenEntry {
+    /// The paired device the token belongs to; `None` only in tests that load bare hashes.
+    pub device_id: Option<String>,
+    /// Milliseconds since the epoch after which the token no longer opens anything.
+    pub expires_at_ms: Option<u64>,
+}
+
+/// How long a device token works before the device key must renew it.
+pub const DEVICE_API_TOKEN_TTL: chrono::Duration = chrono::Duration::days(30);
 
 impl DeviceApiTokens {
     pub fn new(hashes: impl IntoIterator<Item = String>) -> Self {
@@ -115,23 +170,40 @@ impl DeviceApiTokens {
         tokens
     }
 
+    /// Loads bare hashes that never lapse and name no device (tests and old fixtures).
     pub fn replace(&self, hashes: impl IntoIterator<Item = String>) {
-        let mut set = self
-            .hashes
+        self.replace_entries(
+            hashes
+                .into_iter()
+                .map(|hash| (hash, DeviceTokenEntry::default())),
+        );
+    }
+
+    pub fn replace_entries(&self, entries: impl IntoIterator<Item = (String, DeviceTokenEntry)>) {
+        let mut map = self
+            .entries
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *set = hashes.into_iter().collect();
+        *map = entries.into_iter().collect();
     }
 
     pub fn accepts(&self, provided_token: &str) -> bool {
+        self.entry_for(provided_token).is_some()
+    }
+
+    /// The live entry for `provided_token`, if it is a known device token that has not lapsed.
+    pub fn entry_for(&self, provided_token: &str) -> Option<DeviceTokenEntry> {
         if !provided_token.starts_with(DEVICE_API_TOKEN_PREFIX) {
-            return false;
+            return None;
         }
         let hash = hash_device_api_token(provided_token);
-        self.hashes
+        let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
+        self.entries
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .contains(&hash)
+            .get(&hash)
+            .filter(|entry| entry.expires_at_ms.is_none_or(|expires| now_ms < expires))
+            .cloned()
     }
 }
 

@@ -22,6 +22,7 @@ pub(super) async fn route_control_http(
         request_id,
         body_json,
         token_extension_id,
+        caller,
     } = request;
     Ok(match endpoint.path.as_str() {
         "/api/health/server" => routed_json(
@@ -36,8 +37,27 @@ pub(super) async fn route_control_http(
         "/api/draftFeedback" | "/api/sendFeedback" => {
             handle_feedback_http(endpoint.path, request_id, &body_json).await
         }
+        crate::chief::CHIEF_ENDPOINT => {
+            crate::chief::handle_chief_http(&state, &caller, endpoint.path, request_id, &body_json)
+                .await
+        }
         "/api/startFeedbackAgent" => {
             handle_start_feedback_agent_http(&state, endpoint.path, request_id, &body_json).await
+        }
+        crate::security_upgrade::SECURITY_UPGRADE_NOTICE_ENDPOINT => {
+            crate::security_upgrade::handle_http(
+                &state.paths,
+                &crate::remote_access::waiting_devices(
+                    &state.remote_pairing_runtime,
+                    &state.security,
+                ),
+                endpoint.path,
+                request_id,
+                &body_json,
+            )
+        }
+        crate::audit::SECURITY_LOG_ENDPOINT => {
+            crate::audit::handle_security_log_http(endpoint.path, request_id, &body_json).await
         }
         "/api/tailcatStatus" | "/api/updateTailcatState" | "/api/installTailcat" => {
             handle_tailcat_http(&state, endpoint.path, request_id, &body_json).await
@@ -48,11 +68,32 @@ pub(super) async fn route_control_http(
         | "/api/pairedDevices"
         | "/api/removePairedDevice"
         | "/api/pairDevice"
-        | "/api/pairedDeviceSeen" => {
-            handle_remote_access_http(&state, endpoint.path, request_id, &body_json).await
+        | "/api/pairOverSsh"
+        | "/api/pairingStatus"
+        | "/api/renewDeviceToken"
+        | "/api/pairComputer"
+        | "/api/computerPairingStatus"
+        | "/api/cancelComputerPairing"
+        | "/api/pairedDeviceSeen"
+        | "/api/easyConnectAddresses" => {
+            handle_remote_access_http(&state, &caller, endpoint.path, request_id, &body_json).await
+        }
+        path if super::COLLAB_ENDPOINTS.contains(&path) => {
+            super::handle_collab_http(&state, &caller, endpoint.path, request_id, &body_json).await
+        }
+        path if super::AUTOPILOT_ENDPOINTS.contains(&path) => {
+            super::handle_autopilot_http(&state, endpoint.path, request_id, &body_json).await
         }
         path if crate::settings_sync::SETTINGS_SYNC_ENDPOINTS.contains(&path) => {
             crate::settings_sync::handle_settings_sync_http(
+                &state,
+                endpoint.path,
+                request_id,
+                &body_json,
+            )
+        }
+        path if crate::connected_computers::HELD_SEND_ENDPOINTS.contains(&path) => {
+            crate::connected_computers::handle_held_sends_http(
                 &state,
                 endpoint.path,
                 request_id,
@@ -157,6 +198,7 @@ pub(super) async fn route_control_http(
                 request_id,
                 body_json,
                 token_extension_id,
+                caller,
             })
         }
     })

@@ -3,7 +3,7 @@
 //!
 //! CDXC:TranscriptExport 2026-09-15 DECISION:
 //! User: the React app modals do not fill their GPUI child window and need a hand-tuned window height, so they are being rebuilt in GPUI one at a time, starting with Handoff / Export. The native dialog must match the React one 1 to 1: the same layout, copy, colors, states and behaviour in both appearances. It measures its own first layout and sizes the window to it instead of trusting a constant.
-//! SEE-ALSO: packages/core-ui/export-transcript-result-modal.tsx (deleted 2026-10-01) and packages/core-ui/styles/modals.css (the React twin and the `.export-transcript-*` rules mirrored below), apps/desktop/src/app/window/native_modal_kit/ (shared chrome and controls), apps/desktop/src/app/export_transcript_modal_lifecycle.rs (open, close, sidebar bridge), apps/desktop/src/bin/native_modal_demo.rs (standalone preview).
+//! SEE-ALSO: packages/core-ui/export-transcript-result-modal.tsx (deleted 2026-10-01) and packages/core-ui/styles/modals.css (deleted 2026-11-06) (the React twin and the `.export-transcript-*` rules mirrored below), apps/desktop/src/app/window/native_modal_kit/ (shared chrome and controls), apps/desktop/src/app/export_transcript_modal_lifecycle.rs (open, close, sidebar bridge), apps/desktop/src/bin/native_modal_demo.rs (standalone preview).
 use super::native_modal_kit::*;
 use ghostex_gx_core::handoff_prefs::{
     HANDOFF_HISTORY_STOPS, HandoffCard, HandoffDestination, HandoffHistory, HandoffInclude,
@@ -1681,13 +1681,13 @@ impl GpuiExportTranscriptModalWindow {
                                 index > 0,
                             )
                             .id(("export-transcript-toggle-row", index))
-                            .when(!disabled, |this| {
-                                this.cursor_pointer().on_click(cx.listener(
-                                    move |this, _: &ClickEvent, _window, cx| {
-                                        this.toggle_include(index, cx);
-                                    },
-                                ))
-                            })
+                            .switch_row_press(
+                                switch_row_wash(p.foreground),
+                                disabled,
+                                bind_press(cx, move |this: &mut Self, _window, cx| {
+                                    this.toggle_include(index, cx);
+                                }),
+                            )
                         },
                     ))
                     .into_any_element(),
@@ -1714,12 +1714,13 @@ impl GpuiExportTranscriptModalWindow {
                 false,
             )
             .id("export-transcript-whole-conversation")
-            .when(!disabled, |this| {
-                this.cursor_pointer()
-                    .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
-                        this.toggle_whole_conversation(cx);
-                    }))
-            }),
+            .switch_row_press(
+                switch_row_wash(p.foreground),
+                disabled,
+                bind_press(cx, |this: &mut Self, _window, cx| {
+                    this.toggle_whole_conversation(cx);
+                }),
+            ),
         );
         let estimate = self.history_estimate();
         if !whole {
@@ -1897,7 +1898,13 @@ impl GpuiExportTranscriptModalWindow {
                             .font_family(MODAL_MONO_FONT)
                             .text_size(px(12.0))
                             .line_height(px(17.4))
-                            .child(path),
+                            // A file on this computer opens in Files (CDXC:PathLinks 2026-11-08).
+                            .child(if can_reveal {
+                                path_link("export-transcript-saved-path", path.clone(), path)
+                                    .into_any_element()
+                            } else {
+                                div().child(path).into_any_element()
+                            }),
                     )
                     .when(can_reveal, |this| {
                         this.child(
@@ -1960,7 +1967,7 @@ impl GpuiExportTranscriptModalWindow {
                     modal_icon(
                         if copied { ICON_CHECK_BUTTON } else { ICON_COPY },
                         15.0,
-                        p.primary_foreground,
+                        p.primary_button_text(),
                     )
                     .into_any_element(),
                 ),
@@ -1974,7 +1981,7 @@ impl GpuiExportTranscriptModalWindow {
                 &p,
                 "export-transcript-primary",
                 self.primary_label(),
-                self.busy().then(|| modal_spinner(p.primary_foreground)),
+                self.busy().then(|| modal_spinner(p.primary_button_text())),
                 ModalButtonTone::Primary,
                 !self.can_run(),
                 |this, _window, cx| this.run(cx),

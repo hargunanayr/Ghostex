@@ -163,12 +163,16 @@ CDXC:Titlebar 2026-09-20 WHY:
 The macOS traffic lights are a window option (`traffic_light_position` in workspace_windows/open.rs), not a child of
 any row, so whatever occupies the window's top-left has to leave them room: the sidebar's Search row
 while the sidebar is expanded, the workarea header while it is collapsed. Both rows use the same
-reserve so the sidebar toggle does not jump when the sidebar collapses.
+reserve so the sidebar toggle does not jump when the sidebar collapses. Since 2026-11-06 only the
+docked sidebar outside full screen keeps it: the lights hide with the sidebar, and in full screen
+macOS draws them only in the title bar that slides down (CDXC:Titlebar 2026-11-07 DECISION in
+helpers/work_area_frame.rs).
 Windows and Linux draw their caption buttons as trailing header children instead, so they reserve
 nothing on the left.
 */
 #[cfg(target_os = "macos")]
 /// CDXC:Titlebar 2026-10-11 DECISION: User: move the sidebar icon away from the green macOS window button. Add 9pt to the previous 79pt reserve in both the docked sidebar and collapsed header.
+/// Superseded in part by CDXC:Titlebar 2026-11-07 DECISION in helpers/work_area_frame.rs: the reserve applies only to the docked sidebar outside full screen; the collapsed header and full screen keep none, because there the window shows no lights (CDXC:Titlebar 2026-11-07 DECISION in helpers/work_area_frame.rs).
 pub(crate) const WINDOW_CONTROLS_LEADING_RESERVE: f32 = 88.0;
 
 /// CDXC:Titlebar 2026-09-23 DECISION:
@@ -177,6 +181,9 @@ pub(crate) const WINDOW_CONTROLS_LEADING_RESERVE: f32 = 88.0;
 /// traffic lights first. This is the button's window x on every OS, whichever of the docked
 /// Search row or the collapsed header draws it. Off macOS it is the reveal edge strip's width, so
 /// the collapsed header, which starts right of that strip, draws it flush and it does not move.
+/// Superseded in part by CDXC:Titlebar 2026-11-07 DECISION in helpers/work_area_frame.rs: on macOS this is the docked x outside full screen; with the
+/// sidebar hidden and in full screen the button takes the edge strip's x, as off macOS
+/// (`sidebar_toggle_leading_x`).
 #[cfg(target_os = "macos")]
 pub(crate) const SIDEBAR_TOGGLE_LEADING_X: f32 = WINDOW_CONTROLS_LEADING_RESERVE;
 
@@ -747,6 +754,9 @@ pub(crate) const TITLEBAR_POPUP_MENU_ROW_TEXT_SIZE: f32 = 13.0;
 
 pub(crate) const TITLEBAR_POPUP_MENU_ROW_ICON_SIZE: f32 = 14.0;
 
+/// The header menus' row padding either side (`titlebar_popup_menu_with_scroll_behavior`).
+pub(crate) const TITLEBAR_POPUP_MENU_ITEM_PADDING_X: f32 = 10.0;
+
 pub(crate) const TITLEBAR_POPUP_GIT_SECTION_LABEL_HEIGHT: f32 = 22.0;
 
 pub(crate) const TITLEBAR_POPUP_ACTION_ROW_HEIGHT: f32 = 44.0;
@@ -843,14 +853,6 @@ pub(crate) const BROWSER_FEEDBACK_TOOL_AGENTATION_LABEL: &str = "Agentation";
 
 pub(crate) const BROWSER_FEEDBACK_TOOL_UNAVAILABLE_TOOLTIP: &str =
     "This site disallows using this tool";
-
-pub(crate) const BROWSER_FEEDBACK_AGENTATION_PACKAGE_MODULE_URL: &str =
-    "https://esm.sh/agentation@3.1.2?bundle&deps=react@18.2.0,react-dom@18.2.0";
-
-pub(crate) const BROWSER_FEEDBACK_AGENTATION_REACT_MODULE_URL: &str = "https://esm.sh/react@18.2.0";
-
-pub(crate) const BROWSER_FEEDBACK_AGENTATION_REACT_DOM_CLIENT_MODULE_URL: &str =
-    "https://esm.sh/react-dom@18.2.0/client?deps=react@18.2.0";
 
 /*
 CDXC:Workarea 2026-06-22-06:24:

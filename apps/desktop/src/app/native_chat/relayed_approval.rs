@@ -23,6 +23,9 @@ pub(super) const APPROVALS_TRIGGER: &str = "chat-pill-approvals";
 pub(super) const APPROVALS_MENU_WIDTH: f32 = 480.0;
 /// The tallest the menu grows before its list scrolls.
 const APPROVALS_MENU_MAX: f32 = 560.0;
+/// The rows the command box shows before it scrolls inside itself (`tone_card::command_box`'s
+/// 160px at 20px a row).
+const COMMAND_BOX_ROWS: usize = 8;
 
 /// A settled card's mark and colour.
 fn settled_mark(tone: &str, p: &ChatAppearance) -> (&'static str, gpui::Hsla) {
@@ -68,8 +71,8 @@ impl NativeChatView {
             .cloned()
     }
 
-    /// One relayed card: the thread's question, its command or arguments (four lines, then the rest
-    /// a click away) and its own buttons; once it ended, one line saying how. `place` keeps the
+    /// One relayed card: the thread's question, its command or arguments (four rows, then the rest
+    /// behind Show all, scrolling inside its box) and its own buttons; once it ended, one line saying how. `place` keeps the
     /// element ids apart where the same card shows twice (under the report and in the menu).
     pub(super) fn relayed_approval_card(
         &self,
@@ -124,11 +127,12 @@ impl NativeChatView {
                         .text_color(p.muted)
                         .chat_cursor_pointer()
                         .hover(|style| style.text_color(p.foreground))
-                        .child(if expanded {
-                            "Show less".to_string()
+                        .aria_label(if expanded {
+                            "Show less of the command".to_string()
                         } else {
-                            format!("Show {more}")
+                            format!("Show all of the command, {more}")
                         })
+                        .child(if expanded { "Show less" } else { "Show all" })
                         .on_click(cx.listener(move |this, _, _, cx| {
                             cx.stop_propagation();
                             if !this.expanded.remove(&toggle_key) {
@@ -150,6 +154,12 @@ impl NativeChatView {
                     .into_any_element(),
             );
         }
+        if let Some(line) = card["autoBlockAt"]
+            .as_str()
+            .and_then(|at| super::tone_card::auto_block_line(at, p))
+        {
+            body.push(line);
+        }
         let error = text(card, "error");
         if !error.is_empty() {
             body.push(
@@ -162,12 +172,16 @@ impl NativeChatView {
         }
         let busy = card["busy"] == true;
         let footer_end = self.relayed_buttons(card, place, busy, p, cx);
+        // The answer on its way: the card dims and holds with "Sending…" until gxserver applied
+        // it, then reads as answered here (CDXC:SessionChat 2026-11-08 in the chat core's
+        // questions/pending_approval.rs).
+        let body = super::tone_card::dim_pending(body, busy);
         let open_thread = json!({
             "type": "openCoordinatorThread",
             "projectId": text(card, "projectId"),
             "sessionId": text(card, "sessionId"),
         });
-        let footer_start = vec![
+        let mut footer_start = vec![
             div()
                 .id(gpui::SharedString::from(format!(
                     "relay-open:{place}:{key}"
@@ -187,6 +201,13 @@ impl NativeChatView {
                 }))
                 .into_any_element(),
         ];
+        if busy {
+            footer_start = vec![super::tone_card::pending_answer_note(
+                "relay-pending",
+                "Sending…",
+                p,
+            )];
+        }
         self.tone_card(
             ToneCardParts {
                 look: super::tone_card::ToneLook {
@@ -337,8 +358,10 @@ impl NativeChatView {
             .into_any_element()
     }
 
-    /// The Approvals menu's height (unscaled): each open card's estimate, capped so the list
-    /// scrolls.
+    /// The Approvals menu's height (unscaled): each open card's estimate, its command counted in
+    /// the rows it wraps to (one long line is many rows), capped so the list scrolls. The window
+    /// is also kept to the room above the chat box (option_menu/window.rs), and the list shrinks
+    /// into whatever height it gets, so an estimate that falls short scrolls instead of clipping.
     pub(super) fn approvals_menu_height(&self) -> Option<f32> {
         let open: Vec<Value> = self
             .relayed_cards()
@@ -352,28 +375,39 @@ impl NativeChatView {
         let cards: f32 = open
             .iter()
             .map(|card| {
-                let code = text(card, "codePreview");
-                let code = if code.is_empty() {
+                let key = text(card, "key");
+                let preview = text(card, "codePreview");
+                let expanded = self.expanded.contains(&format!("relay-code:{key}"));
+                let code = if expanded || preview.is_empty() {
                     text(card, "code")
                 } else {
-                    code
+                    preview
                 };
-                let lines = code.lines().count().min(4) as f32;
+                let rows = code
+                    .lines()
+                    .map(ghostex_gx_chat_core::questions::permission_card::wrapped_rows)
+                    .sum::<usize>()
+                    .min(COMMAND_BOX_ROWS) as f32;
                 let title_lines = (text(card, "title").chars().count() as f32 / 52.0)
                     .ceil()
                     .max(1.0);
-                let mut height = 30.0 + title_lines * 20.0 + 48.0;
-                if lines > 0.0 {
-                    height += 22.0
-                        + lines * 17.0
+                // Header (title rows and the detail line), footer, the card's padding.
+                let mut height = 30.0 + title_lines * 20.0 + 18.0 + 48.0;
+                if rows > 0.0 {
+                    height += 12.0
+                        + 22.0
+                        + rows * 20.0
                         + if text(card, "codeMore").is_empty() {
                             0.0
                         } else {
-                            20.0
+                            22.0
                         };
                 }
                 if !text(&card["reason"], "text").is_empty() {
-                    height += 22.0;
+                    height += 34.0;
+                }
+                if !text(card, "error").is_empty() {
+                    height += 34.0;
                 }
                 height + 12.0
             })
@@ -413,10 +447,8 @@ impl NativeChatView {
             .flex()
             .flex_col()
             .gap(px(8.0 * s))
-            .max_h(px((APPROVALS_MENU_MAX
-                - super::chat_pills::MENU_HEADER_HEIGHT
-                - 8.0)
-                * s))
+            .flex_1()
+            .min_h_0()
             .overflow_y_scroll()
             .children(
                 open.iter()

@@ -1,6 +1,6 @@
 //! The Settings window: the rail on the left, the search field over the content column, and the
 //! active page's view (`packages/core-ui/settings-modal.tsx` (deleted 2026-10-01), layout from
-//! `.ghostex-settings-shadcn .settings-modal-*` in packages/core-ui/styles.css).
+//! `.ghostex-settings-shadcn .settings-modal-*` in packages/core-ui/styles.css (deleted 2026-11-06)).
 use super::super::native_modal_kit::*;
 use super::fields::{icon, settings_icon};
 use super::model::{SettingsModalCommand, SettingsModalHost, SettingsOpenRequest, SettingsTabId};
@@ -90,7 +90,7 @@ impl GpuiSettingsModalWindow {
         let store_subscription =
             cx.observe_in(&store, window, |shell: &mut Self, store, window, cx| {
                 let active = store.read(cx).active_tab();
-                // OS Integration and Connectors hide with Enable Experimental Features, and a page
+                // OS Integration and Connectors hide with their own switches, and a page
                 // of a built-in extension that was just turned off (Actions, Open In) hides with it.
                 if (active == SettingsTabId::OsIntegration
                     && !store.read(cx).os_integration_visible())
@@ -225,6 +225,16 @@ impl GpuiSettingsModalWindow {
     pub(crate) fn receive_sidebar_state(&mut self, message: Value, cx: &mut Context<Self>) {
         let store = self.store.clone();
         store.update(cx, |store, cx| store.receive_sidebar_state(message, cx));
+    }
+
+    /// Shows saved `values` again after a save the owner didn't confirm.
+    pub(crate) fn revert_settings(
+        &mut self,
+        values: serde_json::Map<String, Value>,
+        cx: &mut Context<Self>,
+    ) {
+        let store = self.store.clone();
+        store.update(cx, |store, cx| store.revert_settings(values, cx));
     }
 
     /// The app pushes the panel palette with every settings change, resolved here the way the

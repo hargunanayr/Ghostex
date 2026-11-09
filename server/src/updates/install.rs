@@ -68,6 +68,8 @@ async fn run(state: &AppState, id: &str, source: &'static str) {
         update_tool(state, tool).await
     } else if let Some(extension) = id.strip_prefix("extension:") {
         update_extension(state, extension).await
+    } else if let Some(component) = id.strip_prefix(items::COMPONENT_ITEM_PREFIX) {
+        update_component(component).await
     } else if id == "app" {
         crate::app_update::request_app_update_install(state, source)
             .await
@@ -95,6 +97,13 @@ async fn update_agent(state: &AppState, id: &str, agent: &str) -> Result<(), Out
     let current = crate::agent_cli::endpoint::read_agent(&home, agent)
         .await
         .map_err(|error| failed(error.message))?;
+    // Not installed here (Install in Updates' Not installed part): Settings > Agents' install.
+    if !current["executablePath"].is_string() {
+        return crate::agent_cli::endpoint::install_default_and_wait(&state.paths, agent)
+            .await
+            .map(|_| ())
+            .map_err(failed);
+    }
     let name = current["name"]
         .as_str()
         .unwrap_or(&definition.binary)
@@ -152,11 +161,28 @@ fn helper_params(operation: &str) -> Map<String, Value> {
     params
 }
 
-/// Settings > Accounts' Update of Claude Swap or Codex Swap, followed until its job ends.
+/// Settings > Accounts' Update of Claude Swap or Codex Swap (its Install when it isn't installed
+/// yet), followed until its job ends.
 async fn update_helper(state: &AppState, provider: &str) -> Result<(), Outcome> {
+    let status_state = state.clone();
+    let status = tokio::task::spawn_blocking(move || {
+        crate::accounts::endpoint::dispatch(&status_state, &helper_params("helperStatus"))
+    })
+    .await
+    .map_err(|error| failed(error.to_string()))?
+    .map_err(|error| failed(error.message))?;
+    let installed = status["helperTools"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|tool| tool["provider"] == provider)
+        .is_none_or(|tool| tool["installed"] == true);
     let mut params = helper_params("helperAction");
     params.insert("provider".into(), json!(provider));
-    params.insert("action".into(), json!("update"));
+    params.insert(
+        "action".into(),
+        json!(if installed { "update" } else { "install" }),
+    );
     let run_state = state.clone();
     tokio::task::spawn_blocking(move || crate::accounts::endpoint::dispatch(&run_state, &params))
         .await
@@ -197,10 +223,27 @@ async fn update_helper(state: &AppState, provider: &str) -> Result<(), Outcome> 
 /// Settings > Integrations' Update of a tool (cua-driver, SpaceO, Node, uv...), followed until its
 /// job ends. SpaceO's own update restarts its daemon with the operator restart that waits for agents.
 async fn update_tool(state: &AppState, tool: &str) -> Result<(), Outcome> {
+    // A tool the list shows before it is installed (Hex, when Dictate uses it) is installed.
+    let mut read = Map::new();
+    read.insert("action".into(), json!("read"));
+    read.insert("tool".into(), json!(tool));
+    let current = crate::managed_tools::endpoint::dispatch(&state.paths, &read)
+        .await
+        .map_err(|error| failed(error.message))?;
+    let offers = |operation: &str| {
+        current["actions"]
+            .as_array()
+            .is_some_and(|actions| actions.iter().any(|action| action == operation))
+    };
+    let operation = if !offers("update") && offers("install") {
+        "install"
+    } else {
+        "update"
+    };
     let mut params = Map::new();
     params.insert("action".into(), json!("start"));
     params.insert("tool".into(), json!(tool));
-    params.insert("operation".into(), json!("update"));
+    params.insert("operation".into(), json!(operation));
     crate::managed_tools::endpoint::dispatch(&state.paths, &params)
         .await
         .map_err(|error| failed(error.message))?;
@@ -228,6 +271,57 @@ async fn update_tool(state: &AppState, tool: &str) -> Result<(), Outcome> {
 /// The extension's catalog install, as Settings > Extensions' Update runs it without a new
 /// approval: an update that asks for more (a background process, a remote website) is refused by
 /// the registry and left for the user to approve there.
+/// How long a component download and install may take.
+const COMPONENT_WAIT: Duration = Duration::from_secs(15 * 60);
+
+/// Installs the newer component this release sealed (Collab), the way its own Settings
+/// card does, and waits for it.
+async fn update_component(component: &str) -> Result<(), Outcome> {
+    let started = Instant::now();
+    match component {
+        "collab" => {
+            use crate::collab_shim::install;
+            let Some(app_state) = crate::collab_shim::sidecar::app_state() else {
+                return Err(failed("Collab isn't ready yet. Try again in a moment."));
+            };
+            install::start_update(app_state).map_err(failed)?;
+            loop {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                let item = install::item();
+                match item["phase"].as_str() {
+                    Some("downloading" | "installing") => {
+                        if let Some(done) = item["doneBytes"].as_f64() {
+                            let total = item["totalBytes"].as_f64().unwrap_or(0.0);
+                            if total > 0.0 {
+                                store::set_phase(
+                                    &format!("{}collab", items::COMPONENT_ITEM_PREFIX),
+                                    &format!(
+                                        "Downloading\u{2026} {}%",
+                                        ((done / total) * 100.0).floor()
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                    Some("failed") => {
+                        return Err(failed(
+                            item["error"]
+                                .as_str()
+                                .unwrap_or("The Collab update failed."),
+                        ))
+                    }
+                    _ if install::update_available().is_none() => return Ok(()),
+                    _ => {}
+                }
+                if started.elapsed() > COMPONENT_WAIT {
+                    return Err(failed("The Collab update took too long."));
+                }
+            }
+        }
+        _ => Err(failed("Ghostex doesn't know how to update this.")),
+    }
+}
+
 async fn update_extension(state: &AppState, extension: &str) -> Result<(), Outcome> {
     let registry = state.extension_registry.clone();
     let id = extension.to_string();

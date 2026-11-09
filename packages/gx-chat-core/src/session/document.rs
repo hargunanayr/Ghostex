@@ -43,6 +43,7 @@ pub fn document(state: &ChatState, context: &ChatContext, into: &mut Document) {
     into.session_agent_id = tri_string(session.session_agent_id.clone());
     into.screen_probed = session.screen_probed;
     into.cloud_box_asleep = session.cloud_box_asleep;
+    into.computer_notice = crate::session::computer::notice(state, context);
     into.retired_async_question_ids = Tri::Value(session.retired_async_question_ids.clone());
     into.has_more = state.messages.has_more;
     into.earlier_page_cursor = state.messages.before_offset as i64;
@@ -55,6 +56,9 @@ pub fn document(state: &ChatState, context: &ChatContext, into: &mut Document) {
         None => Tri::Absent,
     };
     into.operation_error_code = state.core.operation_error_code.clone();
+    into.operation_error_card = state.core.operation_error.as_deref().map(|message| {
+        crate::session::error_card::error_card(message, state.core.operation_error_code.as_deref())
+    });
     into.operation_error_resend = (state.core.operation_error_code.as_deref()
         == Some("unreachable"))
     .then_some(state.composer.failed_send.as_ref())
@@ -67,7 +71,6 @@ pub fn document(state: &ChatState, context: &ChatContext, into: &mut Document) {
         }
         .to_string()
     });
-    let _ = context;
 }
 
 /// `None` is a key present with `null`, which is what the TypeScript producer writes for every one

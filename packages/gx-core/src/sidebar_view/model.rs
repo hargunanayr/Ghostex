@@ -64,6 +64,8 @@ struct GroupKey {
     /// The machines a merged entry names, and the copy its actions go to (`merged.rs`).
     machine_names: Vec<super::view::MachineChip>,
     action_target: Option<(String, usize)>,
+    /// Identity of the worktree projects the group lists (`worktree_fold.rs`).
+    folded_worktrees: Vec<usize>,
 }
 
 struct CachedGroup {
@@ -127,17 +129,35 @@ struct CacheState {
     work: SidebarUpdateWork,
     /// The other machines' projects of the one-list sidebar (`merged.rs`), while it merges.
     merge: Option<super::merged::MergeCache>,
+    /// The rows a parent project lists for its worktrees, marked with their worktree
+    /// (`worktree_fold.rs`).
+    worktree_rows: super::worktree_fold::MarkedRows,
 }
 
 /// The sidebar list of one machine, kept up to date from the store.
 #[derive(Default)]
 pub struct SidebarViewModel {
     state: Option<CacheState>,
+    /// Builds the groups and stops there: no machine tabs and no list (see [`Self::groups_only`]).
+    groups_only: bool,
 }
 
 impl SidebarViewModel {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A model for a reader of [`Self::built_groups`] alone (the menu bar indicators): every update
+    /// builds the same groups the full model builds, and skips the machine tabs and the list
+    /// (`view` stays empty).
+    ///
+    /// CDXC:StatusPet 2026-11-08 WHY:
+    /// User: "ghostex app gets slower with time until it becomes super slow ... even pasting an image takes long". The menu bar indicators kept a full sidebar model per machine with every project shown, and on every session change it laid out the whole list (sections, collections, Spaces, chief rows, home headers, machine tabs) that nothing reads: in the samples taken while the user reproduced the slow paste it was most of the sidebar store's main-thread time, eight times the visible sidebar's own update. The groups the indicators count are built by the same steps; only the list after them is skipped.
+    pub fn groups_only() -> Self {
+        Self {
+            state: None,
+            groups_only: true,
+        }
     }
 
     /// The list as it stands. Empty until the first [`Self::update`].
@@ -525,6 +545,7 @@ impl SidebarViewModel {
             machine_loaded,
             machine_summaries: BTreeMap::new(),
             merge: None,
+            worktree_rows: BTreeMap::new(),
             work: SidebarUpdateWork {
                 reset,
                 rows_all_dirty,
@@ -573,6 +594,7 @@ impl SidebarViewModel {
             if let (Some(workspace), Some(loaded)) = (&window_workspace, loaded) {
                 if meta.bot_profile(project_id).is_none()
                     && meta.ghost(project_id).is_none()
+                    && !meta.is_gbot(project_id)
                     && !workspace.shows_project(loaded, project_id)
                 {
                     continue;
@@ -665,6 +687,7 @@ impl SidebarViewModel {
                 is_stale,
                 machine_names: Vec::new(),
                 action_target: None,
+                folded_worktrees: Vec::new(),
             });
             for subgroup in &members.subgroups {
                 let mut rows: Vec<RowRef> = Vec::new();
@@ -693,12 +716,37 @@ impl SidebarViewModel {
                     is_stale,
                     machine_names: Vec::new(),
                     action_target: None,
+                    folded_worktrees: Vec::new(),
                 });
             }
         }
 
-        // Every machine's projects in this one list (`merged.rs`), unless Separate by machine.
+        // A worktree's sessions under its parent project (`worktree_fold.rs`); the Unified
+        // sidebar groups them by repository itself.
         let mut drawn_focus = state.focus.clone();
+        if effective.settings.worktree_sessions_in_project && !effective.settings.unified_sidebar {
+            let mut previous_marked = previous
+                .as_mut()
+                .map(|previous| std::mem::take(&mut previous.worktree_rows))
+                .unwrap_or_default();
+            let folded_into = super::worktree_fold::fold_worktrees(
+                &mut plans,
+                &mut previous_marked,
+                &mut state.worktree_rows,
+            );
+            if let Some(parent) = drawn_focus
+                .active_group_id
+                .as_ref()
+                .and_then(|group_id| folded_into.get(group_id))
+            {
+                drawn_focus.active_group_id = Some(parent.clone());
+            }
+        }
+
+        // Chief of Staff's row joins the home's group wherever its session lives (`chief.rs`).
+        super::chief::lift_chief_into_home(&mut plans);
+
+        // Every machine's projects in this one list (`merged.rs`), unless Separate by machine.
         if merging {
             let (cache, outcome) = super::merged::merge_machines(
                 previous.as_mut().and_then(|previous| previous.merge.take()),
@@ -760,10 +808,16 @@ impl SidebarViewModel {
                 }
             };
             state.next_deadline_ms = min_deadline(state.next_deadline_ms, build.deadline_ms);
-            builds.insert(plan.group_id.clone(), build.clone());
+            if !self.groups_only {
+                builds.insert(plan.group_id.clone(), build.clone());
+            }
             state
                 .groups
                 .insert(plan.group_id.clone(), CachedGroup { key, build });
+        }
+        if self.groups_only {
+            self.state = Some(state);
+            return true;
         }
 
         // 6. The machine tabs. The selected machine's counts come out of the groups just built;
@@ -828,6 +882,22 @@ impl SidebarViewModel {
             },
             now_ms,
         });
+        state.view.chiefs = super::chief::chief_rows(
+            store,
+            effective,
+            &machine,
+            merging,
+            &state.focus,
+            &row_context,
+        );
+        state.view.home_headers = super::chief::home_headers(
+            store,
+            effective,
+            &state.view.groups,
+            &state.focus,
+            &row_context,
+        );
+        state.view.machines_with_home = super::chief::machines_with_home(store, &state.view.chiefs);
         // The waiting copy of an empty sidebar moves with the clock alone.
         state.next_deadline_ms = min_deadline(
             state.next_deadline_ms,
@@ -1147,6 +1217,10 @@ pub(super) fn project_context(
             .value()
             .filter(|url| !url.is_empty())
             .cloned(),
+        git_repository_root_path: project
+            .git_repository_root_path
+            .clone()
+            .filter(|root| !root.trim().is_empty()),
         git_work_tree: !project.git_remote_origin_url.is_absent()
             || project.git_repository_root_path.is_some(),
         bot_profile: meta.bot_profile(project_id).map(str::to_string),
@@ -1154,6 +1228,7 @@ pub(super) fn project_context(
         bot_runs_today: project.bot_runs_today.unwrap_or_default(),
         ghost: meta.ghost(project_id).cloned(),
         work_mode: project.work_mode,
+        autopilot: project.autopilot,
         work_linear: project.work_mode && project.work_linear,
         work_linear_create: project.work_mode && project.work_linear && project.work_linear_create,
         work_pull_requests: project.work_mode && !project.work_github_off,
@@ -1161,6 +1236,8 @@ pub(super) fn project_context(
             && !project.work_github_off
             && project.work_tracker.as_deref() == Some("github"),
         work_tracker_github: project.work_tracker.as_deref() == Some("github"),
+        is_home: project.is_home,
+        gbot: project.gbots_bot.clone(),
     })
 }
 
@@ -1271,6 +1348,11 @@ fn group_key(
                 Arc::as_ptr(&target.project) as usize,
             )
         }),
+        folded_worktrees: plan
+            .folded_worktrees
+            .iter()
+            .map(|folded| Arc::as_ptr(&folded.project) as usize)
+            .collect(),
     }
 }
 

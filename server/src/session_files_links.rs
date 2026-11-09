@@ -42,6 +42,9 @@ struct CachedList {
     len: u64,
     modified: Option<SystemTime>,
     items: Vec<FilesLinksItem>,
+    /// The pictures the agent's tools opened (a Read of a picture, Codex's view image), which the
+    /// chat draws as tiles but the list leaves out.
+    read_images: Vec<String>,
 }
 
 fn cache() -> &'static Mutex<HashMap<(PathBuf, Option<String>), CachedList>> {
@@ -72,6 +75,136 @@ pub(crate) async fn handle_read_session_files_links_http(
         ),
         Err(error) => domain_error_response(endpoint_path, request_id, error),
     }
+}
+
+/// Whether `path` (a file path, or a picture's address on this computer's loopback) is one the
+/// session's own chat shows: an attachment, a picture or a file it mentions. Ghostex Collab
+/// answers a guest's picture reads only for these (server/src/collab_shim/http.rs).
+pub(crate) async fn session_shows_path(
+    state: &AppState,
+    project_id: &str,
+    session_id: &str,
+    path: &str,
+) -> bool {
+    let path = path.trim();
+    if path.is_empty() {
+        return false;
+    }
+    let body = json!({ "params": { "projectId": project_id, "sessionId": session_id } });
+    let Ok(result) = read_files_links(state, &body).await else {
+        return false;
+    };
+    let mentions = |value: &Value| -> bool {
+        match value {
+            Value::String(text) => text == path,
+            Value::Object(map) => ["path", "url", "src", "source"]
+                .iter()
+                .any(|key| map.get(*key).and_then(Value::as_str) == Some(path)),
+            _ => false,
+        }
+    };
+    result["sessions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|session| session["own"] == true)
+        .flat_map(|session| session["items"].as_array().into_iter().flatten())
+        .any(|item| {
+            ["path", "url", "key", "detail"]
+                .iter()
+                .any(|key| item.get(*key).and_then(Value::as_str) == Some(path))
+                || item.get("image").is_some_and(mentions)
+        })
+}
+
+/// Files and links rows compared by their real path at most, so a chat that lists thousands of
+/// files cannot make one check walk them all on disk.
+const NAMED_FILE_CANONICAL_CHECKS: usize = 2_000;
+/// Files a chat was found to name, kept so the Files view's change watch (a `stat` every 400 ms)
+/// does not read the transcript again each time: what a chat once linked stays in that chat.
+const NAMED_FILE_CACHE_ENTRIES: usize = 4_096;
+
+fn named_files() -> &'static Mutex<std::collections::HashSet<(String, String, String)>> {
+    static NAMED: OnceLock<Mutex<std::collections::HashSet<(String, String, String)>>> =
+        OnceLock::new();
+    NAMED.get_or_init(Default::default)
+}
+
+/// Whether the session's own chat names the file at `path` (absolute, or from the home folder):
+/// a file or attachment row of its Files and links list, written as `path` or resolving to the
+/// same file. The Files view of a remote project opens only these outside the project
+/// (CDXC:Docs 2026-11-07 in server/src/project_docs/chat_file.rs).
+pub(crate) async fn session_names_file(
+    state: &AppState,
+    project_id: &str,
+    session_id: &str,
+    path: &str,
+) -> bool {
+    let wanted = path.trim().to_string();
+    if wanted.is_empty() {
+        return false;
+    }
+    let key = (
+        project_id.to_string(),
+        session_id.to_string(),
+        wanted.clone(),
+    );
+    if named_files().lock().is_ok_and(|named| named.contains(&key)) {
+        return true;
+    }
+    let found = chat_names_file(state, project_id, session_id, wanted).await;
+    if found {
+        if let Ok(mut named) = named_files().lock() {
+            if named.len() >= NAMED_FILE_CACHE_ENTRIES {
+                named.clear();
+            }
+            named.insert(key);
+        }
+    }
+    found
+}
+
+async fn chat_names_file(
+    state: &AppState,
+    project_id: &str,
+    session_id: &str,
+    wanted: String,
+) -> bool {
+    let body = json!({ "params": { "projectId": project_id, "sessionId": session_id } });
+    let Ok(result) = read_files_links(state, &body).await else {
+        return false;
+    };
+    let named: Vec<String> = result["sessions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|session| session["own"] == true)
+        .flat_map(|session| session["items"].as_array().into_iter().flatten())
+        .filter(|item| item["section"] != "links")
+        .filter_map(|item| item.get("path").and_then(Value::as_str))
+        .map(str::to_string)
+        .collect();
+    if named.iter().any(|candidate| candidate.trim() == wanted) {
+        return true;
+    }
+    tokio::task::spawn_blocking(move || {
+        let real = |text: &str| {
+            std::fs::canonicalize(crate::project_docs::expanded_chat_file_path(text)).ok()
+        };
+        let Some(target) = real(&wanted) else {
+            return false;
+        };
+        named
+            .iter()
+            .filter(|candidate| {
+                let candidate = candidate.trim();
+                Path::new(candidate).is_absolute() || candidate.starts_with('~')
+            })
+            .take(NAMED_FILE_CANONICAL_CHECKS)
+            .any(|candidate| real(candidate.trim()).as_ref() == Some(&target))
+    })
+    .await
+    .unwrap_or(false)
 }
 
 async fn read_files_links(state: &AppState, body: &Value) -> Result<Value, DomainStateError> {
@@ -219,8 +352,20 @@ fn session_items(
     project_id: &str,
     session_id: &str,
 ) -> Vec<FilesLinksItem> {
+    session_lists(agent, path, cwd, project_id, session_id).0
+}
+
+/// One transcript's list and the pictures its tool calls read, from the cache while its file is
+/// unchanged.
+fn session_lists(
+    agent: crate::session_chat::SessionChatTranscriptAgent,
+    path: &Path,
+    cwd: Option<&str>,
+    project_id: &str,
+    session_id: &str,
+) -> (Vec<FilesLinksItem>, Vec<String>) {
     let Ok(metadata) = std::fs::metadata(path) else {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     };
     let (len, modified) = (metadata.len(), metadata.modified().ok());
     let key = (path.to_path_buf(), cwd.map(str::to_string));
@@ -228,7 +373,7 @@ fn session_items(
         cache
             .get(&key)
             .filter(|cached| cached.len == len && cached.modified == modified)
-            .map(|cached| cached.items.clone())
+            .map(|cached| (cached.items.clone(), cached.read_images.clone()))
     }) {
         return cached;
     }
@@ -242,6 +387,7 @@ fn session_items(
         }
         items = rules::merge(items);
     }
+    let read_images = tool_read_images(&messages, cwd);
     if let Ok(mut cache) = cache().lock() {
         if cache.len() >= CACHE_ENTRIES {
             cache.clear();
@@ -252,10 +398,92 @@ fn session_items(
                 len,
                 modified,
                 items: items.clone(),
+                read_images: read_images.clone(),
             },
         );
     }
-    items
+    (items, read_images)
+}
+
+/// The picture files the agent's tool calls opened, as the chat's read tiles name them
+/// (`read_images::image_paths_in_call`).
+fn tool_read_images(messages: &[Value], cwd: Option<&str>) -> Vec<String> {
+    let mut paths: Vec<String> = Vec::new();
+    for message in messages {
+        let blocks = message.get("blocks").and_then(Value::as_array);
+        for block in blocks.into_iter().flatten() {
+            if block.get("type").and_then(Value::as_str) != Some("tool-call") {
+                continue;
+            }
+            let name = block
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let input = block.get("input").unwrap_or(&Value::Null);
+            for path in
+                ghostex_gx_chat_core::transcript::read_images::image_paths_in_call(name, input, cwd)
+            {
+                if !paths.contains(&path) {
+                    paths.push(path);
+                }
+            }
+        }
+    }
+    paths
+}
+
+/// Whether the session's agent opened the picture at `path` with a tool (a Read of a picture,
+/// Codex's view image): the chat shows it as a tile, so a Ghostex Collab guest may read it too
+/// (server/src/collab_shim/http.rs).
+pub(crate) async fn session_read_image(
+    state: &AppState,
+    project_id: &str,
+    session_id: &str,
+    path: &str,
+) -> bool {
+    let path = path.trim();
+    if path.is_empty() {
+        return false;
+    }
+    let cwd = {
+        let Ok(db) = open_gxserver_database(&state.paths) else {
+            return false;
+        };
+        let repository = DomainRepository::new(&db, state.metadata.server_id.as_str());
+        let Some(session) = repository
+            .get_session(project_id, session_id)
+            .ok()
+            .flatten()
+        else {
+            return false;
+        };
+        let project = repository.get_project(project_id).ok().flatten();
+        crate::session_git_status::effective_session_git_cwd(&session, project.as_ref())
+    };
+    let Ok(resolution) = crate::session_chat_read::resolve_session_chat_read_state(
+        state, project_id, session_id, None,
+    ) else {
+        return false;
+    };
+    let (family, transcript) = resolution.transcript();
+    let (Some(agent), Some(transcript)) = (
+        crate::session_chat::resolve_session_chat_transcript_agent(family),
+        transcript.map(Path::to_path_buf),
+    ) else {
+        return false;
+    };
+    let (project_id, session_id, path) = (
+        project_id.to_string(),
+        session_id.to_string(),
+        path.to_string(),
+    );
+    tokio::task::spawn_blocking(move || {
+        session_lists(agent, &transcript, cwd.as_deref(), &project_id, &session_id)
+            .1
+            .contains(&path)
+    })
+    .await
+    .unwrap_or(false)
 }
 
 /// Every row of the transcript the user or the agent wrote, oldest first; the harness's injected
@@ -317,4 +545,26 @@ fn absolute_in(cwd: &str, path: &str) -> Option<String> {
     } else {
         joined
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pictures_the_agents_tools_opened() {
+        let messages = vec![json!({"role": "assistant", "blocks": [
+            {"type": "tool-call", "name": "exec", "input": "const r=await tools.view_image({path:\"/work/receipt.png\"});image(r.image_url);"},
+            {"type": "tool-call", "name": "Read", "input": {"file_path": "/work/shot.jpg"}},
+            {"type": "tool-call", "name": "Read", "input": {"file_path": "/work/notes.md"}},
+            {"type": "text", "text": "/work/secret.png"}
+        ]})];
+        assert_eq!(
+            tool_read_images(&messages, None),
+            vec![
+                "/work/receipt.png".to_string(),
+                "/work/shot.jpg".to_string()
+            ]
+        );
+    }
 }

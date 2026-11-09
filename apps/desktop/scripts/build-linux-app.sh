@@ -187,6 +187,8 @@ prepare_cef_component() {
 	node -e 'const fs=require("node:fs");fs.writeFileSync(process.argv[1],JSON.stringify({assets:[],version:process.argv[2]},null,2)+"\n")' \
 		"$build_manifest" "$RELEASE_VERSION"
 	mkdir -p "$APP_DIR/resources"
+	# Collab, the sharing extension gxserver downloads when the owner installs it (server/src/collab_shim/install.rs); release builds only.
+	"$REPO_ROOT/tooling/collab/seal-component.sh" "linux-$CEF_COMPONENT_ARCH" "$component_manifest"
 	node "$REPO_ROOT/tooling/release-gpui/on-demand-manifest.mjs" seal \
 		--build-manifest "$build_manifest" \
 		--component-manifest "$component_manifest" \
@@ -238,7 +240,7 @@ cp -R "$GPUI_DIR/dist/sidebar" "$APP_DIR/dist/sidebar"
 # and the macOS asset list in build-macos-app.sh.
 mkdir -p "$APP_DIR/resources/sounds"
 cp "$REPO_ROOT"/media/sounds/*.mp3 "$APP_DIR/resources/sounds/"
-# The licence notices of the bundled third-party parts.
+# The licence notices of the bundled third-party parts (the theme preset palettes among them).
 cp "$REPO_ROOT/THIRD_PARTY_NOTICES.md" "$APP_DIR/resources/"
 
 # 5) Bundle the local gxserver package (bin/gxserver + zmx + node runtime),

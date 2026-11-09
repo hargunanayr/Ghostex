@@ -1,0 +1,279 @@
+//! Per-session capability tokens (`gxs_`) and the desktop's owner sessions (`gxo_`).
+
+use std::{
+    collections::HashMap,
+    sync::{Arc, RwLock},
+};
+
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use rand::Rng;
+use sha2::{Digest, Sha256};
+
+use super::{persist::PersistedSessionToken, Principal, SessionRole};
+
+/// Prefix of a session's own token.
+pub const SESSION_TOKEN_PREFIX: &str = "gxs_";
+/// Prefix of the desktop app's in-memory owner session.
+pub const OWNER_TOKEN_PREFIX: &str = "gxo_";
+/// The environment variable a session's processes read their own token from. The `ghostex` CLI
+/// prefers it over the token file.
+pub const SESSION_TOKEN_ENV: &str = "GHOSTEX_SESSION_TOKEN";
+
+#[derive(Default)]
+struct Tokens {
+    /// SHA-256 of every live token → who it stands for (lookups never compare raw tokens).
+    by_hash: HashMap<String, Principal>,
+    /// `<project id>:<session id>` → its token, so a session started again (or attached through a script that
+    /// may start it) gets the same token its running processes already hold.
+    session_token: HashMap<String, String>,
+    /// Owner session hashes, oldest first, with their device.
+    owner_sessions: Vec<(String, String)>,
+}
+
+/// Owner sessions kept per device; opening another drops the oldest (an app restart opens one).
+pub const OWNER_SESSIONS_PER_DEVICE: usize = 4;
+
+/*
+CDXC:Security 2026-11-08 WHY:
+A session's token must be issued again unchanged: zmx daemons outlive gxserver restarts and attach scripts start a session only if it is missing, so minting a new token each time would revoke the one the running agent holds. The session's token is therefore kept (in memory and in the 0600 `auth/security.json`) until the session ends. That file is as readable to a same-user program as the token file was, the documented limit of #495; what a session token adds over the token file is the session's identity and its revocation, not secrecy from other programs of the user.
+*/
+#[derive(Clone, Default)]
+pub struct SessionTokens {
+    inner: Arc<RwLock<Tokens>>,
+}
+
+impl SessionTokens {
+    /// The token of session `session_id`: the one it already has, with its role brought up to
+    /// date, or a new one. `true` when it is new.
+    pub fn issue_session(
+        &self,
+        project_id: &str,
+        session_id: &str,
+        role: SessionRole,
+    ) -> (String, bool) {
+        let principal = Principal::Session {
+            project_id: project_id.to_string(),
+            session_id: session_id.to_string(),
+            role: role.stored(),
+        };
+        let key = session_key(project_id, session_id);
+        let mut tokens = self.write();
+        if let Some(token) = tokens.session_token.get(&key).cloned() {
+            tokens.by_hash.insert(hash_token(&token), principal);
+            return (token, false);
+        }
+        let token = mint(SESSION_TOKEN_PREFIX);
+        tokens.by_hash.insert(hash_token(&token), principal);
+        tokens.session_token.insert(key, token.clone());
+        (token, true)
+    }
+
+    /// A new token for the session, revoking its earlier one.
+    pub fn mint_session(&self, project_id: &str, session_id: &str, role: SessionRole) -> String {
+        self.revoke_session(project_id, session_id);
+        self.issue_session(project_id, session_id, role).0
+    }
+
+    /// An owner session for the desktop app on `device_id`, after it proved the owner key.
+    pub fn mint_owner(&self, device_id: &str) -> String {
+        let token = mint(OWNER_TOKEN_PREFIX);
+        let hash = hash_token(&token);
+        let mut tokens = self.write();
+        tokens.by_hash.insert(
+            hash.clone(),
+            Principal::Owner {
+                device_id: device_id.to_string(),
+            },
+        );
+        tokens.owner_sessions.push((hash, device_id.to_string()));
+        let mut kept = tokens
+            .owner_sessions
+            .iter()
+            .filter(|(_, device)| device == device_id)
+            .count();
+        while kept > OWNER_SESSIONS_PER_DEVICE {
+            let Some(index) = tokens
+                .owner_sessions
+                .iter()
+                .position(|(_, device)| device == device_id)
+            else {
+                break;
+            };
+            let (old, _) = tokens.owner_sessions.remove(index);
+            tokens.by_hash.remove(&old);
+            kept -= 1;
+        }
+        token
+    }
+
+    /// The owner sessions to save (hashes only).
+    pub fn owner_snapshot(&self) -> Vec<super::persist::PersistedOwnerSession> {
+        self.inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .owner_sessions
+            .iter()
+            .map(|(hash, device_id)| super::persist::PersistedOwnerSession {
+                hash: hash.clone(),
+                device_id: device_id.clone(),
+            })
+            .collect()
+    }
+
+    /// Puts back the owner sessions saved before a restart.
+    pub fn restore_owner(&self, saved: Vec<super::persist::PersistedOwnerSession>) {
+        let mut tokens = self.write();
+        for entry in saved {
+            tokens.by_hash.insert(
+                entry.hash.clone(),
+                Principal::Owner {
+                    device_id: entry.device_id.clone(),
+                },
+            );
+            tokens.owner_sessions.push((entry.hash, entry.device_id));
+        }
+    }
+
+    pub fn resolve(&self, token: &str) -> Option<Principal> {
+        if !token.starts_with(SESSION_TOKEN_PREFIX) && !token.starts_with(OWNER_TOKEN_PREFIX) {
+            return None;
+        }
+        self.inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .by_hash
+            .get(&hash_token(token))
+            .cloned()
+    }
+
+    /// Whether `token` is an open owner session (`gxo_`) of the desktop.
+    pub fn is_owner_session(&self, token: &str) -> bool {
+        token.starts_with(OWNER_TOKEN_PREFIX)
+            && matches!(self.resolve(token), Some(Principal::Owner { .. }))
+    }
+
+    /// Whether `token` is a live session's own token (`gxs_`).
+    pub fn is_session_token(&self, token: &str) -> bool {
+        token.starts_with(SESSION_TOKEN_PREFIX)
+            && matches!(self.resolve(token), Some(Principal::Session { .. }))
+    }
+
+    /// Revokes the session's token; returns the principal it removed.
+    pub fn revoke_session(&self, project_id: &str, session_id: &str) -> Vec<Principal> {
+        let mut tokens = self.write();
+        let Some(token) = tokens
+            .session_token
+            .remove(&session_key(project_id, session_id))
+        else {
+            return Vec::new();
+        };
+        tokens
+            .by_hash
+            .remove(&hash_token(&token))
+            .into_iter()
+            .collect()
+    }
+
+    pub fn revoke_token(&self, token: &str) -> Option<Principal> {
+        let mut tokens = self.write();
+        let principal = tokens.by_hash.remove(&hash_token(token))?;
+        if let Principal::Session {
+            project_id,
+            session_id,
+            ..
+        } = &principal
+        {
+            tokens
+                .session_token
+                .remove(&session_key(project_id, session_id));
+        }
+        Some(principal)
+    }
+
+    /// The session tokens to save (owner sessions are never written).
+    pub fn snapshot(&self) -> Vec<PersistedSessionToken> {
+        let tokens = self
+            .inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut saved: Vec<_> = tokens
+            .session_token
+            .iter()
+            .filter_map(|(_, token)| match tokens.by_hash.get(&hash_token(token)) {
+                Some(Principal::Session {
+                    project_id,
+                    session_id,
+                    role,
+                }) => Some(PersistedSessionToken {
+                    token: token.clone(),
+                    project_id: project_id.clone(),
+                    session_id: session_id.clone(),
+                    role: *role,
+                }),
+                _ => None,
+            })
+            .collect();
+        saved.sort_by(|a, b| a.session_id.cmp(&b.session_id));
+        saved
+    }
+
+    /// Puts back the session tokens saved before a restart.
+    pub fn restore(&self, saved: Vec<PersistedSessionToken>) {
+        let mut tokens = self.write();
+        for entry in saved {
+            if !entry.token.starts_with(SESSION_TOKEN_PREFIX) {
+                continue;
+            }
+            tokens.by_hash.insert(
+                hash_token(&entry.token),
+                Principal::Session {
+                    project_id: entry.project_id.clone(),
+                    session_id: entry.session_id.clone(),
+                    role: entry.role.stored(),
+                },
+            );
+            tokens.session_token.insert(
+                session_key(&entry.project_id, &entry.session_id),
+                entry.token,
+            );
+        }
+    }
+
+    /// The token session `session_id` holds now, if it holds one.
+    pub fn token_of(&self, project_id: &str, session_id: &str) -> Option<String> {
+        self.inner
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .session_token
+            .get(&session_key(project_id, session_id))
+            .cloned()
+    }
+
+    /// The `(project id, session id)` of every session that holds a token.
+    pub fn sessions(&self) -> Vec<(String, String)> {
+        self.snapshot()
+            .into_iter()
+            .map(|entry| (entry.project_id, entry.session_id))
+            .collect()
+    }
+
+    fn write(&self) -> std::sync::RwLockWriteGuard<'_, Tokens> {
+        self.inner
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+fn session_key(project_id: &str, session_id: &str) -> String {
+    format!("{project_id}:{session_id}")
+}
+
+fn mint(prefix: &str) -> String {
+    let mut random = [0_u8; 32];
+    rand::rng().fill_bytes(&mut random);
+    format!("{prefix}{}", URL_SAFE_NO_PAD.encode(random))
+}
+
+fn hash_token(token: &str) -> String {
+    hex::encode(Sha256::digest(token.as_bytes()))
+}

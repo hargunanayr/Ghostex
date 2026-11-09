@@ -54,7 +54,7 @@ use crate::transcript::presentation::{
 };
 use crate::transcript::question_forms::{form_entries, mark_resent, redone_forms, QuestionForm};
 use crate::transcript::sent_message::{
-    learn_names, resolve_recipients_after, LearnedNames, NameCheck, RecipientLookups,
+    learn_names, LearnedNames, NameCheck, RecipientDirectory, RecipientLookups,
 };
 use crate::transcript::side_question::is_side_question_command;
 use crate::transcript::thinking_card::RunningThinking;
@@ -181,8 +181,10 @@ pub struct SettledPrefix {
     /// The composition the prefix was last checked against, the revision of that list's head
     /// (`TranscriptPart`), and that list's sorted order: an unchanged composition (a backfill
     /// batch, a tick) needs no second check, and one that kept its head needs only its tail checked.
+    /// The head is the revision and the length it had: a head that has only grown since
+    /// (`composition::compose_after`) keeps its revision, and its rows before that length.
     checked_generation: u64,
-    checked_part: Option<u64>,
+    checked_part: Option<(u64, usize)>,
     order: Vec<usize>,
     /// The prefix's ids, with each row's time (`mark_inherited`).
     times: HashMap<String, Option<i64>>,
@@ -739,17 +741,24 @@ impl SettledPrefix {
         let mut found = if later_found {
             settle_askers(&scans.found, &answered)
         } else {
+            let answered: std::collections::HashSet<&str> =
+                answered.iter().map(String::as_str).collect();
             self.prefix_askers
                 .iter()
                 .cloned()
                 .map(|mut asker| {
-                    asker.answered = answered.contains(&asker.id) || asker.answered_in_words();
+                    asker.answered =
+                        answered.contains(asker.id.as_str()) || asker.answered_in_words();
                     asker
                 })
                 .collect()
         };
         mark_skipped(&mut found, &sent);
-        crate::questions::resource_index::settle_loaded(&mut found, &state.session.resource_index);
+        crate::questions::resource_index::settle_loaded_by(
+            &mut found,
+            state.session.resource_index.view(),
+        );
+        crate::transcript::open_questions::share_answers(&mut found);
         // `mark_inherited`, with the prefix's times kept rather than searched for.
         if let Some(forked_at) = state.session.forked_at {
             for asker in found.iter_mut() {
@@ -970,11 +979,10 @@ impl SettledPrefix {
         let used_moved = fresh
             .iter()
             .any(|built| built.chunk.used != self.chunks[built.index].used);
+        let recipients = RecipientDirectory::new(scope.agent_fleet, scope.session_directory);
         for mut built in fresh {
-            built.chunk.lookups = resolve_recipients_after(
+            built.chunk.lookups = recipients.resolve(
                 &mut built.items,
-                scope.agent_fleet,
-                scope.session_directory,
                 scope.agent_message_deliveries,
                 &layers,
                 true,
@@ -1035,7 +1043,7 @@ impl SettledPrefix {
                 .messages
                 .transcript_part
                 .as_ref()
-                .map(|part| part.revision),
+                .map(|part| (part.revision, part.len)),
             order: Vec::new(),
             times: HashMap::new(),
             ids: HashSet::new(),
@@ -1197,5 +1205,6 @@ pub fn scope<'a>(state: &'a ChatState, view: &'a TranscriptViewState) -> Project
         question_forms: std::cell::OnceCell::from(scans.marked_forms()),
         tool_cards: view.tool_cards,
         picture_digests: &view.picture_digests,
+        seen_pictures: std::cell::OnceCell::new(),
     }
 }

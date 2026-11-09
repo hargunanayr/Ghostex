@@ -30,11 +30,25 @@ impl GhostexGpuiApp {
 
     pub(crate) fn titlebar_actions_popup_content_height(&self) -> f32 {
         let action_count = self.visible_gpui_titlebar_actions().len();
-        let mut rows = if action_count == 0 {
+        let global_count = self.visible_gpui_titlebar_global_actions().len();
+        let mut rows = if action_count == 0 && global_count == 0 {
             vec![TITLEBAR_POPUP_MENU_ROW_HEIGHT]
         } else {
             vec![TITLEBAR_POPUP_ACTION_ROW_HEIGHT; action_count]
         };
+        // The Global section: a separator after the project's own rows, its heading, its rows.
+        if global_count > 0 {
+            if action_count > 0 {
+                rows.push(TITLEBAR_POPUP_MENU_SEPARATOR_HEIGHT);
+            }
+            rows.push(
+                TITLEBAR_POPUP_GIT_SECTION_LABEL_HEIGHT.max(TITLEBAR_POPUP_MENU_MIN_ITEM_HEIGHT),
+            );
+            rows.extend(std::iter::repeat_n(
+                TITLEBAR_POPUP_ACTION_ROW_HEIGHT,
+                global_count,
+            ));
+        }
         rows.push(TITLEBAR_POPUP_MENU_SEPARATOR_HEIGHT);
         rows.push(TITLEBAR_POPUP_MENU_ROW_HEIGHT);
         titlebar_popup_menu_height_for_rows(&rows)
@@ -112,6 +126,9 @@ impl GhostexGpuiApp {
             GpuiTitlebarPopupKind::More => self.titlebar_more_popup_content_height(),
             GpuiTitlebarPopupKind::OpenTargets => self.titlebar_open_targets_popup_content_height(),
             GpuiTitlebarPopupKind::Notifications => TITLEBAR_POPUP_NOTIFICATIONS_MAX_HEIGHT,
+            GpuiTitlebarPopupKind::CollabShare => {
+                crate::app::window::collab_share::COLLAB_SHARE_POPUP_HEIGHT
+            }
             GpuiTitlebarPopupKind::SessionLinks => {
                 let links = self
                     .native_sidebar

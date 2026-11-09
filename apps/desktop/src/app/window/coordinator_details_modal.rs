@@ -1,7 +1,10 @@
 //! Native GPUI editors for an orchestrator's Goal & Instructions and its Memory, opened from the
 //! orchestrator row's context menu. Both edit a local copy and save it with one
 //! `/api/updateCoordinator` call (Memory sends the whole list), so Cancel leaves everything as it
-//! was.
+//! was. The same window edits the user's Playbook overrides (every coordinator's, on that
+//! orchestrator's computer), saved with `/api/setCoordinatorPlaybook`, and its View playbook shows
+//! the playbook that coordinator reads, read-only (CDXC:Coordinators 2026-11-08 in
+//! window/new_coordinator_playbook.rs; the user asked for it here too, Q1998).
 //!
 //!
 //! CDXC:Coordinators 2026-10-14 DECISION:
@@ -23,6 +26,7 @@ pub(crate) const COORDINATOR_DETAILS_MODAL_INITIAL_HEIGHT: f32 = 600.0;
 
 const GOAL_TITLE: &str = "Goal & Instructions";
 const MEMORY_TITLE: &str = "Memory";
+const OVERRIDES_TITLE: &str = "Playbook overrides";
 const FIELD_GOAL: &str = "Goal";
 const GOAL_PLACEHOLDER: &str = "One line it works toward, e.g. Ship the new checkout by Friday";
 const FIELD_INSTRUCTIONS: &str = "Standing instructions";
@@ -37,6 +41,8 @@ const ADD: &str = "Add";
 pub(crate) enum CoordinatorDetailsMode {
     Goal,
     Memory,
+    /// The playbook overrides for every coordinator.
+    Overrides,
 }
 
 /// Where a save's outcome goes: the editor that sent it, in its own window.
@@ -68,6 +74,10 @@ pub(crate) enum CoordinatorDetailsModalCommand {
         notes: Vec<String>,
         reply: CoordinatorDetailsSaveReply,
     },
+    SaveOverrides {
+        overrides: String,
+        reply: CoordinatorDetailsSaveReply,
+    },
     Cancel,
 }
 
@@ -79,6 +89,12 @@ pub(crate) struct CoordinatorDetailsModalConfig {
     pub(crate) goal: String,
     pub(crate) instructions: String,
     pub(crate) notes: Vec<String>,
+    /// The playbook overrides, and the note about old full copies still in use (Overrides mode).
+    pub(crate) overrides: String,
+    pub(crate) old_copies_note: Option<String>,
+    /// Ghostex's part of the playbook the coordinator reads (`/api/readCoordinatorGuide`), or why
+    /// it could not be read; `None` leaves View playbook out (Overrides mode only).
+    pub(crate) guide: Option<Result<String, String>>,
     pub(crate) palette: ModalPalette,
 }
 
@@ -89,9 +105,15 @@ pub(crate) struct GpuiCoordinatorDetailsModalWindow {
     title: String,
     goal_input: Entity<InputState>,
     instructions_input: Entity<TextareaState>,
+    overrides_input: Entity<TextareaState>,
     note_input: Entity<InputState>,
     goal: String,
     instructions: String,
+    overrides: String,
+    old_copies_note: Option<String>,
+    guide: Option<Result<String, String>>,
+    /// The read-only playbook page is open (Overrides mode).
+    viewing: bool,
     note: String,
     notes: Vec<String>,
     /// A save is on its way to gxserver; the editor waits for its answer.
@@ -120,6 +142,12 @@ impl GpuiCoordinatorDetailsModalWindow {
                 .placeholder(INSTRUCTIONS_PLACEHOLDER)
                 .default_value(config.instructions.clone())
         });
+        let overrides_input = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .auto_grow(8, 14)
+                .placeholder(super::new_coordinator_modal::OVERRIDES_PLACEHOLDER)
+                .default_value(config.overrides.clone())
+        });
         let note_input = cx.new(|cx| InputState::new(window, cx).placeholder(ADD_PLACEHOLDER));
         let subscriptions = vec![
             cx.subscribe_in(
@@ -143,6 +171,16 @@ impl GpuiCoordinatorDetailsModalWindow {
                 },
             ),
             cx.subscribe_in(
+                &overrides_input,
+                window,
+                |this: &mut Self, input, event: &InputEvent, _window, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        this.overrides = input.read(cx).value().to_string();
+                        cx.notify();
+                    }
+                },
+            ),
+            cx.subscribe_in(
                 &note_input,
                 window,
                 |this: &mut Self, input, event: &InputEvent, _window, cx| {
@@ -160,6 +198,9 @@ impl GpuiCoordinatorDetailsModalWindow {
             CoordinatorDetailsMode::Memory => {
                 note_input.update(cx, |input, cx| input.focus(window, cx))
             }
+            CoordinatorDetailsMode::Overrides => {
+                overrides_input.update(cx, |input, cx| input.focus(window, cx))
+            }
         }
         Self {
             host,
@@ -168,9 +209,16 @@ impl GpuiCoordinatorDetailsModalWindow {
             title: config.title,
             goal_input,
             instructions_input,
+            overrides_input,
             note_input,
             goal: config.goal,
             instructions: config.instructions,
+            overrides: config.overrides,
+            old_copies_note: config.old_copies_note,
+            guide: config.guide.map(|guide| {
+                guide.map(|text| super::new_coordinator_modal::guide_ghostex_part(&text))
+            }),
+            viewing: false,
             note: String::new(),
             notes: config.notes,
             saving: false,
@@ -189,6 +237,24 @@ impl GpuiCoordinatorDetailsModalWindow {
     ) {
         window.remove_window();
         (self.host)(command, cx);
+    }
+
+    /// Opens or leaves the read-only playbook page; leaving it puts the cursor back in the
+    /// overrides.
+    pub(crate) fn set_viewing(
+        &mut self,
+        viewing: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.viewing = viewing;
+        if viewing {
+            self.focus_handle.focus(window, cx);
+        } else {
+            self.overrides_input
+                .update(cx, |input, cx| input.focus(window, cx));
+        }
+        cx.notify();
     }
 
     fn cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -217,6 +283,10 @@ impl GpuiCoordinatorDetailsModalWindow {
                     reply,
                 }
             }
+            CoordinatorDetailsMode::Overrides => CoordinatorDetailsModalCommand::SaveOverrides {
+                overrides: self.overrides.trim().to_string(),
+                reply,
+            },
         };
         self.saving = true;
         self.error = None;
@@ -269,11 +339,20 @@ impl GpuiCoordinatorDetailsModalWindow {
     /// Enter adds the typed note in Memory and saves from the goal; in the instructions it is a
     /// newline, and Cmd/Ctrl+Enter saves from anywhere.
     fn on_enter_action(&mut self, action: &Enter, window: &mut Window, cx: &mut Context<Self>) {
+        if self.viewing {
+            cx.stop_propagation();
+            return;
+        }
         let in_instructions = self
             .instructions_input
             .read(cx)
             .focus_handle(cx)
-            .is_focused(window);
+            .is_focused(window)
+            || self
+                .overrides_input
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window);
         if in_instructions && !action.secondary {
             cx.propagate();
             return;
@@ -289,10 +368,21 @@ impl GpuiCoordinatorDetailsModalWindow {
 
     fn on_escape_action(&mut self, _: &Escape, window: &mut Window, cx: &mut Context<Self>) {
         cx.stop_propagation();
+        if self.viewing {
+            self.set_viewing(false, window, cx);
+            return;
+        }
         self.cancel(window, cx);
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.viewing {
+            if event.keystroke.key == "escape" {
+                self.set_viewing(false, window, cx);
+                cx.stop_propagation();
+            }
+            return;
+        }
         match event.keystroke.key.as_str() {
             "escape" => self.cancel(window, cx),
             "enter" if !event.is_held => self.save(window, cx),
@@ -336,6 +426,26 @@ impl GpuiCoordinatorDetailsModalWindow {
                     )),
             )
             .into_any_element()
+    }
+
+    fn render_overrides_body(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let p = self.palette;
+        let mut body = v_flex()
+            .w_full()
+            .gap(px(8.0))
+            .child(modal_text_area(
+                &p,
+                &self.overrides_input,
+                None,
+                false,
+                window,
+                cx,
+            ))
+            .child(modal_hint(&p, super::new_coordinator_modal::OVERRIDES_HINT));
+        if let Some(note) = &self.old_copies_note {
+            body = body.child(modal_hint(&p, note.clone()));
+        }
+        body.into_any_element()
     }
 
     fn render_memory_body(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
@@ -432,13 +542,75 @@ impl GpuiCoordinatorDetailsModalWindow {
             )
             .child(modal_hint(
                 &p,
-                "Every thread it starts gets these notes with its task.",
+                "The coordinator passes on the notes a thread needs when it briefs it.",
             ))
             .into_any_element()
     }
 
+    /// The read-only playbook page: Ghostex's part, then the overrides as last saved.
+    fn render_playbook_view(&self) -> Vec<AnyElement> {
+        let p = self.palette;
+        let colors = super::new_coordinator_modal::PlaybookViewColors {
+            light: p.light,
+            foreground: p.foreground,
+            muted: p.muted,
+            panel: p.panel,
+            hairline: p.hairline,
+            destructive: p.destructive,
+        };
+        vec![
+            modal_header(
+                &p,
+                super::new_coordinator_modal::PLAYBOOK_VIEW_TITLE,
+                Some(super::new_coordinator_modal::PLAYBOOK_VIEW_DESCRIPTION),
+            ),
+            div()
+                .id("coordinator-details-playbook-view-scroll")
+                .w_full()
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .child(super::new_coordinator_modal::playbook_view_body(
+                    colors,
+                    "coordinator-details-playbook-view",
+                    self.guide.as_ref(),
+                    &self.overrides,
+                ))
+                .into_any_element(),
+        ]
+    }
+
     fn render_footer(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = self.palette;
+        if self.viewing {
+            let back = modal_action_button(
+                &p,
+                "coordinator-details-playbook-back",
+                "Back",
+                None,
+                ModalButtonTone::Neutral,
+                false,
+                |this, window, cx| this.set_viewing(false, window, cx),
+                cx,
+            );
+            let edit = modal_action_button(
+                &p,
+                "coordinator-details-playbook-edit",
+                super::new_coordinator_modal::EDIT_OVERRIDES,
+                None,
+                ModalButtonTone::Primary,
+                false,
+                |this, window, cx| this.set_viewing(false, window, cx),
+                cx,
+            );
+            return h_flex()
+                .w_full()
+                .gap(px(8.0))
+                .child(div().flex_1())
+                .child(h_flex().w(px(96.0)).child(back))
+                .child(h_flex().w(px(140.0)).child(edit))
+                .into_any_element();
+        }
         let cancel = modal_action_button(
             &p,
             "coordinator-details-cancel",
@@ -459,7 +631,28 @@ impl GpuiCoordinatorDetailsModalWindow {
             |this, window, cx| this.save(window, cx),
             cx,
         );
-        modal_footer(vec![cancel, save])
+        if self.mode != CoordinatorDetailsMode::Overrides || self.guide.is_none() {
+            return modal_footer(vec![cancel, save]);
+        }
+        // View playbook on the left, Cancel and Save on the right.
+        let view = modal_action_button(
+            &p,
+            "coordinator-details-playbook-view",
+            super::new_coordinator_modal::VIEW_PLAYBOOK,
+            None,
+            ModalButtonTone::Neutral,
+            self.saving,
+            |this, window, cx| this.set_viewing(true, window, cx),
+            cx,
+        );
+        h_flex()
+            .w_full()
+            .gap(px(8.0))
+            .child(h_flex().w(px(132.0)).child(view))
+            .child(div().flex_1())
+            .child(h_flex().w(px(96.0)).child(cancel))
+            .child(h_flex().w(px(96.0)).child(save))
+            .into_any_element()
     }
 }
 
@@ -469,6 +662,9 @@ impl Render for GpuiCoordinatorDetailsModalWindow {
         let (title, body) = match self.mode {
             CoordinatorDetailsMode::Goal => (GOAL_TITLE, self.render_goal_body(window, cx)),
             CoordinatorDetailsMode::Memory => (MEMORY_TITLE, self.render_memory_body(window, cx)),
+            CoordinatorDetailsMode::Overrides => {
+                (OVERRIDES_TITLE, self.render_overrides_body(window, cx))
+            }
         };
         let description = match self.mode {
             CoordinatorDetailsMode::Goal => format!(
@@ -479,8 +675,15 @@ impl Render for GpuiCoordinatorDetailsModalWindow {
                 "Lasting preferences, decisions and pitfalls {} remembers.",
                 self.title
             ),
+            CoordinatorDetailsMode::Overrides => {
+                super::new_coordinator_modal::OVERRIDES_DESCRIPTION.to_string()
+            }
         };
-        let mut content = vec![modal_header(&p, title, Some(description)), body];
+        let mut content = if self.viewing {
+            self.render_playbook_view()
+        } else {
+            vec![modal_header(&p, title, Some(description)), body]
+        };
         if let Some(error) = &self.error {
             content.push(modal_error(&p, error.clone()));
         }

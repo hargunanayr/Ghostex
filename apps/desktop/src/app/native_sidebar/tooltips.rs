@@ -310,6 +310,30 @@ fn sidebar_tooltip_bubble(
     .build(window, cx)
 }
 
+/// The Main Hub card (chief_row_view.rs `main_hub_tooltip_content`) beside the sidebar: the
+/// frosted menus' fill where its window is frosted (`frosted`), else the tooltip bubble's.
+pub(crate) fn main_hub_card(scale: f32, frosted: bool, glass: bool) -> gpui::Div {
+    let menu = titlebar_popup_menu_background();
+    let in_window = in_window_bubble(glass);
+    let background = if frosted {
+        crate::app::helpers::frosted_tooltip_fill(menu)
+    } else {
+        in_window.fill
+    };
+    div()
+        .py(px(10.0 * scale))
+        .px(px(12.0 * scale))
+        .rounded(px(8.0 * scale))
+        .border_1()
+        .border_color(in_window.border)
+        .bg(background)
+        .child(super::chief_row_view::main_hub_tooltip_content(
+            scale,
+            titlebar_popup_menu_foreground(),
+            in_window.secondary,
+        ))
+}
+
 /// The bubble's colours where it is drawn inside the window it floats over.
 #[derive(Clone, Copy)]
 pub(crate) struct InWindowBubble {

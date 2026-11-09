@@ -24,12 +24,32 @@
 //! a phone pairs) and a slow one (10s: SSH access, Tailscale and the paired devices, which shell
 //! out on the daemon), each guarded so a slow daemon never stacks requests; both stop as soon as
 //! the page is left or Settings closes (`use-remote-access.ts` (deleted 2026-10-01)).
+/// `/api/pairComputer`'s params for an Easy Connect code pasted from another computer's Show QR
+/// sheet; `None` for a code without its one-time secret (the pair-again notice uses it too).
+pub(crate) fn easy_connect_pairing_params(code: &str) -> Option<serde_json::Value> {
+    model::computer_pairing_params(code)
+}
+
+/// `machine` (a `remoteMachines` entry) with `code` as its new Easy Connect code, saved the way
+/// the machine dialog saves it; `None` when the code doesn't read.
+pub(crate) fn machine_with_easy_connect_code(
+    machine: &serde_json::Value,
+    code: &str,
+) -> Option<serde_json::Value> {
+    let mut draft = model::machine_draft_from_settings(machine);
+    model::apply_easy_connect_code(&mut draft, code);
+    model::normalize_remote_machine_draft(&draft)
+}
+
 mod advanced;
 mod app_update;
+mod current_machine;
 mod easy_connect;
 mod machines;
 mod model;
+mod pair_again;
 mod paired_devices;
+mod relay;
 mod ssh_row;
 mod style;
 mod tailscale;
@@ -43,8 +63,8 @@ use super::super::page::{PageBlock, settings_page};
 use super::super::rail::{rail_pages, render_no_matches};
 use super::super::search::should_show_section;
 use super::super::store::{
-    SettingsStore, SettingsStoreEvent, SmoothScroll, post_store_message, store_copy_to_clipboard,
-    store_gxserver_rpc,
+    SettingsStore, SettingsStoreEvent, SmoothScroll, post_store_message, store_approve_request,
+    store_copy_to_clipboard, store_gxserver_rpc,
 };
 use gpui::{
     AnyView, App, AppContext as _, Bounds, Context, Entity, FocusHandle, IntoElement,
@@ -170,6 +190,8 @@ impl From<PathCard> for RemoteSection {
 pub(super) struct GxserverInstall {
     pub(super) installed: bool,
     pub(super) version: Option<String>,
+    /// Ghostex installed it there, so the machine's status panel offers Reinstall.
+    pub(super) managed: bool,
 }
 
 pub(crate) struct RemoteTab {
@@ -180,6 +202,12 @@ pub(crate) struct RemoteTab {
     pub(super) access: Option<AccessStatus>,
     pub(super) pairing: Option<PairingCodes>,
     pub(super) paired_devices: Option<Vec<PairedDevice>>,
+    /// Phones waiting for approval, with their words (pairing v2).
+    pub(super) pending_devices: Vec<PendingDevice>,
+    /// The approval request being approved for a waiting phone or computer (its system prompt is up).
+    pub(super) approving_device: Option<String>,
+    /// A `/api/computerPairingStatus` ask is out (machines.rs).
+    pub(super) computer_pairing_in_flight: bool,
     pub(super) request_error: Option<String>,
     pub(super) enabling_ssh: bool,
     pub(super) install_pending: bool,
@@ -208,8 +236,9 @@ pub(crate) struct RemoteTab {
     pub(super) copied: HashSet<SharedString>,
     copy_tasks: HashMap<SharedString, Task<()>>,
     pub(super) advanced: advanced::AdvancedState,
+    pub(super) relay: relay::RelayState,
     pub(super) machine_dialog: Option<machines::MachineDialog>,
-    /// This computer's short-name field in the Remote machines card, made on its first draw.
+    /// This computer's short-name field in the Current machine card, made on its first draw.
     pub(super) local_short_name: Option<(
         Entity<gpui_component::input::InputState>,
         gpui::Subscription,
@@ -220,6 +249,12 @@ pub(crate) struct RemoteTab {
     /// The path cards' and the machine tiles' bounds last frame, for the deep-link scrolls.
     card_bounds: [Rc<Cell<Option<Bounds<Pixels>>>>; 2],
     machines_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// The Current machine card's bounds last frame, for a setup step's "turn it on" link.
+    current_machine_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// When a setup step's link last brought you to the Current machine card's SSH access row,
+    /// which stays highlighted for `current_machine::SSH_HIGHLIGHT`.
+    pub(super) ssh_highlight: Option<std::time::Instant>,
+    ssh_highlight_task: Option<Task<()>>,
     pending_scroll: Option<ScrollTarget>,
     pub(super) installs: HashMap<String, GxserverInstall>,
     /// Each connected machine's Ghostex version and update row (`remoteAppUpdateState`).
@@ -239,6 +274,8 @@ pub(crate) struct RemoteTab {
     targeted_machine: Option<String>,
     was_active: bool,
     preview_applied: bool,
+    /// Phones and computers from before 11.0.1 that still wait to be paired again (pair_again.rs).
+    pair_again_waiting: usize,
 }
 
 impl super::HoldsUnsavedInput for RemoteTab {
@@ -349,6 +386,9 @@ impl RemoteTab {
             access: None,
             pairing: None,
             paired_devices: None,
+            pending_devices: Vec::new(),
+            computer_pairing_in_flight: false,
+            approving_device: None,
             request_error: None,
             enabling_ssh: false,
             install_pending: false,
@@ -372,11 +412,15 @@ impl RemoteTab {
             copied: HashSet::new(),
             copy_tasks: HashMap::new(),
             advanced: advanced::AdvancedState::default(),
+            relay: relay::RelayState::default(),
             machine_dialog: None,
             local_short_name: None,
             kept_machine_form: None,
             card_bounds: [Rc::new(Cell::new(None)), Rc::new(Cell::new(None))],
             machines_bounds: Rc::new(Cell::new(None)),
+            current_machine_bounds: Rc::new(Cell::new(None)),
+            ssh_highlight: None,
+            ssh_highlight_task: None,
             pending_scroll: None,
             installs: HashMap::new(),
             app_updates: HashMap::new(),
@@ -392,6 +436,7 @@ impl RemoteTab {
             targeted_machine: None,
             was_active: false,
             preview_applied: false,
+            pair_again_waiting: 0,
         };
         tab.sync_activity(cx);
         tab.restore_open_form(window, cx);
@@ -573,6 +618,11 @@ impl RemoteTab {
                                     this.easy_connect = Some(status);
                                     this.pairing = Some(code);
                                     this.request_error = None;
+                                    // A phone that just scanned shows its words on the sheet
+                                    // without waiting for the slow refresh.
+                                    if this.qr_preview == Some(PathCard::EasyConnect) {
+                                        this.refresh_pending_devices(cx);
+                                    }
                                 }
                                 Err(error) => this.request_error = Some(error),
                             }
@@ -584,12 +634,73 @@ impl RemoteTab {
         );
     }
 
+    /// Approve on a waiting phone or computer: Touch ID / Windows Hello / the system password,
+    /// then the signed approval (`owner_security`, GitHub #495); the device finishes pairing on
+    /// its next ask.
+    pub(super) fn approve_pending_device(&mut self, approval_id: String, cx: &mut Context<Self>) {
+        if self.approving_device.is_some() || approval_id.is_empty() {
+            return;
+        }
+        self.approving_device = Some(approval_id.clone());
+        cx.notify();
+        let weak = cx.weak_entity();
+        store_approve_request(
+            &self.store,
+            approval_id,
+            move |outcome, cx| {
+                let _ = weak.update(cx, |this, cx| {
+                    this.approving_device = None;
+                    if let Err(error) = outcome {
+                        this.request_error = Some(error);
+                    }
+                    this.refresh_pending_devices(cx);
+                    cx.notify();
+                });
+            },
+            cx,
+        );
+    }
+
+    /// The phones waiting for approval, while the Show QR sheet is open.
+    pub(super) fn refresh_pending_devices(&mut self, cx: &mut Context<Self>) {
+        self.rpc(
+            "/api/pairedDevices",
+            json!({}),
+            RPC_TIMEOUT,
+            cx,
+            |this, devices, cx| {
+                if let Ok(value) = devices {
+                    this.pending_devices = read_pending_devices(&value);
+                    if let Ok(devices) = read_paired_devices_result(&value) {
+                        this.paired_devices = Some(devices);
+                    }
+                    cx.notify();
+                }
+            },
+        );
+    }
+
     /// `refreshSlow`: SSH access, Tailscale and this computer's identity, and the paired devices.
     fn refresh_slow(&mut self, cx: &mut Context<Self>) {
         if !self.rpc_available(cx) || self.slow_in_flight {
             return;
         }
         self.slow_in_flight = true;
+        self.rpc(
+            "/api/securityUpgradeNotice",
+            json!({ "op": "read" }),
+            RPC_TIMEOUT,
+            cx,
+            |this, answer, cx| {
+                let waiting = answer
+                    .map(|answer| pair_again::waiting_of(&answer))
+                    .unwrap_or(0);
+                if this.pair_again_waiting != waiting {
+                    this.pair_again_waiting = waiting;
+                    cx.notify();
+                }
+            },
+        );
         self.rpc(
             "/api/remoteAccessStatus",
             json!({}),
@@ -610,6 +721,7 @@ impl RemoteTab {
                     cx,
                     move |this, devices, cx| {
                         this.slow_in_flight = false;
+                        let pending = devices.as_ref().ok().map(read_pending_devices);
                         match devices.and_then(|value| read_paired_devices_result(&value)) {
                             Ok(devices) => {
                                 if access.ssh.enabled {
@@ -617,6 +729,7 @@ impl RemoteTab {
                                 }
                                 this.access = Some(access);
                                 this.paired_devices = Some(devices);
+                                this.pending_devices = pending.unwrap_or_default();
                             }
                             Err(error) => this.request_error = Some(error),
                         }
@@ -746,9 +859,11 @@ impl RemoteTab {
             cx,
             |this, result, cx| {
                 this.removing_device = None;
+                let pending = result.as_ref().ok().map(read_pending_devices);
                 match result.and_then(|value| read_paired_devices_result(&value)) {
                     Ok(devices) => {
                         this.paired_devices = Some(devices);
+                        this.pending_devices = pending.unwrap_or_default();
                         this.request_error = None;
                     }
                     Err(error) => this.request_error = Some(error),
@@ -791,6 +906,24 @@ impl RemoteTab {
         cx.notify();
     }
 
+    /// A setup step's "turn it on in Current machine": scroll up to the card and highlight its SSH
+    /// access row for a moment.
+    pub(super) fn show_current_machine_ssh(&mut self, cx: &mut Context<Self>) {
+        self.pending_scroll = Some(ScrollTarget::CurrentMachine);
+        self.ssh_highlight = Some(std::time::Instant::now());
+        self.ssh_highlight_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(current_machine::SSH_HIGHLIGHT)
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.ssh_highlight = None;
+                this.ssh_highlight_task = None;
+                cx.notify();
+            });
+        }));
+        cx.notify();
+    }
+
     pub(super) fn post(&self, message: Value, cx: &mut App) {
         post_store_message(&self.store, message, cx);
     }
@@ -827,6 +960,7 @@ impl RemoteTab {
             GxserverInstall {
                 installed: message.get("installed").and_then(Value::as_bool) == Some(true),
                 version,
+                managed: message.get("managed").and_then(Value::as_bool) == Some(true),
             },
         );
         cx.notify();
@@ -952,13 +1086,21 @@ impl RemoteTab {
         }
         if matches!(
             state,
-            "remote-tailscale" | "remote-tailscale-manual" | "remote-tailscale-qr"
+            "remote-tailscale"
+                | "remote-tailscale-manual"
+                | "remote-tailscale-qr"
+                | "remote-ssh-link"
         ) {
             self.section = RemoteSection::Tailscale;
         }
         if matches!(
             state,
-            "remote-machines" | "remote-add-machine" | "remote-add-ec" | "remote-edit-machine"
+            "remote-machines"
+                | "remote-add-machine"
+                | "remote-add-ec"
+                | "remote-edit-machine"
+                | "remote-machine-failed"
+                | "remote-machine-failed-sheet"
         ) {
             self.section = RemoteSection::Machines;
         }
@@ -973,9 +1115,10 @@ impl RemoteTab {
                 self.qr_preview_focus.focus(window, cx);
             }
             "remote-ssh-popover" => {
-                self.os_popover = Some(("easy-connect-ssh".into(), "windows"));
+                self.os_popover = Some(("current-machine-ssh".into(), "windows"));
             }
             "remote-tailscale-manual" => self.manual_open = true,
+            "remote-ssh-link" => self.show_current_machine_ssh(cx),
             "remote-paired-confirm" => self.confirming_device = Some("dev-1".to_string()),
             "remote-advanced" => {
                 self.section = RemoteSection::Advanced;
@@ -1035,11 +1178,25 @@ impl Render for RemoteTab {
             }
             let rpc = self.rpc_available(cx);
             // `.settings-management-layout`: the sections 16px apart in one column.
-            let mut layout = v_flex()
-                .w_full()
-                .min_w_0()
-                .gap(px(SECTION_GAP))
-                .child(self.section_tabs(&t, cx));
+            let mut layout = v_flex().w_full().min_w_0().gap(px(SECTION_GAP));
+            if self.pair_again_waiting > 0 {
+                layout = layout.child(pair_again::pair_again_line(&t, self.pair_again_waiting, cx));
+            }
+            // The Current machine card sits above the tab strip on every tab (CDXC:RemotePairing
+            // 2026-11-08 in current_machine.rs); a search shows it only when it matches.
+            if !searching || should_show_section(&search.section("currentMachine"), None) {
+                let card = current_machine::current_machine_card(self, &t, window, cx);
+                layout = layout.child(
+                    div()
+                        .w_full()
+                        .on_children_prepainted(capture_child_bounds(
+                            self.current_machine_bounds.clone(),
+                            0,
+                        ))
+                        .child(card),
+                );
+            }
+            layout = layout.child(self.section_tabs(&t, window, cx));
             layout = layout.child(match self.section {
                 RemoteSection::EasyConnect | RemoteSection::Tailscale => {
                     self.connect_section(&t, rpc, window, cx)
@@ -1099,6 +1256,8 @@ pub(super) enum ScrollTarget {
     Card(PathCard),
     /// `scrollIntoView({ block: 'center' })` on the machine tiles.
     Machines,
+    /// The Current machine card, from a setup step's "turn it on in Current machine" link.
+    CurrentMachine,
 }
 
 impl RemoteTab {
@@ -1116,19 +1275,29 @@ impl RemoteTab {
     /// The tab strip: each tab's name and its status (the card badge's dot and word for Easy
     /// Connect and Tailscale, "connected/saved" for Remote machines, "Unsaved" for Advanced while an
     /// edit is pending).
-    fn section_tabs(&mut self, t: &RemoteTokens, cx: &mut Context<Self>) -> gpui::AnyElement {
+    fn section_tabs(
+        &mut self,
+        t: &RemoteTokens,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
         let (connected, saved) = self.connected_machine_count(cx);
+        // CDXC:RemoteMachines 2026-11-08 WHY: in a narrow Settings window "Easy Connect · Running"
+        // filled its quarter of the strip edge to edge (the remote tile audit, finding 10). Below
+        // this width Easy Connect and Tailscale keep their status dot and drop the word.
+        let compact = window.viewport_size().width < px(1060.0);
         let tailscale = tailscale::tailscale_status_badge(self, cx);
         let easy_connect = easy_connect_status_badge(self.easy_connect.as_ref());
         let items: Vec<ModalRailItem> = RemoteSection::ALL
             .iter()
             .map(|section| {
                 let (trailing, dot): (Option<SharedString>, Option<gpui::Rgba>) = match section {
-                    RemoteSection::EasyConnect => {
-                        (Some(easy_connect.0.into()), Some(t.tone(easy_connect.1)))
-                    }
+                    RemoteSection::EasyConnect => (
+                        (!compact).then(|| easy_connect.0.into()),
+                        Some(t.tone(easy_connect.1)),
+                    ),
                     RemoteSection::Tailscale => tailscale
-                        .map(|(label, tone)| (Some(label.into()), Some(t.tone(tone))))
+                        .map(|(label, tone)| ((!compact).then(|| label.into()), Some(t.tone(tone))))
                         .unwrap_or((None, None)),
                     RemoteSection::Machines => (
                         (saved > 0).then(|| format!("{connected}/{saved}").into()),
@@ -1181,7 +1350,7 @@ impl RemoteTab {
         } else {
             let (card, bounds) = if self.section == RemoteSection::Tailscale {
                 (
-                    tailscale::tailscale_card(self, t, window, cx),
+                    tailscale::tailscale_card(self, t, cx),
                     self.card_bounds[1].clone(),
                 )
             } else {
@@ -1213,6 +1382,7 @@ impl RemoteTab {
             ScrollTarget::Card(PathCard::EasyConnect) => self.card_bounds[0].clone(),
             ScrollTarget::Card(PathCard::Tailscale) => self.card_bounds[1].clone(),
             ScrollTarget::Machines => self.machines_bounds.clone(),
+            ScrollTarget::CurrentMachine => self.current_machine_bounds.clone(),
         };
         let Some(bounds) = cell.get() else {
             cx.on_next_frame(window, |_, _, cx| cx.notify());
@@ -1232,7 +1402,7 @@ impl RemoteTab {
             ScrollTarget::Machines => {
                 content_top - (viewport.size.height - bounds.size.height) / 2.0
             }
-            ScrollTarget::Card(_) => content_top,
+            ScrollTarget::Card(_) | ScrollTarget::CurrentMachine => content_top,
         };
         let to = f32::from(target_top.max(px(0.0)).min(handle.max_offset().y));
         tracker.borrow_mut().smooth = Some(SmoothScroll::new(-f32::from(offset.y), to));

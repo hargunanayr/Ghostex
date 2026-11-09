@@ -1,6 +1,6 @@
 use super::{
     catalog::{self, Definition, CATALOG},
-    latest, mise, npm_age, path_setup, process, update_check,
+    latest, mise, mise_keep, npm_age, path_setup, process, update_check,
 };
 use crate::{domain::DomainStateError, paths::GxserverPaths};
 use serde_json::{json, Map, Value};
@@ -164,6 +164,9 @@ async fn list(home: &Path) -> Result<Value, DomainStateError> {
     Ok(json!({ "agents": agents }))
 }
 
+/// How long an install or update waits for its turn behind another one before it fails.
+const QUEUE_WAIT: Duration = Duration::from_secs(15 * 60);
+
 fn is_active(progress: &Value) -> bool {
     matches!(progress["status"].as_str(), Some("queued" | "running"))
 }
@@ -302,13 +305,41 @@ async fn start(
     let home = home.to_path_buf();
     let paths = paths.clone();
     let installing = operation == "install";
+    let mise_update = !installing && method_id == "mise";
     tokio::spawn(async move {
         /*
         CDXC:AgentProviders 2026-09-28 WHY:
         Installs and updates run one at a time (installers can share an npm prefix, the user PATH and the shell profile), but a second request waits in the queue instead of being refused, so onboarding can install Claude, Codex, Cursor and Grok from one pass. The queue is shared with the tools Ghostex installs itself (managed_tools::INSTALL_LOCK).
         */
-        let _turn = crate::managed_tools::INSTALL_LOCK.lock().await;
+        /*
+        CDXC:Updates 2026-11-07 FIX:
+        User: "open code isn't updating pls fix" (OpenCode sat at "Waiting…" in the top bar's Updates list).
+        WHY: a job waiting for its turn behind an install that never ends stayed "queued" forever, and the row with it, even after the Updates run that started it gave up at 20 minutes. It now fails with a plain reason after 15 minutes in the queue, before that run's own limit.
+        */
+        let turn =
+            tokio::time::timeout(QUEUE_WAIT, crate::managed_tools::INSTALL_LOCK.lock()).await;
+        let Ok(_turn) = turn else {
+            if let Ok(mut jobs) = JOBS.lock() {
+                if let Some(job) = jobs.get_mut(&key) {
+                    job.progress["status"] = json!("failed");
+                    job.progress["error"] = json!(
+                        "Another install or update kept Ghostex busy for 15 minutes, so this one did not start. Try again once it finishes."
+                    );
+                }
+            }
+            return;
+        };
         set_job_status(&key, "running");
+        // The version this update replaces, kept while sessions run from it (mise_keep.rs).
+        let before = if mise_update {
+            let (binary, home) = (definition.binary.clone(), home.clone());
+            tokio::task::spawn_blocking(move || mise_keep::current_install(&binary, &home))
+                .await
+                .ok()
+                .flatten()
+        } else {
+            None
+        };
         let log = crate::managed_tools::Log::new({
             let key = key.clone();
             move |chunk| append_output(&key, &chunk)
@@ -343,6 +374,9 @@ async fn start(
             Ok(()) => finish(definition, &home, &key).await,
             Err(error) => Err(error),
         };
+        if mise_update && result.is_ok() {
+            mise_keep::after_update(&definition.binary, before, &home).await;
+        }
         let notice = match &result {
             Ok(verified) if !installing => update_notice(definition, verified, &key),
             _ => None,

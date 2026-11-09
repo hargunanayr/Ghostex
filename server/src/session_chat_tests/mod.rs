@@ -16,7 +16,10 @@ use crate::session_chat::*;
 
 mod claude_compact_offer;
 mod claude_plan_dialog;
+mod codex_hooks_review;
 mod decoders;
+mod omp_input_rows;
+mod omp_tool_approval;
 mod prompt_state;
 mod question_rows;
 mod readers;

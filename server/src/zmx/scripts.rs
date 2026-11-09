@@ -26,6 +26,28 @@ pub(crate) struct ZmxRunCommandInput {
     pub(crate) session_name: String,
     pub(crate) startup_text: String,
     pub(crate) zmx_executable_path: String,
+    /// `GHOSTEX_COORDINATOR_ROLE` and `GHOSTEX_COORDINATOR_SESSION` for a coordinator's or a
+    /// thread's agent (coordinators/launch_env.rs); empty for every other session.
+    pub(crate) coordinator_environment: Vec<(&'static str, String)>,
+    /// The session's own `gxs_` token, exported as `GHOSTEX_SESSION_TOKEN` (crate::security).
+    pub(crate) session_token: Option<String>,
+}
+
+impl ZmxRunCommandInput {
+    /// The coordinator variables and the session token, exported after the identity reset.
+    pub(crate) fn launch_environment(&self) -> Vec<(&'static str, String)> {
+        let mut environment = self.coordinator_environment.clone();
+        environment.extend(session_token_environment(self.session_token.as_deref()));
+        environment
+    }
+}
+
+pub(crate) fn session_token_environment(token: Option<&str>) -> Vec<(&'static str, String)> {
+    token
+        .filter(|token| !token.is_empty())
+        .map(|token| (crate::security::SESSION_TOKEN_ENV, token.to_string()))
+        .into_iter()
+        .collect()
 }
 
 pub(crate) struct ZmxShellProviderCommandInput {
@@ -37,6 +59,8 @@ pub(crate) struct ZmxShellProviderCommandInput {
     pub(crate) prompt_editor: Option<String>,
     pub(crate) session_name: String,
     pub(crate) zmx_executable_path: String,
+    /// The terminal's own `gxs_` token, exported as `GHOSTEX_SESSION_TOKEN` (crate::security).
+    pub(crate) session_token: Option<String>,
 }
 
 #[cfg(not(windows))]
@@ -310,8 +334,10 @@ exec "$zmx_bin" send "$zmx_session"
 pub(crate) fn build_zmx_run_command(input: ZmxRunCommandInput) -> String {
     let startup_command =
         with_atuin_ignored_shell_history_prefix(input.startup_text.trim_end_matches(['\r', '\n']));
-    let prompt_editor_setup =
-        zmx_provider_session_setup_shell_command(input.prompt_editor.as_deref());
+    let prompt_editor_setup = zmx_provider_session_setup_shell_command(
+        input.prompt_editor.as_deref(),
+        &input.zmx_executable_path,
+    );
     let startup = format!("{}\n{}", prompt_editor_setup, startup_command);
     let login_shell = user_login_shell_path();
     let login_shell_name = std::path::Path::new(&login_shell)
@@ -326,7 +352,7 @@ pub(crate) fn build_zmx_run_command(input: ZmxRunCommandInput) -> String {
             &prompt_editor_setup,
             &startup,
         ),
-        _ => format!("{}\n{}", startup, user_login_shell_exec_command()),
+        _ => format!("{}\n{}", startup, login_shell_exec_command(&login_shell)),
     };
     format_zmx_provider_run_script(
         &input.session_name,
@@ -339,29 +365,31 @@ pub(crate) fn build_zmx_run_command(input: ZmxRunCommandInput) -> String {
         &provider_shell_command,
         "zmx_startup_command",
         &input.zmx_executable_path,
+        &input.launch_environment(),
     )
 }
 
 #[cfg(not(windows))]
 pub(crate) fn build_zmx_shell_provider_command(input: ZmxShellProviderCommandInput) -> String {
-    let setup = zmx_provider_session_setup_shell_command(input.prompt_editor.as_deref());
+    let setup = zmx_provider_session_setup_shell_command(
+        input.prompt_editor.as_deref(),
+        &input.zmx_executable_path,
+    );
     let login_shell = user_login_shell_path();
     let login_shell_name = std::path::Path::new(&login_shell)
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or_default();
-    // Plain zsh and fish terminals keep the `codex` wrapper first after the user's config, like agent sessions (codex_wrapper.rs).
+    // Plain terminals keep `<state>/session-bin` (the `zmx` entry and the `codex` wrapper) first after the user's config, like agent sessions (session_bin.rs).
     let provider_shell_command = match login_shell_name {
-        "zsh" if super::codex_wrapper::codex_wrapper_enabled() => {
+        "zsh" => {
             format!(
                 "{setup}\n{}",
                 super::zsh_startup::plain_shell_command(&login_shell)
             )
         }
-        "fish" if super::codex_wrapper::codex_wrapper_enabled() => {
-            super::fish_startup::plain_shell_command(&login_shell, &setup)
-        }
-        _ => format!("{setup}\n{}", user_login_shell_exec_command()),
+        "fish" => super::fish_startup::plain_shell_command(&login_shell, &setup),
+        _ => format!("{setup}\n{}", login_shell_exec_command(&login_shell)),
     };
     format_zmx_provider_run_script(
         &input.session_name,
@@ -374,8 +402,17 @@ pub(crate) fn build_zmx_shell_provider_command(input: ZmxShellProviderCommandInp
         &provider_shell_command,
         "zmx_shell_command",
         &input.zmx_executable_path,
+        &session_token_environment(input.session_token.as_deref()),
     )
 }
+
+/// The start script's `zmx run` arguments. On macOS the session's launchd job swaps them for
+/// `ZMX_FOREGROUND_RUN_ARGUMENTS` (launch.rs), so the two must stay one edit apart.
+#[cfg(not(windows))]
+pub(crate) const ZMX_DETACHED_RUN_ARGUMENTS: &str = r#"run "$zmx_session" -d --initial-command"#;
+#[cfg(target_os = "macos")]
+pub(crate) const ZMX_FOREGROUND_RUN_ARGUMENTS: &str =
+    r#"run "$zmx_session" --foreground --initial-command"#;
 
 #[allow(clippy::too_many_arguments)]
 #[cfg(not(windows))]
@@ -390,8 +427,14 @@ fn format_zmx_provider_run_script(
     provider_shell_command: &str,
     command_variable: &str,
     zmx_executable_path: &str,
+    extra_environment: &[(&'static str, String)],
 ) -> String {
     let shell = command_shell();
+    // After the identity reset below, which clears any inherited copy of them.
+    let extra_exports: String = extra_environment
+        .iter()
+        .map(|(key, value)| format!("export {key}={}\n", shell_quote(value)))
+        .collect();
     let startup_text_assignment = startup_text
         .map(|text| format!("zmx_startup_text={}\n", shell_quote(text)))
         .unwrap_or_default();
@@ -432,8 +475,8 @@ fi
 if [ -n "$zmx_gxserver_protocol_version" ]; then
   export GHOSTEX_GXSERVER_PROTOCOL_VERSION="$zmx_gxserver_protocol_version"
 fi
-cd "$zmx_cwd" || exit
-exec "$zmx_bin" run "$zmx_session" -d --initial-command {} {} "{}"
+{}cd "$zmx_cwd" || exit
+exec "$zmx_bin" {ZMX_DETACHED_RUN_ARGUMENTS} {} {} "{}"
 "#,
         shell_quote(session_name),
         shell_quote(cwd),
@@ -451,6 +494,7 @@ exec "$zmx_bin" run "$zmx_session" -d --initial-command {} {} "{}"
         shell_quote(zmx_executable_path),
         startup_text_guard,
         zmx_session_identity_reset_shell_command(),
+        extra_exports,
         &shell.executable,
         shell.command_flag(true),
         command_arg,
@@ -485,16 +529,28 @@ printf '%s\n' "$zmx_sessions" | grep -F -x -- "$zmx_session" >/dev/null 2>&1
     .to_string()
 }
 
-/// The setup every zmx provider's shell runs before the session's shell or agent: the prompt-editor wrapper, then the `codex` wrapper (`codex_wrapper.rs`).
+/// The setup every zmx provider's shell runs before the session's shell or agent: the prompt-editor wrapper, then `<state>/session-bin` first on PATH with the session's `zmx` entry and the `codex` wrapper (`session_bin.rs`).
 #[cfg(not(windows))]
-fn zmx_provider_session_setup_shell_command(prompt_editor: Option<&str>) -> String {
-    let prompt_editor_setup = zmx_provider_prompt_editor_setup_shell_command(prompt_editor);
-    let codex_wrapper_setup =
-        super::codex_wrapper::zmx_provider_codex_wrapper_setup_shell_command();
-    if codex_wrapper_setup.is_empty() {
-        prompt_editor_setup
-    } else {
-        format!("{prompt_editor_setup}\n{codex_wrapper_setup}")
+fn zmx_provider_session_setup_shell_command(
+    prompt_editor: Option<&str>,
+    zmx_executable_path: &str,
+) -> String {
+    format!(
+        "{}\n{}",
+        zmx_provider_prompt_editor_setup_shell_command(prompt_editor),
+        super::session_bin::zmx_provider_session_bin_setup_shell_command(zmx_executable_path),
+    )
+}
+
+/// The `exec` of the session's login shell once the setup and any agent have run. Bash gets the step that keeps `<state>/session-bin` first after .bash_profile (bash_startup.rs); zsh and fish get theirs from zsh_startup.rs and fish_startup.rs.
+#[cfg(not(windows))]
+fn login_shell_exec_command(login_shell: &str) -> String {
+    match std::path::Path::new(login_shell)
+        .file_name()
+        .and_then(|name| name.to_str())
+    {
+        Some("bash") => super::bash_startup::login_shell_exec_command(login_shell),
+        _ => user_login_shell_exec_command(),
     }
 }
 

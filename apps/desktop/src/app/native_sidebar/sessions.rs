@@ -32,6 +32,7 @@ impl GhostexGpuiApp {
     ) -> AnyElement {
         let view = cx.entity().clone();
         // CDXC:SessionSleep 2026-10-25 WHY: a flash stays in the map until another session completes, and its last opacity (1.0) is set after the Dim sleeping sessions fade, so a session that finished a turn and then slept stayed bright; only a running flash counts. The clock is read once, so a frame that draws the flash also asks for the next one, and the flash always ends on a frame drawn without it.
+        // CDXC:Sidebar 2026-11-09 WHY: the flash advances on the shared thirty-frames-per-second indicator clock (helpers/indicator_animation.rs) and notifies only the sidebar view that draws it. It asked for every display frame (120 a second on ProMotion) and notified the whole app for its 3 s, so with many agents finishing turns the window redrew at the display rate much of the time; measured in the GPUI web build with a flash running, 60 draws and 155 to 170ms of main thread a second became 30 draws and about 90ms.
         let completion = self
             .native_sidebar
             .completion_flashes
@@ -62,11 +63,12 @@ impl GhostexGpuiApp {
         // Every local row drags: a drop on an Agents pane splits it (session_pane_placement.rs),
         // and the reorder drop line still shows only when the sort mode allows a reorder.
         // Another machine's session in a merged project (`machineName`) has no place in this
-        // computer's groups to move to.
+        // computer's groups to move to, except a pinned one among the Pinned rows it is drawn with
+        // (CDXC:Sidebar 2026-11-07 WHY in gx-core sidebar_drag/pinned_order.rs).
         let can_drag = !session.is_browser()
             && !group.is_stale
             && group.remote_machine_context.is_none()
-            && session.details.get("machineName").is_none();
+            && (session.details.get("machineName").is_none() || session.is_pinned);
         let selected = session
             .details
             .get("isMultiSelected")
@@ -142,16 +144,42 @@ impl GhostexGpuiApp {
             Some(name) => format!("{tooltip}\nOn {}", name.trim()),
             None => tooltip,
         };
+        // A worktree session its parent project lists says which worktree (`worktree_badge`).
+        let tooltip = match session.details.get("worktree") {
+            Some(worktree) => {
+                let text = |key: &str| {
+                    worktree
+                        .get(key)
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .trim()
+                        .to_owned()
+                };
+                let (name, branch) = (text("name"), text("branch"));
+                match (name.is_empty(), branch.is_empty()) {
+                    (false, false) if name != branch => {
+                        format!("{tooltip}\nIn worktree {name} ({branch})")
+                    }
+                    (false, _) => format!("{tooltip}\nIn worktree {name}"),
+                    (true, false) => format!("{tooltip}\nIn worktree {branch}"),
+                    (true, true) => tooltip,
+                }
+            }
+            None => tooltip,
+        };
         // CDXC:Tooltips 2026-10-29 DECISION: User: "please let me disable the tooltip for sessions in the sidebar with a toggle (advanced setting)". `showSidebarSessionTooltips` (on unless saved off) gates only this title tooltip; this one row renderer draws every sidebar session row (project lists, a coordinator's thread rows, the peek), and the Running Agents panel has no session tooltip. Chip, badge, hover-button and project-row tooltips stay.
         let session_tooltips =
             hud["settings"]["showSidebarSessionTooltips"].as_bool() != Some(false);
-        let question = session
-            .details
-            .get("pendingQuestionCount")
-            .and_then(Value::as_u64)
-            .unwrap_or(0)
-            > 0;
-        let question_fill = super::status::pending_question_fill(&hud["settings"], question);
+        let question = session.details.get("hasQuestion").and_then(Value::as_bool) == Some(true);
+        let question_fill = super::status::pending_question_fill(
+            &hud["settings"],
+            session
+                .details
+                .get("pendingQuestionCount")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                > 0,
+        );
         let failed =
             session.model_selection_failed || session.program_status_failed || session.stuck;
         // The red approval dot wins over every other status (CDXC:SessionStatus 2026-10-27 in status.rs).
@@ -206,7 +234,7 @@ impl GhostexGpuiApp {
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
         .join(", ");
-        div().on_children_prepainted(move |bounds, window, cx| { if completion.is_some() { window.request_animation_frame(); cx.notify(view.entity_id()); }
+        div().on_children_prepainted(move |bounds, window, cx| { if completion.is_some() { crate::app::helpers::request_indicator_frame(crate::app::helpers::INDICATOR_FRAME_INTERVAL, window, cx); }
             if let Some(bounds) = bounds.first() { view.update(cx, |app, cx| { if app.native_sidebar.session_card_bounds.get(&reveal_id) != Some(bounds) { app.native_sidebar.session_card_bounds.insert(reveal_id.clone(), *bounds); } app.reveal_native_session_bounds(&reveal_id, *bounds, scale, window, cx) }); } }).w_full().pb(px(SESSION_SPACING * scale)).px(px(SESSION_INSET_X * scale))
             .child(div()
                 .id(format!("native-sidebar-session-{session_id}"))
@@ -240,6 +268,8 @@ impl GhostexGpuiApp {
                 // CDXC:Sidebar 2026-10-29 DECISION: User: "please swap the order of these 2 things (the threads one for orchestrator with the link tag)". The links badge comes before a coordinator's workers badge; the phone's SessionRow.tsx follows.
                 .when(!buttons_shown, |row| row.children(self.render_native_session_links_badge(session, appearance)))
                 .when(!buttons_shown, |row| row.children(super::threads::coordinator_badge(session, appearance)))
+                .when(!buttons_shown, |row| row.children(super::gbots_rows::opened_by_chief_tag(session, appearance)))
+                .when(!buttons_shown, |row| row.children(super::threads::worktree_badge(session, appearance)))
                 .when(!buttons_shown, |row| row.children(super::threads::computer_badge(session, appearance)))
                 .when(!buttons_shown, |row| row.children(self.render_voice_call_badge(&session.session_id, appearance)))
                 .when(!buttons_shown, |row| row.children(super::agentbox::agentbox_badge(session, appearance, tooltip_span, self.native_sidebar.pointer_inside && self.native_sidebar.menu.is_none() && !cx.has_active_drag())))
@@ -292,7 +322,9 @@ impl GhostexGpuiApp {
                 .on_mouse_down(MouseButton::Right, cx.listener(move |app, event: &gpui::MouseDownEvent, window, cx| {
                     cx.stop_propagation();
                     if !selected { app.dispatch_native_sidebar_ui(json!({"type": "selectSession", "mode": "clear", "sessionId": context_id}), cx); }
-                    Self::show_native_sidebar_context_menu(context_session.details.get("menu").unwrap_or(&Value::Null), app.native_sidebar.session_card_bounds.get(&context_id).copied(), event.position, scale, window, cx);
+                    // Chief of Staff's row starts its menu with its own items (chief.rs).
+                    let menu = app.native_sidebar_session_menu_with_chief(&context_session, context_session.details.get("menu").unwrap_or(&Value::Null));
+                    Self::show_native_sidebar_context_menu(&menu, app.native_sidebar.session_card_bounds.get(&context_id).copied(), event.position, scale, window, cx);
                 })))
             .into_any_element()
     }

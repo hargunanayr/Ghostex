@@ -2,6 +2,7 @@
 // titlebar's ⋯ menu or the Ghostex Help hotkey, and the flow that turns a picked
 // question into a Ghostex Help agent session.
 
+use futures::FutureExt as _;
 use gpui::FontWeight;
 use gpui::IntoElement;
 use gpui::ParentElement as _;
@@ -79,22 +80,22 @@ const GPUI_TITLEBAR_HELP_ASK_ANYTHING_LABEL: &str = "Ask anything about Ghostex"
 const GPUI_TITLEBAR_HELP_ASK_ANYTHING_ICON: &str = "titlebar/sparkles.svg";
 const GPUI_TITLEBAR_HELP_HEADER_SUMMARY: &str = "Explain Ghostex or change a setting for you.";
 
-/// The bundled skill every Help chat invokes in its first message; the skill
-/// itself is installed by `ghostex guide install-skill`.
-const GHOSTEX_HELP_SKILL_INVOCATION: &str = "$ghostex-help";
+/// The longest a picked Help row waits for the ghostex-help skill install before its chat opens
+/// (`run_gpui_titlebar_help_question`).
+const HELP_SKILL_INSTALL_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
 
-/// The draft staged in the new chat's composer for a Help menu row: the bare
-/// skill mention plus a trailing space for the open-ended row (the user types
-/// the question after it), otherwise the full sample question after the
-/// mention. Nothing is submitted; the user edits and presses Enter.
+/// The question a Help menu row asks: empty for the open-ended row (the user
+/// types their own), otherwise the full sample question. The store puts the
+/// ghostex-help skill mention in front of it, spelled for the Help chat's
+/// agent (`gx_store_create_ghostex_help_chat`), since only it knows the agent.
 pub(crate) fn gpui_titlebar_help_question_prompt(question_index: usize) -> Option<String> {
     if question_index == GPUI_TITLEBAR_HELP_ASK_ANYTHING_INDEX {
-        return Some(format!("{GHOSTEX_HELP_SKILL_INVOCATION} "));
+        return Some(String::new());
     }
     let question = GPUI_TITLEBAR_HELP_QUESTIONS
         .get(question_index - 1)?
         .question;
-    Some(format!("{GHOSTEX_HELP_SKILL_INVOCATION} {question}"))
+    Some(question.to_string())
 }
 
 pub(crate) fn titlebar_help_popup_content_height() -> f32 {
@@ -233,11 +234,21 @@ impl GhostexGpuiApp {
         );
     }
 
-    /// A picked Help row: make sure the bundled `ghostex-help` skill is
-    /// installed (a local folder copy, run off the UI thread), then ask the
-    /// Rust store (gx_store/create/os_integration.rs) to start an agent session in the Ghostex
-    /// config folder's project whose first message invokes the skill with the question. The store
-    /// owns the project lookup, the default prompt agent, and focusing the new session.
+    /// A picked Help row: refresh the bundled `ghostex-help` skill (a local folder copy through the
+    /// `ghostex` CLI, run off the UI thread) and ask the Rust store (gx_store/create/os_integration.rs)
+    /// to start an agent session in the Ghostex config folder's project whose draft invokes the skill
+    /// with the question. The store owns the project lookup, the default prompt agent, and focusing
+    /// the new session.
+    ///
+    /// CDXC:Onboarding 2026-11-07 WHY:
+    /// User: "clicking here takes ages to open a thread with /ghostex-help in it". The chat used to
+    /// open only once the `ghostex guide install-skill` child process had exited, and that wait was
+    /// bounded only by the install's two-minute limit, so a slow or stuck CLI held the click with
+    /// nothing on screen. The install now runs beside the open: the chat opens when the install is
+    /// done or after `HELP_SKILL_INSTALL_WAIT`, whichever comes first (measured on 2026-11-07: the
+    /// install takes 0.1 to 0.4 s, the create, focus and chat draft about 0.1 s more). The skill is
+    /// normally already installed from an earlier run, and an install still running when the agent
+    /// starts finishes in the background; a failure is still reported with its toast.
     pub(crate) fn run_gpui_titlebar_help_question(
         &mut self,
         question_index: usize,
@@ -246,26 +257,37 @@ impl GhostexGpuiApp {
         let Some(prompt) = gpui_titlebar_help_question_prompt(question_index) else {
             return;
         };
+        if self.ask_chief_help_question(&prompt, cx) {
+            return;
+        }
+        self.help_chat_timing_start(question_index);
         // Help chats live in one project rooted at the Ghostex config folder
         // (OS-specific, resolved by ghostex_paths), not in a fresh Quick
         // project per question.
         let project_dir = shared_settings::ghostex_storage_paths().config_dir.clone();
         let project_path = project_dir.to_string_lossy().to_string();
         let background = cx.background_executor().clone();
+        let mut install = background
+            .spawn(async move {
+                gpui_install_bundled_ghostex_skill(&["guide", "install-skill"], "Ghostex Help")
+            })
+            .fuse();
+        let mut wait = background.timer(HELP_SKILL_INSTALL_WAIT).fuse();
         cx.spawn(async move |this, cx| {
-            let install_result = background
-                .spawn(async move {
-                    gpui_install_bundled_ghostex_skill(&["guide", "install-skill"], "Ghostex Help")
-                })
-                .await;
+            let finished = futures::select! {
+                result = install => Some(result),
+                _ = wait => None,
+            };
             let _ = this.update(cx, |this, cx| {
-                if let Err(message) = install_result {
-                    this.dispatch_gpui_app_modal_toast(
-                        "warning",
-                        "Ghostex Help skill not installed",
-                        message.as_str(),
-                        cx,
-                    );
+                this.help_chat_timing_step(
+                    match &finished {
+                        Some(_) => "skillInstallDone",
+                        None => "skillInstallWaitEnded",
+                    },
+                    serde_json::json!({ "installed": matches!(finished, Some(Ok(_))) }),
+                );
+                if let Some(Err(message)) = &finished {
+                    this.report_help_skill_install_failure(message, cx);
                 }
                 let dispatched = this.dispatch_gpui_os_integration_command_message(
                     serde_json::json!({
@@ -284,7 +306,69 @@ impl GhostexGpuiApp {
                     );
                 }
             });
+            // The open did not wait for a slow install; its failure still gets its toast.
+            if finished.is_none() {
+                let result = install.await;
+                let _ = this.update(cx, |this, cx| {
+                    this.help_chat_timing_step(
+                        "skillInstallDoneLate",
+                        serde_json::json!({ "installed": result.is_ok() }),
+                    );
+                    if let Err(message) = &result {
+                        this.report_help_skill_install_failure(message, cx);
+                    }
+                });
+            }
         })
         .detach();
+    }
+
+    /// CDXC:Chief 2026-11-08 DECISION:
+    /// User (Q1739): "Ask anything" goes to the head coordinator. While Chief is on and has been opened, a Help row opens Chief's chat instead of a new Help chat, with the sample question staged as an editable draft (the 2026-09-09 rule that a Help row never sends still holds); "Ask anything" opens it with nothing staged. Chief answers from the ghostex-help guide (its playbook says so). With Chief off, or before its first open, the Help chat below is unchanged.
+    /// Returns whether Chief took the question.
+    fn ask_chief_help_question(&mut self, question: &str, cx: &mut gpui::Context<Self>) -> bool {
+        if !crate::app::native_sidebar::chief::chief_on() {
+            return false;
+        }
+        let Some(chief) = self
+            .native_sidebar
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.chiefs.iter().find(|chief| chief.is_local).cloned())
+        else {
+            return false;
+        };
+        let staged = (!question.trim().is_empty()).then(|| {
+            serde_json::json!({
+                "projectId": chief.project_id,
+                "sessionId": chief.session_id,
+                "content": question,
+                "clientId": "ghostex-help-menu",
+            })
+        });
+        let sidebar_session_id = chief.sidebar_session_id.clone();
+        cx.spawn(async move |this, cx| {
+            if let Some(params) = staged {
+                let _ = crate::app::gx_store::gx_rpc(None, "/api/setSessionChatDraft", params).await;
+            }
+            let _ = this.update(cx, |this, cx| {
+                this.dispatch_native_sidebar_ui(
+                    serde_json::json!({ "type": "selectSession", "sessionId": sidebar_session_id, "mode": "focus" }),
+                    cx,
+                );
+                let _ = this.react_to_native_sidebar_session_click(&sidebar_session_id, cx);
+            });
+        })
+        .detach();
+        true
+    }
+
+    fn report_help_skill_install_failure(&mut self, message: &str, cx: &mut gpui::Context<Self>) {
+        self.dispatch_gpui_app_modal_toast(
+            "warning",
+            "Ghostex Help skill not installed",
+            message,
+            cx,
+        );
     }
 }

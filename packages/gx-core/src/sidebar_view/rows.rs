@@ -39,6 +39,7 @@ pub(crate) struct RowContext<'a> {
 #[derive(Clone, Copy, Default)]
 pub(crate) struct SideChatNeeds {
     pub(crate) questions: u64,
+    pub(crate) awaiting_answer: bool,
     pub(crate) approval: bool,
 }
 
@@ -56,13 +57,14 @@ pub(crate) fn side_chat_needs(
         let Some(parent) = session.side_chat_parent_session_id.as_ref() else {
             continue;
         };
-        if session.pending_question_count == 0 && !session.awaiting_approval {
+        if !session.has_question() && !session.awaiting_approval {
             continue;
         }
         let entry = needs
             .entry((session.project_id.clone(), parent.clone()))
             .or_default();
         entry.questions += session.pending_question_count;
+        entry.awaiting_answer |= session.awaiting_answer;
         entry.approval |= session.awaiting_approval;
     }
     needs
@@ -211,6 +213,7 @@ pub(crate) fn session_row(
         detail: session.subtitle.as_deref(),
         session_note: session_note.as_deref(),
         pending_question_count: session.pending_question_count + side_chats.questions,
+        awaiting_answer: session.awaiting_answer || side_chats.awaiting_answer,
         awaiting_approval: session.awaiting_approval || side_chats.approval,
         activity: session.activity.as_str(),
         delayed_send_remaining_label: delayed
@@ -240,11 +243,21 @@ pub(crate) fn session_row(
         context.debugging_mode,
         context.always_show_state_tooltip,
     );
-    // The red dot says something went wrong; hovering the row says what.
+    // The red dot says something went wrong; hovering the row says what. A blocked session
+    // (out of usage on every account, an error recovery could not get past) is one of them
+    // (CDXC:Notifications 2026-11-08 in alert_rule.rs).
     let failure = session
         .model_selection_failure
         .as_deref()
-        .or(session.send_failure.as_deref());
+        .or(session.send_failure.as_deref())
+        .or(session
+            .blocked_since
+            .as_ref()
+            .and(session.blocked_reason.as_deref())
+            .or(session
+                .blocked_since
+                .as_ref()
+                .map(|_| "Blocked: it needs you to carry on.")));
     let tooltip = match failure {
         Some(reason) if tooltip.is_empty() => reason.to_string(),
         Some(reason) => format!("{reason}\n\n{tooltip}"),
@@ -322,12 +335,18 @@ pub(crate) fn session_row(
         model_selection_failed: failure.is_some(),
         program_status_failed,
         pending_question_count: session.pending_question_count + side_chats.questions,
+        awaiting_answer: session.awaiting_answer || side_chats.awaiting_answer,
         awaiting_approval: session.awaiting_approval || side_chats.approval,
         stuck,
         agent_icon: agent_icon.map(str::to_string),
         session_kind: Some(session_kind),
         lifecycle_state: lifecycle_state.to_string(),
-        is_pinned: session.is_pinned,
+        is_pinned: session.is_pinned || session.is_chief,
+        is_chief: session.is_chief,
+        opened_by_chief: session
+            .gbots_chat
+            .as_ref()
+            .is_some_and(|chat| chat.opened_by == "chief"),
         sidebar_order: session
             .sidebar_order
             .filter(|order| order.is_finite())
@@ -401,6 +420,7 @@ pub(crate) fn session_row(
         computer_name: None,
         machine_name: None,
         machine_short_name: None,
+        worktree: None,
         agentbox: session
             .agentbox
             .as_ref()

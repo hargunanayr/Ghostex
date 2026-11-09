@@ -287,7 +287,27 @@ fn request_gxserver_body(
     body: &Value,
     flags: &Flags,
 ) -> CliResult<Value> {
-    let body = request_gxserver_envelope(target, pathname, body, flags)?;
+    let body = match request_gxserver_envelope(target, pathname, body, flags) {
+        Err(CliError::Rpc { message, response })
+            if response.get("error").and_then(Value::as_str)
+                == Some(ghostex_gx_protocol::approval::APPROVAL_REQUIRED_ERROR)
+                && !flags.truthy("no-wait") =>
+        {
+            let approval_id = wait_for_approval(target, &message, &response, flags)?;
+            let mut retry = body.clone();
+            match retry.get_mut("params").and_then(Value::as_object_mut) {
+                Some(params) => {
+                    params.insert(
+                        ghostex_gx_protocol::approval::APPROVAL_ID_PARAM.to_string(),
+                        Value::String(approval_id),
+                    );
+                }
+                None => return Err(CliError::Rpc { message, response }),
+            }
+            request_gxserver_envelope(target, pathname, &retry, flags)?
+        }
+        other => other?,
+    };
     let mut merged = Map::new();
     merged.insert("ok".to_string(), Value::Bool(true));
     if let Some(result) = body.get("result").and_then(Value::as_object) {
@@ -300,6 +320,66 @@ fn request_gxserver_body(
         body.get("requestId").cloned().unwrap_or(Value::Null),
     );
     Ok(Value::Object(merged))
+}
+
+/*
+CDXC:Security 2026-11-08 WHY:
+An agent or the user's own terminal can only ask for a sensitive action (GitHub #495): gxserver answers `approvalRequired` and shows the request on the computer and phone. The CLI says so on stderr, waits for the answer (`--no-wait` returns at once), and repeats the same call with the approval id, which gxserver spends only on that exact change.
+*/
+fn wait_for_approval(
+    target: &Target,
+    message: &str,
+    response: &Value,
+    flags: &Flags,
+) -> CliResult<String> {
+    let id = response
+        .pointer("/approval/id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| CliError::Other(message.to_string()))?
+        .to_string();
+    let expires_at_ms = response
+        .pointer("/approval/expiresAtMs")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let summary = response
+        .pointer("/approval/summary")
+        .and_then(Value::as_str)
+        .unwrap_or("this change");
+    eprintln!(
+        "Waiting for your approval on your computer or phone: {summary}. (Ghostex shows it there; Ctrl+C to stop waiting.)"
+    );
+    loop {
+        std::thread::sleep(Duration::from_secs(2));
+        let read = request_gxserver_envelope(
+            target,
+            crate::security::APPROVALS_READ_ENDPOINT,
+            &json!({ "params": { "id": id }, "protocolVersion": GXSERVER_PROTOCOL_VERSION }),
+            flags,
+        )?;
+        let status = read
+            .pointer("/result/request/status")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        match status {
+            "approved" => return Ok(id),
+            "denied" => return Err(CliError::Other(format!("You denied this: {summary}."))),
+            "expired" | "consumed" => {
+                return Err(CliError::Other(format!(
+                    "Nobody approved this in time: {summary}. Run the command again to ask again."
+                )))
+            }
+            _ => {}
+        }
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_millis() as u64)
+            .unwrap_or(0);
+        if expires_at_ms > 0 && now_ms > expires_at_ms + 5_000 {
+            return Err(CliError::Other(format!(
+                "Nobody approved this in time: {summary}. Run the command again to ask again."
+            )));
+        }
+    }
 }
 
 /// CDXC:Coordinators 2026-11-05 DECISION:
@@ -325,7 +405,17 @@ fn with_agent_caller(pathname: &str, body: &Value) -> Option<Value> {
     if pathname != "/api/answerSessionChatPrompt" {
         return None;
     }
-    let caller = [
+    let caller = caller_session_from_env()?;
+    let mut body = body.clone();
+    body.get_mut("params")?
+        .as_object_mut()?
+        .insert("agentCaller".to_string(), Value::String(caller));
+    Some(body)
+}
+
+/// The session this CLI runs in, from the variables Ghostex sets in every session.
+fn caller_session_from_env() -> Option<String> {
+    [
         "GHOSTEX_GLOBAL_SESSION_REF",
         "GHOSTEX_NATIVE_SESSION_ID",
         "GHOSTEX_SESSION_ID",
@@ -337,12 +427,7 @@ fn with_agent_caller(pathname: &str, body: &Value) -> Option<Value> {
             .ok()
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
-    })?;
-    let mut body = body.clone();
-    body.get_mut("params")?
-        .as_object_mut()?
-        .insert("agentCaller".to_string(), Value::String(caller));
-    Some(body)
+    })
 }
 
 /// The gxserver response envelope (`{ok, result, requestId, ...}`) exactly as the daemon sent it,
@@ -365,6 +450,8 @@ pub fn request_gxserver_envelope(
         .or_else(|| flags.number("timeoutMs"))
         .unwrap_or(15_000.0);
     let body_text = body.to_string();
+    // The security log names the session a sensitive request came from (server/src/audit/caller.rs).
+    let caller_session = caller_session_from_env();
     // The token goes only to a listener of this account (ghostex_paths::loopback_owner).
     ghostex_paths::loopback_owner::check_url(&target.base_url)
         .map_err(|error| CliError::Other(error.to_string()))?;
@@ -372,14 +459,18 @@ pub fn request_gxserver_envelope(
     let outcome = crate::http_client::wait_out_server_starting(
         Instant::now() + Duration::from_millis(timeout_ms.max(0.0) as u64),
         |remaining| {
-            crate::http_agent::answering_agent()
+            let mut request = crate::http_agent::answering_agent()
                 .post(format!("{}{}", target.base_url, pathname))
                 .header("authorization", format!("Bearer {}", target.token))
                 .header("content-type", "application/json")
                 .header(
                     GXSERVER_PROTOCOL_HEADER,
                     GXSERVER_PROTOCOL_VERSION.to_string(),
-                )
+                );
+            if let Some(session) = &caller_session {
+                request = request.header(crate::audit::CALLER_SESSION_HEADER, session.as_str());
+            }
+            request
                 .config()
                 .timeout_global(Some(remaining.max(Duration::from_millis(1))))
                 .build()
@@ -735,7 +826,18 @@ pub fn resolve_local_gxserver_target() -> CliResult<Target> {
     })
 }
 
+/*
+CDXC:Security 2026-11-08 WHY:
+Inside a Ghostex session the CLI speaks as that session, with the `gxs_` token gxserver gave it at start (`GHOSTEX_SESSION_TOKEN`, crate::security), so gxserver knows which session asked, a coordinator manages only its own threads, and the token dies with the session. Outside a session it falls back to the token file, which now carries agent-level powers only (plus thread management, user decision 3A of #495).
+*/
 pub fn read_local_gxserver_auth_token() -> CliResult<String> {
+    if let Some(token) = std::env::var(crate::security::SESSION_TOKEN_ENV)
+        .ok()
+        .map(|token| token.trim().to_string())
+        .filter(|token| token.starts_with(crate::security::SESSION_TOKEN_PREFIX))
+    {
+        return Ok(token);
+    }
     let token = std::fs::read_to_string(gxserver_auth_token_path())
         .unwrap_or_default()
         .trim()

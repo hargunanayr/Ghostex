@@ -90,6 +90,10 @@ pub struct PresentationCapabilities {
     /// right now (not written yet, or already dismissed, cleared or pruned).
     #[serde(default, deserialize_with = "crate::de::null_as_default")]
     pub attention_notification_id: bool,
+    /// The daemon publishes `awaitingAnswer` on its sessions, so a missing one means no question
+    /// card; without the flag a client cannot tell.
+    #[serde(default, deserialize_with = "crate::de::null_as_default")]
+    pub awaiting_answer: bool,
 }
 
 /// One synthetic group per project today (`<projectId>:active`). User-made groups live in
@@ -130,6 +134,56 @@ open_string_enum! {
     }
 }
 
+/// A GBot's look and place on its project row (`gbotsBot`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PresentationGbotsBot {
+    #[serde(default, deserialize_with = "crate::de::null_as_default")]
+    pub id: String,
+    #[serde(default, deserialize_with = "crate::de::null_as_default")]
+    pub name: String,
+    /// Its role ("Researcher"); may be empty.
+    #[serde(default, deserialize_with = "crate::de::null_as_default")]
+    pub title: String,
+    /// A Ghostex icon name (apps/desktop/assets/titlebar/<icon>.svg).
+    #[serde(default, deserialize_with = "crate::de::null_as_default")]
+    pub icon: String,
+    /// One of the eight GBot colours by id, and its `#rrggbb`.
+    #[serde(default, deserialize_with = "crate::de::null_as_default")]
+    pub color: String,
+    #[serde(default, deserialize_with = "crate::de::null_as_default")]
+    pub color_hex: String,
+    /// The launcher its chats run on.
+    #[serde(default, deserialize_with = "crate::de::null_as_default")]
+    pub agent_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub department_id: Option<String>,
+    /// Its department's name, icon and place among the departments, so clients draw Main Hub's
+    /// department sub-headings from the bots alone; absent with no department.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub department_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub department_icon: Option<String>,
+    #[serde(default)]
+    pub department_order: i64,
+    /// It leads its department (drawn with a small crown).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub is_lead: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub paused: bool,
+}
+
+/// Who opened a GBot chat (`gbotsChat` on its session row).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PresentationGbotsChat {
+    #[serde(default, deserialize_with = "crate::de::null_as_default")]
+    pub bot_id: String,
+    /// `user`, `chief`, or later `bot:<id>`, `routine:<id>`, `room:<id>`, `api:<id>`.
+    #[serde(default, deserialize_with = "crate::de::null_as_default")]
+    pub opened_by: String,
+}
+
 /// Sanitized git preferences published on the presentation project.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -146,6 +200,10 @@ pub struct PresentationGitConfig {
 #[serde(rename_all = "camelCase")]
 pub struct PresentationProject {
     pub project_id: String,
+    /// The project at the computer's home folder, whose header is Main Hub's row
+    /// (server/src/chief/home.rs). Absent for every other project and from an older daemon.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub is_home: bool,
     #[serde(default, deserialize_with = "crate::de::null_as_default")]
     pub title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -190,6 +248,15 @@ pub struct PresentationProject {
     /// project and from an older daemon.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bot_runs_today: Option<u64>,
+    /// The GBot whose folder this project is (server/src/gbots/presentation.rs); absent for every
+    /// other project, while GBots are off, and from an older daemon. Clients place such a project
+    /// under Chief of Staff in Main Hub, never in the projects list or the Bots space.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gbots_bot: Option<PresentationGbotsBot>,
+    /// The project is a GBot's folder, published whether GBots are on or off: clients never list
+    /// it as a project (with GBots off nothing of the bot shows).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub gbots_project: bool,
     /// Issues Workflow (formerly Work mode) is on for this project: a Linear key applies to it, `gh`
     /// is signed in, or its workspace has a ticket command (server/src/work_mode/project.rs).
     /// Present only when true.
@@ -199,6 +266,10 @@ pub struct PresentationProject {
         skip_serializing_if = "is_false"
     )]
     pub work_mode: bool,
+    /// Whether Autopilot covers this project and its worktrees (server/src/autopilot/mod.rs): sent
+    /// only while Autopilot is on and goes by project, for the menu's Advanced > Autopilot row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub autopilot: Option<bool>,
     /// Issues Workflow is on and a Linear key applies to this project, so it shows its Linear parts
     /// (Create Linear Ticket, Link to Linear). Present only when true.
     #[serde(
@@ -464,6 +535,21 @@ pub struct AttentionState {
     /// (`PresentationCapabilities::attention_notification_id`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notification_id: Option<String>,
+    /// A finished turn whose handover has a 🛑 Blocked or ❓ Needs you section, so it waits on the
+    /// user although `kind` says `finished`. Present only when true; absent on an older daemon.
+    #[serde(
+        default,
+        deserialize_with = "crate::de::null_as_default",
+        skip_serializing_if = "is_false"
+    )]
+    pub handover_needs_you: bool,
+    /// gxserver's verdict on whether this attention plays a sound and shows a system notification
+    /// or phone push (gx-core `alert_rule::should_alert`, with Alert me for at All): false for a
+    /// coordinator's thread finishing, a coordinator finishing with nothing for the user, or an
+    /// approval Autopilot answers. Clients apply their own Alert me for on top. Absent on an older
+    /// daemon, where a client decides from the row itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alerts: Option<bool>,
 }
 
 /// Health of the zmx title watcher.
@@ -937,6 +1023,27 @@ pub struct PresentationSession {
     /// not-moving dot and play the not-moving sound when it appears.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stuck_since: Option<String>,
+    /// Who is healing a stuck session, so its red dot does not alert yet: `autopilot` while
+    /// Autopilot covers it and has not left it for the user. Absent otherwise and on older daemons.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stuck_handled_by: Option<String>,
+    /// Since when the session is blocked on something Ghostex could not get past itself: every
+    /// account out of usage, or an API, login or overload error its recovery could not retry past.
+    /// Clients draw the red dot with `blocked_reason` and alert when it appears. Absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocked_since: Option<String>,
+    /// Why the session is blocked, in a few plain words; present with `blocked_since`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocked_reason: Option<String>,
+    /// A running session holds a question card (an ask-user tool call) only the user can answer,
+    /// also while its agent reads as working. Absent (false) otherwise and on daemons without
+    /// [`PresentationCapabilities::awaiting_answer`]. Independent of `pending_question_count`.
+    #[serde(
+        default,
+        deserialize_with = "crate::de::null_as_default",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    pub awaiting_answer: bool,
     #[serde(default, deserialize_with = "crate::de::null_as_default")]
     pub actions: SessionActions,
     /// Falls back to `createdAt` on the server, so it cannot say whether the session was ever
@@ -1045,6 +1152,14 @@ pub struct PresentationSession {
     pub fork_branch_count: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fork_family_session_ids: Option<Vec<String>>,
+    /// This computer's Chief of Staff (server/src/chief/): a row of its project, pinned first
+    /// (gx-core `SessionRow::is_chief`).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub is_chief: bool,
+    /// A chat of a GBot (server/src/gbots/presentation.rs): its bot and who opened it; absent
+    /// for every other session and while GBots are off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gbots_chat: Option<PresentationGbotsChat>,
     /// `coordinator` for a coordinator session, `thread` for a session a coordinator started;
     /// absent otherwise. A coordinator that is also another coordinator's thread says
     /// `coordinator` and still carries the thread fields below.
@@ -1168,7 +1283,19 @@ pub struct PresentationSession {
     pub close_after_done_deadline_at: Option<String>,
 }
 
+/// Whether the session waits on an unanswered question, without changing the async question count.
+///
+/// CDXC:SessionStatus 2026-11-03 WHY:
+/// An open question card counts as a question on the desktop for every agent, just as on the phone: the question dot, status, ordering and inactivity sleep guards use it too. This supersedes leaving the desktop dot and automatic sleep unchanged when `awaitingAnswer` was added.
+pub fn session_has_question(pending_question_count: u64, awaiting_answer: bool) -> bool {
+    pending_question_count > 0 || awaiting_answer
+}
+
 impl PresentationSession {
+    pub fn has_question(&self) -> bool {
+        session_has_question(self.pending_question_count, self.awaiting_answer)
+    }
+
     /// Whether the session is a row of the session lists: a workspace session the daemon shows by
     /// default, and not a side chat (those are reached from their main chat's Side chats pill).
     pub fn listed_in_sidebar(&self) -> bool {
@@ -1267,6 +1394,28 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&attention).expect("serialize"),
             full_attention()
+        );
+    }
+
+    #[test]
+    fn handover_needs_you_is_read_and_left_out_when_false() {
+        let mut attention = full_attention();
+        attention["handoverNeedsYou"] = json!(true);
+        let session: PresentationSession =
+            serde_json::from_value(session_with_attention(attention.clone()))
+                .expect("attention parses");
+        let parsed = session.attention.expect("attention");
+        assert!(parsed.handover_needs_you);
+        assert_eq!(serde_json::to_value(&parsed).expect("serialize"), attention);
+        let older: PresentationSession =
+            serde_json::from_value(session_with_attention(full_attention()))
+                .expect("an older daemon's attention parses");
+        let older = older.attention.expect("attention");
+        assert!(!older.handover_needs_you);
+        assert_eq!(
+            serde_json::to_value(&older).expect("serialize"),
+            full_attention(),
+            "false is left out"
         );
     }
 

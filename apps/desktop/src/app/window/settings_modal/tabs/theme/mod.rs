@@ -11,6 +11,7 @@ mod controls;
 mod font;
 mod gallery;
 mod interface_scale;
+pub(crate) mod presets;
 mod swatches;
 pub(super) mod transparency;
 
@@ -18,8 +19,9 @@ use super::super::super::native_modal_kit::*;
 use super::super::catalog::{SettingOption, module, settings_catalog};
 use super::super::fields::{
     ButtonVariant, DropdownState, FieldStates, RowSpec, SettingsPage, SliderSaver,
-    open_tint_picker, reset_key, searchable_select_field, select_field, setting_row,
-    settings_button, settings_section, toggle_field, toggle_field_with, trigger_tint_picker,
+    advanced_fold_header, open_tint_picker, reset_key, searchable_select_field, select_field,
+    setting_row, settings_button, settings_section, toggle_field, toggle_field_with,
+    trigger_tint_picker,
 };
 use super::super::model::SettingsTabId;
 use super::super::page::{PageBlock, settings_page};
@@ -27,9 +29,9 @@ use super::super::palette::SettingsPalette;
 use super::super::rail::{rail_pages, render_no_matches};
 use super::super::store::{SettingsStore, SettingsStoreEvent, SettingsValues};
 use colours::{
-    COLOURFULNESS_LAST_POSITION, colourfulness_display_step, colourfulness_patch,
-    colourfulness_points, colourfulness_step_index, js_number, paired_preset, preset_label,
-    preset_options, preview_colours, swatch_paint,
+    COLOURFULNESS_LAST_POSITION, area_colourfulness_patch, colourfulness_display_step,
+    colourfulness_patch, colourfulness_points, colourfulness_step_index, paired_preset,
+    preset_label, preset_options, preview_colours, preview_scheme_dark, swatch_paint,
 };
 use controls::{
     ICON_APPEARANCE, ICON_CHAT, ICON_COLOURFULNESS, ICON_DARK, ICON_FONT, ICON_LIGHT, ICON_SIDEBAR,
@@ -38,7 +40,7 @@ use controls::{
 };
 use gpui::{
     AnyElement, AnyView, App, AppContext as _, Context, Entity, IntoElement, ParentElement as _,
-    Render, RenderImage, SharedString, Styled as _, Window, WindowAppearance, div, px,
+    Render, RenderImage, SharedString, Styled as _, Window, WindowAppearance, canvas, div, px,
 };
 use gpui_component::h_flex;
 use serde_json::{Map, Value, json};
@@ -108,11 +110,22 @@ pub(crate) fn theme_tab_view(
     cx.new(|cx| ThemeTab::new(store.clone(), window, cx)).into()
 }
 
+/// CDXC:Settings 2026-11-08 WHY:
+/// At a narrow Settings window (640 base) the Colours rows broke: a row keeps its control on the
+/// right at up to 60% of the width without shrinking it, and the sixteen squares (436pt) or the
+/// Colourfulness slider (about 400pt) did not fit beside the label and its readout, so "Light mode
+/// colour" wrapped one letter per line and the squares overlapped it. Below these card widths the
+/// row puts its control under the label (the Appearance row's layout); the squares also wrap if
+/// even that is too narrow. The widths are the label, readout, icon tile, padding and control at
+/// their longest ("Midnight · follows dark mode").
+const COLOUR_ROW_SIDE_BY_SIDE: f32 = 880.0;
+const COLOURFULNESS_ROW_SIDE_BY_SIDE: f32 = 640.0;
+
 pub(crate) struct ThemeTab {
     pub(super) store: Entity<SettingsStore>,
     fields: FieldStates,
-    /// Which appearance the Colourfulness preview shows (the window's own, or light for the
-    /// preview binary's `theme-light-scheme`).
+    /// Which appearance the Colourfulness preview shows while Appearance is System (the window's
+    /// own, or light for the preview binary's `theme-light-scheme`).
     pub(super) scheme_dark: bool,
     /// `pickedOnPurpose`: a colour was picked in that appearance, so the other stops following it.
     picked_dark: bool,
@@ -132,6 +145,11 @@ pub(crate) struct ThemeTab {
     pending_font: Option<String>,
     monospace_font_dropdown: DropdownState,
     pending_monospace_font: Option<String>,
+    /// The Presets row's sideways scroll (presets.rs).
+    presets_row: presets::PresetsRow,
+    /// The Colours card's width at the last paint, so rows too narrow for their label and control
+    /// side by side put the control under the label (`stacks`).
+    row_width: Rc<Cell<f32>>,
 }
 
 fn palette_dark_dropdown(page: &mut ThemeTab) -> &mut DropdownState {
@@ -168,16 +186,12 @@ impl ThemeTab {
         )
         .detach();
         let values = store.read(cx).values();
-        // `initialThemeScheme`: Light when the window is light, otherwise Dark.
-        let theme = values.string("sidebarTheme");
-        let scheme_dark = if theme == "system" {
-            !matches!(
-                window.appearance(),
-                WindowAppearance::Light | WindowAppearance::VibrantLight
-            )
-        } else {
-            theme.starts_with("dark")
-        };
+        // `initialThemeScheme`: what System shows, the window's own appearance; a set Appearance
+        // wins over it while rendering (`preview_scheme_dark`).
+        let scheme_dark = !matches!(
+            window.appearance(),
+            WindowAppearance::Light | WindowAppearance::VibrantLight
+        );
         let sidebar = values.f64("themeSidebarContrast");
         let split_areas = sidebar != values.f64("themeWorkAreaContrast")
             || colours::colourfulness_step_for_points(sidebar).is_none();
@@ -200,6 +214,8 @@ impl ThemeTab {
             pending_font: None,
             monospace_font_dropdown: DropdownState::default(),
             pending_monospace_font: None,
+            presets_row: presets::PresetsRow::default(),
+            row_width: Rc::new(Cell::new(f32::INFINITY)),
         };
         page.apply_preview_state(window, cx);
         page
@@ -397,7 +413,6 @@ impl ThemeTab {
             || dark_colour_visible
             || light_colour_visible
             || visible("themeSidebarContrast")
-            || visible("workAreaFrame")
             || more_has_hit(MoreGroup::Colours, t.searching, &visible);
         if !colours_visible {
             return None;
@@ -455,7 +470,10 @@ impl ThemeTab {
                 })
                 .child(colourfulness_preview(
                     &p,
-                    preview_colours(values, self.scheme_dark),
+                    preview_colours(
+                        values,
+                        preview_scheme_dark(&values.string("sidebarTheme"), self.scheme_dark),
+                    ),
                 ))
                 .into_any_element();
             rows.push(setting_row(
@@ -464,25 +482,12 @@ impl ThemeTab {
                 t.spec_plain(
                     "themeSidebarContrast",
                     "Colourfulness",
-                    "How much of the colour shows in the sidebar and work area. Subtle is deeper and nearly neutral, Vivid lighter and more colourful, and in dark mode Full is the colour you picked itself.",
+                    "How much of the colour shows in the sidebar and work area. Subtle is deeper and nearly neutral, Vivid lighter and more colourful, and Full is the colour you picked itself.",
                 )
-                .icon(ICON_COLOURFULNESS),
+                .icon(ICON_COLOURFULNESS)
+                .stacked(self.stacks(COLOURFULNESS_ROW_SIDE_BY_SIDE)),
                 Some(reset_key::<Self>("themeSidebarContrast")),
                 control,
-                cx,
-            ));
-        }
-        if cfg!(target_os = "macos") && visible("workAreaFrame") {
-            rows.push(toggle_field(
-                self,
-                &p,
-                "workAreaFrame",
-                t.spec_plain(
-                    "workAreaFrame",
-                    "Frame the work area",
-                    "Show the work area as a card inside the window, with a thin margin all around, a hairline border and a light shadow. Off keeps the work area edge to edge.",
-                ),
-                values.bool("workAreaFrame"),
                 cx,
             ));
         }
@@ -510,6 +515,49 @@ impl ThemeTab {
             rows,
         )
         .map(IntoElement::into_any_element)
+    }
+
+    /// The window frame rows of the Advanced fold: Frame the work area, and under it the window
+    /// buttons the sidebar's collapse keeps. macOS only; None elsewhere or when a search hides both.
+    ///
+    /// CDXC:Settings 2026-11-08 DECISION:
+    /// User: "please also move this whole setting under a new advanced area in the interface page in settings". Both rows moved out of Colours into the page's collapsed Advanced fold (`ADVANCED_MAIN_SETTING_KEYS`), as About does with Experimental: a search shows the matching rows in this section in place and the fold stays out.
+    fn window_frame_section(&mut self, t: &ThemeCx, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !cfg!(target_os = "macos") {
+            return None;
+        }
+        let p = t.p;
+        let values = &t.values;
+        let mut rows: Vec<AnyElement> = Vec::new();
+        if t.visible("workAreaFrame") {
+            rows.push(toggle_field(
+                self,
+                &p,
+                "workAreaFrame",
+                t.spec_plain(
+                    "workAreaFrame",
+                    "Frame the work area",
+                    "Show the work area as a card inside the window, with a thin margin all around, a hairline border and a light shadow. Off keeps the work area edge to edge.",
+                ),
+                values.bool("workAreaFrame"),
+                cx,
+            ));
+        }
+        if t.visible("showWindowButtonsWhenSidebarCollapsed") {
+            rows.push(toggle_field(
+                self,
+                &p,
+                "showWindowButtonsWhenSidebarCollapsed",
+                t.spec_plain(
+                    "showWindowButtonsWhenSidebarCollapsed",
+                    "Show the window buttons when the sidebar is collapsed",
+                    "Keep the red, yellow and green window buttons in the window's top left while the sidebar is collapsed. Off hides them until you open the floating sidebar, which carries them in its top row. Full screen keeps its own title bar either way.",
+                ),
+                values.bool("showWindowButtonsWhenSidebarCollapsed"),
+                cx,
+            ));
+        }
+        settings_section(&p, "Window frame", None, None, rows).map(IntoElement::into_any_element)
     }
 
     /// Appearance: System, Light and Dark as three preview cards, each a small window in that
@@ -650,11 +698,13 @@ impl ThemeTab {
             name
         };
         let control = h_flex()
+            .flex_wrap()
             .gap(px(SWATCH_GAP))
             .items_center()
             .children(squares)
             .into_any_element();
-        setting_row(
+        let stacked = self.stacks(COLOUR_ROW_SIDE_BY_SIDE);
+        let row = setting_row(
             &p,
             if dark {
                 "themeColourDark"
@@ -675,11 +725,42 @@ impl ThemeTab {
                 },
             )
             .readout(readout)
-            .icon(if dark { ICON_DARK } else { ICON_LIGHT }),
+            .icon(if dark { ICON_DARK } else { ICON_LIGHT })
+            .stacked(stacked),
             Some(reset_key::<Self>(key)),
             control,
             cx,
-        )
+        );
+        if dark { self.measure_row(row, cx) } else { row }
+    }
+
+    /// Whether a row needing `side_by_side` points for its label and control together stacks them.
+    fn stacks(&self, side_by_side: f32) -> bool {
+        self.row_width.get() < side_by_side
+    }
+
+    /// `row` with its width recorded in `row_width`, redrawing the page when it changes.
+    fn measure_row(&self, row: AnyElement, cx: &mut Context<Self>) -> AnyElement {
+        let width = self.row_width.clone();
+        let page = cx.entity_id();
+        div()
+            .relative()
+            .w_full()
+            .child(row)
+            .child(
+                canvas(
+                    move |bounds, _, cx| {
+                        let next = f32::from(bounds.size.width);
+                        if (width.replace(next) - next).abs() > 0.5 {
+                            cx.notify(page);
+                        }
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .inset_0(),
+            )
+            .into_any_element()
     }
 
     /// The rows under More colour options.
@@ -735,12 +816,15 @@ impl ThemeTab {
             let step = colourfulness_display_step(values.f64(key));
             let saver: SliderSaver = Rc::new(
                 move |store: &Entity<SettingsStore>, value, _commit, cx: &mut App| {
-                    let points = colourfulness_points(
-                        value.round().clamp(0.0, COLOURFULNESS_LAST_POSITION as f64) as usize,
-                    );
+                    let position =
+                        value.round().clamp(0.0, COLOURFULNESS_LAST_POSITION as f64) as usize;
                     store.update(cx, |store, cx| {
-                        if store.values().f64(key) != points {
-                            store.update_setting(key, js_number(points), cx);
+                        if store.values().f64(key) != colourfulness_points(position) {
+                            store.apply_patch(
+                                area_colourfulness_patch(key, position),
+                                "settings:control",
+                                cx,
+                            );
                         }
                     });
                 },
@@ -1064,7 +1148,9 @@ impl Render for ThemeTab {
         let interface_scale = self.interface_scale_section(&t, window, cx);
         let transparency = self.transparency_section(&t, window, cx);
         let chat_terminal = self.chat_terminal_section(&t, window, cx);
-        let anything = colours.is_some()
+        let window_frame = self.window_frame_section(&t, cx);
+        let anything = window_frame.is_some()
+            || colours.is_some()
             || font.is_some()
             || interface_scale.is_some()
             || transparency.is_some()
@@ -1083,9 +1169,49 @@ impl Render for ThemeTab {
         // interface page in settings".
         blocks.extend(font.map(|section| PageBlock::section("font", section)));
         blocks.extend(interface_scale.map(|section| PageBlock::section("interfaceScale", section)));
+        // Presets sit right above the colours they set, under Text and Interface scale.
+        if !t.searching {
+            blocks.extend(
+                self.presets_section(&p, &t.values, cx)
+                    .map(|section| PageBlock::section("presets", section)),
+            );
+        }
         blocks.extend(colours.map(|section| PageBlock::section("theming", section)));
         blocks.extend(transparency.map(|section| PageBlock::section("transparency", section)));
         blocks.extend(chat_terminal.map(|section| PageBlock::section("chatTerminal", section)));
+        // Advanced: the window frame rows sit in a collapsed fold at the bottom, or in place while
+        // a search matches them (CDXC:Settings 2026-10-29 in search.rs, like About).
+        if let Some(section) = window_frame {
+            if t.searching {
+                blocks.push(PageBlock::section("windowFrame", section));
+            } else {
+                let tab = SettingsTabId::Theme;
+                // A deep link to the section opens the fold, as General's does.
+                let pending = self.store.update(cx, |store, _| {
+                    store.tracker(tab).borrow().pending_scroll.clone()
+                });
+                if pending.as_deref() == Some("windowFrame") {
+                    self.store
+                        .update(cx, |store, _| store.open_advanced_fold(tab));
+                }
+                let open = self.store.read(cx).advanced_fold_open(tab);
+                blocks.push(PageBlock::section(
+                    "advancedFold",
+                    advanced_fold_header(
+                        &p,
+                        open,
+                        move |page: &mut Self, _window, cx| {
+                            let store = page.store.clone();
+                            store.update(cx, |store, cx| store.toggle_advanced_fold(tab, cx));
+                        },
+                        cx,
+                    ),
+                ));
+                if open {
+                    blocks.push(PageBlock::section("windowFrame", section));
+                }
+            }
+        }
         if !t.searching {
             blocks.extend(
                 self.related_section(&p, cx)

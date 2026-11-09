@@ -75,6 +75,7 @@ impl GhostexGpuiApp {
             | "installGenerateTitleSkill"
             | "installMoveCodexSessionSkill"
             | "installHelpSkill"
+            | "installAgentGuideSkill"
             | "installVisualsSkill"
             | "installSecretsSkill"
             | "installCuaDriverSkill"
@@ -122,7 +123,8 @@ impl GhostexGpuiApp {
             | "updates"
             | "requestRemoteMachineConnectStates"
             | "requestDictateDevices"
-            | "revealDictateModelsFolder"
+            | "hexInstallRun"
+            | "hexOpen"
             | "addProjectDialogRequest"
             | "pickReplacementProjectFolder"
             | "setSessionNote"
@@ -202,6 +204,10 @@ impl GhostexGpuiApp {
                     .contains(&command_type) =>
             {
                 self.run_quick_access_command_row(command_type, command, window, cx);
+            }
+            // Settings > Remote's Pair again line (tabs/remote/pair_again.rs).
+            "openSecurityUpgradeNotice" => {
+                self.reopen_gpui_security_upgrade_modal(cx);
             }
             "searchPreviousSessionsByText" => {
                 self.handle_gpui_app_modal_previous_sessions_command(command_type, command, cx);

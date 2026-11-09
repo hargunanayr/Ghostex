@@ -121,7 +121,8 @@ fn choices(card: &Value) -> Vec<Choice> {
             .into_iter()
             .enumerate()
             .map(|(position, choice)| {
-                let label = crate::questions::notice_choices::without_key_hint(&choice.label).to_string();
+                let label =
+                    crate::questions::notice_choices::without_key_hint(&choice.label).to_string();
                 Choice {
                     tone: tone_of(&label, position == 0),
                     tooltip: scope_tooltip(kind, &label),
@@ -288,6 +289,20 @@ fn body(card: &Value) -> (String, String, String, String, String, Value) {
     }
 }
 
+/// How the thread's "waiting for an answer" report row draws with this card: `full` (the report,
+/// the card under it) while it waits, `line` (the card's one line in place of both) once the user
+/// answered it here, `hidden` once it ended anywhere else.
+///
+/// CDXC:Coordinators 2026-11-08 DECISION:
+/// User (Q1708 "Yes, remove them"): a relayed approval card disappears from the coordinator's chat (and the Approvals pill, its menu and the board) once it is answered or blocked anywhere other than here, and leaves no "Message from <thread>" row behind; one the user answered here collapses to one small line saying what they chose. The report row only carried the approval, so it goes with the card.
+fn report_look(status: &str) -> &'static str {
+    match status {
+        "open" => "full",
+        "answeredHere" => "line",
+        _ => "hidden",
+    }
+}
+
 /// How an ended card reads: `(tone, bold lead, rest)`.
 fn settled_words(card: &Value) -> (&'static str, String, String) {
     let answer = text(card, "answer");
@@ -400,8 +415,7 @@ pub fn project(state: &ChatState) -> Value {
             shown["status"] = json!(status);
             shown["answer"] = json!(answer);
             let (header, title, source, code, code_label, reason) = body(card);
-            let lines: Vec<&str> = code.lines().collect();
-            let more = lines.len().saturating_sub(CODE_PREVIEW_LINES);
+            let folded = crate::questions::permission_card::fold_code(&code, CODE_PREVIEW_LINES);
             let busy = local.calls.values().any(|(pending, _)| pending == key);
             let (settled_tone, settled_lead, settled_text) = if status == "open" {
                 ("", String::new(), String::new())
@@ -421,13 +435,13 @@ pub fn project(state: &ChatState) -> Value {
                 "title": title,
                 "source": source,
                 "code": code,
-                "codePreview": (more > 0).then(|| lines[..CODE_PREVIEW_LINES].join("\n")),
-                "codeMore": (more > 0).then(|| match more {
-                    1 => "1 more line".to_string(),
-                    more => format!("{more} more lines"),
-                }),
+                "codePreview": folded.as_ref().map(|(preview, _)| preview.clone()),
+                "codeMore": folded.map(|(_, more)| more),
+                "report": report_look(&status),
                 "codeLabel": code_label,
                 "reason": reason,
+                // When Claude Code blocks it by itself (server/src/session_chat_claude_permission.rs).
+                "autoBlockAt": card["notice"]["autoBlockAt"].clone(),
                 "choices": choices(card)
                     .into_iter()
                     .map(|choice| json!({
@@ -462,6 +476,8 @@ pub fn open_count(projected: &Value) -> usize {
 pub fn pill(projected: &Value) -> Option<crate::document::ChatPill> {
     let open = open_count(projected);
     (open > 0).then(|| crate::document::ChatPill {
+        switch: None,
+        menu: Vec::new(),
         id: APPROVALS_PILL.to_string(),
         label: "Approvals".to_string(),
         count: open.to_string(),
@@ -502,9 +518,12 @@ pub fn answer(state: &mut ChatState, action: &UserAction, request_id: u64) -> Op
     let mut params = picked.answer;
     params["projectId"] = json!(text(&card, "projectId"));
     params["sessionId"] = json!(text(&card, "sessionId"));
+    // The host stamps this chat's own session on every call (desktop `native_chat/state.rs`
+    // `rpc`, the phone's `host.ts` `sendRpc`), so the thread rides in `relayedFrom.thread` too.
     params["relayedFrom"] = json!({
         "projectId": state.identity.project_id,
         "sessionId": state.identity.session_id,
+        "thread": { "projectId": text(&card, "projectId"), "sessionId": text(&card, "sessionId") },
         "key": key,
         "label": picked.label,
     });
@@ -680,6 +699,7 @@ mod tests {
         assert_eq!(params["toolUseId"], "connectorcard:abc");
         assert_eq!(params["selections"][0]["indices"][0], 1);
         assert_eq!(params["relayedFrom"]["sessionId"], "G-coordinator");
+        assert_eq!(params["relayedFrom"]["thread"]["sessionId"], "G-thread");
         assert_eq!(params["relayedFrom"]["key"], "k1");
         assert_eq!(params["relayedFrom"]["label"], "Always allow");
         // A second click while the first is in flight sends nothing.

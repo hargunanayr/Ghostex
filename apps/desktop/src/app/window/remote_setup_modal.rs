@@ -3,7 +3,7 @@
 //!
 //! CDXC:RemotePairing 2026-09-15 DECISION:
 //! User: the React app modals are being rebuilt in native GPUI one at a time, and the new gpui modal must be EXACTLY 1 to 1 matching the React one: layout, copy, colors, radii, spacing, fonts, states and keys in both appearances. The two numbered sections, the in-panel Android install popover with its QR code, the Easy Connect and Tailscale option cards, and the Connect flow that hands off to Settings > Remote are all here; the gxserver calls stay on the app side and come back through `connect_finished`.
-//! SEE-ALSO: packages/core-ui/remote-setup-modal.tsx (deleted 2026-10-01) and packages/core-ui/remote-setup-modal/ (the React twin) with the `.remote-setup-*` rules in packages/core-ui/styles/modals.css, apps/desktop/src/app/window/native_modal_kit/ (shared chrome, the scrolling shell), apps/desktop/src/app/remote_setup_modal_lifecycle.rs (open, close, gxserver RPCs, Settings handoff), apps/desktop/src/bin/native_modal_demo.rs (standalone preview).
+//! SEE-ALSO: packages/core-ui/remote-setup-modal.tsx (deleted 2026-10-01) and packages/core-ui/remote-setup-modal/ (the React twin) with the `.remote-setup-*` rules in packages/core-ui/styles/modals.css (deleted 2026-11-06), apps/desktop/src/app/window/native_modal_kit/ (shared chrome, the scrolling shell), apps/desktop/src/app/remote_setup_modal_lifecycle.rs (open, close, gxserver RPCs, Settings handoff), apps/desktop/src/bin/native_modal_demo.rs (standalone preview).
 use super::native_modal_kit::*;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
@@ -745,7 +745,9 @@ impl GpuiRemoteSetupModalWindow {
         modal_icon(ICON_LOADER, 16.0, color)
             .with_animation(
                 "remote-setup-spinner",
-                Animation::new(Duration::from_millis(900)).repeat(),
+                Animation::new(Duration::from_millis(900))
+                    .repeat()
+                    .with_max_fps(crate::app::helpers::INDICATOR_MAX_FPS),
                 |svg, delta| {
                     svg.with_transformation(Transformation::rotate(radians(
                         delta * std::f32::consts::TAU,
@@ -760,7 +762,8 @@ impl GpuiRemoteSetupModalWindow {
         let p = self.palette;
         let disabled = !self.gxserver_available || self.connecting;
         let connecting = self.connecting;
-        let hover = rgba_of(p.primary, p.primary.a * 0.8);
+        let fills = p.primary_button_fills();
+        let label = p.primary_button_text();
         h_flex()
             .id("remote-setup-connect")
             .flex_shrink_0()
@@ -770,15 +773,15 @@ impl GpuiRemoteSetupModalWindow {
             .items_center()
             .justify_center()
             .rounded(px(MODAL_RADIUS_CONTROL))
-            .bg(hsla(p.primary))
+            .bg(hsla(fills.rest))
             .text_size(px(14.0))
             .line_height(px(20.0))
-            .text_color(hsla(p.primary_foreground))
+            .text_color(hsla(label))
             .whitespace_nowrap()
             .when(disabled, |this| this.opacity(0.5).cursor_default())
             .when(!disabled, |this| {
                 this.cursor_pointer()
-                    .hover(move |this| this.bg(hsla(hover)))
+                    .hover(move |this| this.bg(hsla(fills.hover)))
                     .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
                         this.connect(cx);
                     }))
@@ -787,9 +790,9 @@ impl GpuiRemoteSetupModalWindow {
                 this.tooltip(|window, cx| Tooltip::new(NO_SERVER_MESSAGE).build(window, cx))
             })
             .child(if connecting {
-                self.render_spinner(p.primary_foreground)
+                self.render_spinner(label)
             } else {
-                modal_icon(ICON_QRCODE_BUTTON, 16.0, p.primary_foreground).into_any_element()
+                modal_icon(ICON_QRCODE_BUTTON, 16.0, label).into_any_element()
             })
             .child(if connecting { CONNECTING } else { CONNECT })
             .into_any_element()

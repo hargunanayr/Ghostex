@@ -27,6 +27,7 @@ use std::{
 };
 use web_time::Instant;
 
+use gpui::prelude::FluentBuilder as _;
 use gpui::{AnyElement, IntoElement, ParentElement as _, Styled as _, div, px};
 
 #[derive(Deserialize)]
@@ -96,10 +97,20 @@ pub(crate) struct DisclosureMotions {
     /// The toggled disclosure whose change has not been drawn yet, and when it was pressed: until
     /// it is drawn nothing is moving, and handing following back then would pin the bottom again.
     pub(super) awaiting: Option<(String, Instant)>,
-    /// A toggle whose revealed rows ease in above it, whether it is opening, and the height of
-    /// those rows the scroll position already accounts for (`None` until a closing group's rows
-    /// have been measured, since they start fully grown).
-    pub(super) grows_above: Option<(String, bool, Option<f32>)>,
+    /// A disclosure opened by a reader scrolled up, whose end is scrolled into view as it grows
+    /// (`disclosure_anchor.rs`, `disclosure_reveal.rs`).
+    pub(super) reveal: Option<Reveal>,
+}
+
+/// The opened disclosure being revealed, and where its moving part was last painted.
+pub(crate) struct Reveal {
+    pub(super) key: String,
+    pub(super) extent: RevealExtent,
+    /// The header's height to keep in view above a body's top.
+    pub(super) room: f32,
+    pub(super) pressed: Instant,
+    /// The motion has ended; one more paint lands on the settled height.
+    pub(super) settled: bool,
 }
 
 fn progress(elapsed_ms: f32, delay_ms: f32, span_ms: f32) -> f32 {
@@ -185,11 +196,9 @@ impl DisclosureMotions {
         !self.motions.is_empty()
     }
 
-    /// The natural height `key`'s moving body measured on its last paint.
-    pub(super) fn natural(&self, key: &str) -> f32 {
-        self.heights
-            .get(&format!("{key}#"))
-            .map_or(0.0, |height| height.get())
+    /// True while `key` is opening or closing.
+    pub(super) fn is_moving(&self, key: &str) -> bool {
+        self.motions.contains_key(key)
     }
 
     /// This frame of the motion on `key`, or `None` once it is at rest.
@@ -329,6 +338,19 @@ pub(super) fn motion_clip(
     gap: f32,
     content: AnyElement,
 ) -> AnyElement {
+    motion_clip_revealed(height, frame, floor, gap, content, None)
+}
+
+/// [`motion_clip`] that also records where the clip paints into `extent`, for the disclosure being
+/// revealed (`disclosure_anchor.rs`).
+fn motion_clip_revealed(
+    height: Rc<Cell<f32>>,
+    frame: FoldFrame,
+    floor: f32,
+    gap: f32,
+    content: AnyElement,
+    extent: Option<RevealExtent>,
+) -> AnyElement {
     let natural = height.get();
     let factor = frame.log.clamp(0.0, 1.0);
     let clip = div().w_full().min_w_0().overflow_hidden().mt(px(-gap));
@@ -348,39 +370,43 @@ pub(super) fn motion_clip(
             .opacity(frame.rows_opacity)
             .child(measured(height, content)),
     )
+    .when_some(extent, |clip, extent| {
+        clip.relative().child(extent_canvas(extent, false))
+    })
     .into_any_element()
 }
 
-/// [`motion_clip`] for a part that is first in its column: the gap it must take back is the one
-/// after it, so the negative margin and the carried spacing sit at the bottom instead.
-pub(super) fn motion_clip_trailing(
-    height: Rc<Cell<f32>>,
-    frame: FoldFrame,
-    gap: f32,
-    content: AnyElement,
-) -> AnyElement {
-    // The measured height includes the gap the part carries, so a part eased to `f` adds exactly
-    // `f` of its full height to the column: the gap after it is taken back with the negative
-    // margin, and `disclosure_anchor.rs` scrolls by the same amount to keep the toggle below still.
-    let natural = height.get();
-    let factor = frame.log.clamp(0.0, 1.0);
-    let clip = div().w_full().min_w_0().overflow_hidden().mb(px(-gap));
-    let clip = if factor >= 1.0 || (natural <= 0.0 && factor >= 0.5) {
-        clip
-    } else {
-        clip.h(px(natural.max(0.0) * factor))
-    };
-    clip.child(
-        div()
-            .w_full()
-            .min_w_0()
-            .flex_shrink_0()
-            .opacity(frame.rows_opacity)
-            .child(measured(
-                height,
-                div().pb(px(gap)).child(content).into_any_element(),
-            )),
+/// Where the part being revealed last painted, in window pixels. Taken when applied, so one paint
+/// scrolls once.
+pub(super) type RevealExtent = Rc<Cell<Option<PaintedPart>>>;
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PaintedPart {
+    /// The horizontal middle, to tell a transcript row from a panel beside or below the list.
+    pub(super) center_x: f32,
+    pub(super) top: f32,
+    pub(super) bottom: f32,
+    /// The part starts with its own header rather than being the body under one.
+    pub(super) header_inside: bool,
+}
+
+/// A canvas filling its parent that records the parent's window bounds into `extent`.
+fn extent_canvas(extent: RevealExtent, header_inside: bool) -> AnyElement {
+    gpui::canvas(
+        move |bounds, _, _| {
+            extent.set(Some(PaintedPart {
+                center_x: bounds.center().x.as_f32(),
+                top: bounds.top().as_f32(),
+                bottom: bounds.bottom().as_f32(),
+                header_inside,
+            }))
+        },
+        |_, _, _, _| {},
     )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
     .into_any_element()
 }
 
@@ -417,9 +443,48 @@ impl super::state::NativeChatView {
         body: AnyElement,
     ) -> AnyElement {
         match frame {
-            Some(frame) => motion_clip(self.disclosure_height(key), frame, 0.0, gap, body),
-            None => body,
+            Some(frame) => motion_clip_revealed(
+                self.disclosure_height(key),
+                frame,
+                0.0,
+                gap,
+                body,
+                self.revealing(key),
+            ),
+            None => self.reveal_extent(key, false, body),
         }
+    }
+
+    /// The extent cell of `key` while it is the disclosure being revealed.
+    fn revealing(&self, key: &str) -> Option<RevealExtent> {
+        self.disclosure_motion
+            .borrow()
+            .reveal
+            .as_ref()
+            .filter(|reveal| reveal.key == key)
+            .map(|reveal| reveal.extent.clone())
+    }
+
+    /// Record where `part` of disclosure `key` paints while it is the one being revealed
+    /// (`disclosure_anchor.rs`); any other disclosure is returned as it is. `header_inside` says
+    /// the part starts with its own header (a tool group whose toggle tops it) rather than being
+    /// the body below one.
+    pub(super) fn reveal_extent(
+        &self,
+        key: &str,
+        header_inside: bool,
+        part: AnyElement,
+    ) -> AnyElement {
+        let Some(extent) = self.revealing(key) else {
+            return part;
+        };
+        div()
+            .relative()
+            .w_full()
+            .min_w_0()
+            .child(part)
+            .child(extent_canvas(extent, header_inside))
+            .into_any_element()
     }
 
     /// A capped block ("Show more"): shut it shows `floor` pixels, open its natural height; while
@@ -433,7 +498,14 @@ impl super::state::NativeChatView {
         body: AnyElement,
     ) -> AnyElement {
         let floor = self.disclosure_floor(key).get();
-        motion_clip(self.disclosure_height(key), frame, floor, gap, body)
+        motion_clip_revealed(
+            self.disclosure_height(key),
+            frame,
+            floor,
+            gap,
+            body,
+            self.revealing(key),
+        )
     }
 }
 

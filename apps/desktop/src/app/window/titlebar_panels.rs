@@ -7,6 +7,7 @@ mod tips;
 
 use super::resources_style::*;
 use crate::app::helpers::*;
+use crate::app::titlebar::actions_menu_rows::{StartMenuPick, on_start_menu_picks};
 use crate::app::titlebar::resources_clean_ram_prompt::gpui_resources_clean_ram_prompt;
 use crate::*;
 
@@ -16,6 +17,8 @@ pub(crate) enum GpuiTitlebarPopupKind {
     Actions,
     BrowserActions(BrowserPaneId),
     BrowserDeviceView(BrowserPaneId),
+    /// The chat header's Share popover (Ghostex Collab, window/collab_share.rs).
+    CollabShare,
     ContextMenu,
     Extensions,
     Git,
@@ -37,6 +40,7 @@ impl GpuiTitlebarPopupKind {
             Self::Actions => "actions",
             Self::BrowserActions(_) => "browserActions",
             Self::BrowserDeviceView(_) => "browserDeviceView",
+            Self::CollabShare => "collabShare",
             Self::ContextMenu => "contextMenu",
             Self::Extensions => "extensions",
             Self::Git => "git",
@@ -70,6 +74,7 @@ pub(crate) enum GpuiTitlebarPopupContent {
     Menu(Entity<PopupMenu>),
     Reading(Entity<GpuiTitlebarReadingPanel>),
     RemoteSites(Entity<crate::app::window::remote_sites::RemoteSitesPanel>),
+    CollabShare(Entity<crate::app::window::collab_share::CollabSharePanel>),
     SessionLinks(Entity<crate::app::native_sidebar::links_list::SessionLinksList>),
 }
 
@@ -96,6 +101,7 @@ impl GpuiTitlebarPopupWindow {
             GpuiTitlebarPopupKind::Actions => "Ghostex Start",
             GpuiTitlebarPopupKind::BrowserActions(_) => "Ghostex Browser Actions",
             GpuiTitlebarPopupKind::BrowserDeviceView(_) => "Ghostex Browser Page Size",
+            GpuiTitlebarPopupKind::CollabShare => "Ghostex Collab",
             GpuiTitlebarPopupKind::ContextMenu => "Ghostex Menu",
             GpuiTitlebarPopupKind::Extensions => "Ghostex Extensions",
             GpuiTitlebarPopupKind::Git => "Ghostex Commit",
@@ -119,6 +125,11 @@ impl GpuiTitlebarPopupWindow {
         if let GpuiTitlebarPopupContent::Menu(menu) = &content {
             menu.focus_handle(cx).focus(window, cx);
         }
+        // A failed update's reason is often taller than the Updates list's rows, so its tooltip
+        // draws in the tooltip host window rather than cut off inside the list (frosted_host.rs).
+        if kind == GpuiTitlebarPopupKind::Updates {
+            crate::app::window::frosted_host::host_window_tooltips_always(window, cx);
+        }
         if let GpuiTitlebarPopupContent::AccountUsage(panel) = &content {
             panel.update(cx, |panel, cx| panel.focus(window, cx));
         }
@@ -133,6 +144,7 @@ impl GpuiTitlebarPopupWindow {
                 )),
                 GpuiTitlebarPopupContent::Reading(_) => None,
                 GpuiTitlebarPopupContent::RemoteSites(_) => None,
+                GpuiTitlebarPopupContent::CollabShare(_) => None,
                 GpuiTitlebarPopupContent::SessionLinks(_) => None,
                 GpuiTitlebarPopupContent::AccountUsage(_) => None,
             };
@@ -295,17 +307,19 @@ impl Render for GpuiTitlebarPopupWindow {
                     });
                 }),
             )
-            .on_action(
-                cx.listener(|this, action: &RunGpuiTitlebarAction, _window, cx| {
-                    this.update_main_window(cx, |app, window, cx| {
-                        app.run_gpui_titlebar_action_index(
-                            action.action_index as usize,
-                            window,
-                            cx,
-                        );
-                    });
-                }),
-            )
+            // The Start menu's rows (project Actions, Global Actions, Configure), registered by the
+            // menu's own file so no row can be left out (actions_menu_rows.rs).
+            .map(|this| {
+                on_start_menu_picks(
+                    this,
+                    cx.listener(|this, pick: &StartMenuPick, _window, cx| {
+                        let pick = pick.clone();
+                        this.update_main_window(cx, move |app, window, cx| {
+                            app.run_start_menu_pick(pick, window, cx);
+                        });
+                    }),
+                )
+            })
             .on_action(
                 cx.listener(|this, action: &LaunchGpuiExtension, window, cx| {
                     let extension_id = action.extension_id.clone();
@@ -407,13 +421,6 @@ impl Render for GpuiTitlebarPopupWindow {
                     });
                 }),
             )
-            .on_action(
-                cx.listener(|this, _: &ConfigureGpuiTitlebarActions, _window, cx| {
-                    this.update_main_window(cx, |app, window, cx| {
-                        app.open_gpui_settings_actions_modal_from_titlebar(window, cx);
-                    });
-                }),
-            )
             .on_action(cx.listener(
                 |this, action: &RunGpuiTitlebarTipsHeaderAction, _window, cx| {
                     this.update_main_window(cx, |app, window, cx| {
@@ -438,9 +445,28 @@ impl Render for GpuiTitlebarPopupWindow {
                     this.update_main_window(cx, move |app, main_window, cx| {
                         app.run_gpui_titlebar_updates(update_all, Some(main_window), cx);
                     });
-                    this.close_from_popup_window(window, cx);
+                    // Update all keeps the list open so its rows show their spinners.
+                    if !update_all {
+                        this.close_from_popup_window(window, cx);
+                    }
                 }),
             )
+            .on_action(
+                cx.listener(|this, action: &RunGpuiTitlebarUpdateItem, _window, cx| {
+                    let id = action.id.clone();
+                    this.update_main_window(cx, move |app, main_window, cx| {
+                        app.run_gpui_titlebar_update_item(&id, main_window, cx);
+                    });
+                }),
+            )
+            .on_action(cx.listener(
+                |this, action: &DismissGpuiTitlebarUpdateFailure, _window, cx| {
+                    let (id, error) = (action.id.clone(), action.error.clone());
+                    this.update_main_window(cx, move |app, _main_window, cx| {
+                        app.dismiss_update_failure(&id, &error, cx);
+                    });
+                },
+            ))
             .on_action(
                 cx.listener(|this, action: &RunGpuiTitlebarHelpQuestion, window, cx| {
                     let question_index = action.question_index as usize;
@@ -485,6 +511,7 @@ impl Render for GpuiTitlebarPopupWindow {
                 GpuiTitlebarPopupContent::Menu(menu) => menu.clone().into_any_element(),
                 GpuiTitlebarPopupContent::Reading(panel) => panel.clone().into_any_element(),
                 GpuiTitlebarPopupContent::RemoteSites(panel) => panel.clone().into_any_element(),
+                GpuiTitlebarPopupContent::CollabShare(panel) => panel.clone().into_any_element(),
                 GpuiTitlebarPopupContent::SessionLinks(panel) => panel.clone().into_any_element(),
             })
     }

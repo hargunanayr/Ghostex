@@ -151,7 +151,14 @@ impl GhostexGpuiApp {
         let popup_window = match cx.open_window(options, {
             let content = content.clone();
             move |popup_window, cx| {
-                popup_window.set_background_corner_radius(px(8.0));
+                // The Share popover's glass panel is rounded 10px (share_popover_view.rs).
+                popup_window.set_background_corner_radius(px(
+                    if kind == GpuiTitlebarPopupKind::CollabShare {
+                        10.0
+                    } else {
+                        8.0
+                    },
+                ));
                 apply_frosted_menu_blur(popup_window);
                 prepare_gpui_titlebar_popup_window_chrome(popup_window);
                 if matches!(
@@ -383,6 +390,17 @@ impl GhostexGpuiApp {
                 GpuiTitlebarPopupContent::AccountUsage(cx.new(|cx| {
                     crate::app::window::account_usage::AccountUsagePanel::new(
                         main_app, id, account, cx,
+                    )
+                }))
+            }
+            GpuiTitlebarPopupKind::CollabShare => {
+                let key = crate::app::render::workarea_header::share_button::share_target()
+                    .expect("chat chosen before opening its Share popover");
+                GpuiTitlebarPopupContent::CollabShare(cx.new(|cx| {
+                    crate::app::window::collab_share::CollabSharePanel::new(
+                        key,
+                        main_app.clone(),
+                        cx,
                     )
                 }))
             }

@@ -44,7 +44,7 @@ pub struct SessionState {
     /// The session's resource index as gxserver keeps it (`crate::questions::resource_index`):
     /// every form, page and chart of the whole conversation, which the Resources pill and list add
     /// to what the loaded rows hold. Absent means unchanged.
-    pub resource_index: Vec<Value>,
+    pub resource_index: crate::questions::resource_index::ResourceIndex,
     /// Questions older than this stamp no longer count. Absent means unchanged, `null` means none.
     pub async_questions_since: Option<i64>,
     /// When this session was forked from another (epoch ms): questions asked before then belong to
@@ -62,6 +62,9 @@ pub struct SessionState {
     /// The session runs on its own login (its command sets the profile or runs a wrapper), so it
     /// offers no account. Reads alone, and only a read that says so changes it.
     pub uses_own_login: bool,
+    /// The icons of the agents turned on in Settings › Agents, carried by reads alone; `None`
+    /// until a read says (an older daemon), which shows every provider's model menu tab.
+    pub enabled_agent_icons: Option<Vec<String>>,
     /// Model and effort read off the agent's screen. Absent means unchanged; merged by evidence.
     pub selected_options: Option<Value>,
     /// How many times `setSelectedOptions` was handed a NEW object, which is the identity family
@@ -93,6 +96,13 @@ pub struct SessionState {
     /// For a coordinator's thread: the approvals its coordinator's chat answered for it
     /// (`extras::relayed_approvals::audit_lines`); unchanged on omission.
     pub relayed_answers: Option<Value>,
+    /// Autopilot, as gxserver says (`{ on, covered }`, server/src/autopilot/mod.rs): its pill
+    /// (`extras::autopilot`). Unchanged on omission.
+    pub autopilot: Option<Value>,
+    /// Ghostex Collab, as gxserver says (`extras::collab`). Unchanged on omission.
+    pub collab: Option<Value>,
+    /// Set on a Ghostex Collab guest's page (`{ viewerId, name }`, `setCollabGuest`).
+    pub collab_guest: Option<Value>,
     /// How the messages this session sent other agents and left waiting ended, by send id.
     /// Unchanged on omission.
     pub agent_message_deliveries: Option<Value>,
@@ -101,6 +111,9 @@ pub struct SessionState {
     /// The session's Cloud Box is paused or stopped: its host refused a read with
     /// `cloudBoxAsleep` (`session/cloud_box.rs`). A sent message wakes it.
     pub cloud_box_asleep: bool,
+    /// The computer the session runs on and what this computer holds for it
+    /// (`session/computer.rs`).
+    pub computer: crate::session::computer::ComputerState,
     /// Live work as the chat channel itself reports it.
     pub server_working: bool,
     /// The session activity gxserver presents, which is what the sidebar spinner reads.
@@ -152,7 +165,7 @@ impl Default for SessionState {
             later_question_ids: Vec::new(),
             unavailable_modes: Vec::new(),
             removed_question_ids: Vec::new(),
-            resource_index: Vec::new(),
+            resource_index: Default::default(),
             async_questions_since: None,
             forked_at: None,
             agent: None,
@@ -161,6 +174,7 @@ impl Default for SessionState {
             available_agents: None,
             switchable_agents: None,
             uses_own_login: false,
+            enabled_agent_icons: None,
             selected_options: None,
             selected_options_generation: 0,
             terminal_notice: None,
@@ -175,9 +189,13 @@ impl Default for SessionState {
             side_chat_of: None,
             secret_requests: None,
             relayed_answers: None,
+            autopilot: None,
+            collab: None,
+            collab_guest: None,
             agent_message_deliveries: None,
             screen_probed: false,
             cloud_box_asleep: false,
+            computer: Default::default(),
             server_working: false,
             session_activity_working: false,
             external_working: false,

@@ -9,7 +9,8 @@
 mod auto;
 mod http;
 mod install;
-mod items;
+pub(crate) mod items;
+mod missing;
 mod store;
 
 pub(crate) use auto::spawn_updates_auto_task;

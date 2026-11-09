@@ -43,6 +43,26 @@ pub(crate) fn check_requested_account(
     .map(|_| ())
 }
 
+/// The CLI family (`claude`, `codex`…) of the agent a create starts, read from the same agent
+/// config `create_agent_session_params_for_project` launches it with.
+pub(crate) fn requested_agent_family_id(
+    db: &Connection,
+    project: &Value,
+    params: &Map<String, Value>,
+) -> Option<String> {
+    let global_agents_project = project_with_global_agent_list(db, project);
+    let project = global_agents_project.as_ref().unwrap_or(project);
+    let agent_id =
+        read_text(params, "agentId").unwrap_or_else(|| DEFAULT_PROMPT_AGENT_ID.to_string());
+    let launch_settings = params
+        .get("launchSettings")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let agent_config = resolve_project_agent_config(project, &agent_id, Some(&launch_settings));
+    resume_agent_family_id(Some(agent_id), &agent_config, &launch_settings)
+}
+
 pub(crate) fn create_agent_session_params_for_project(
     db: &Connection,
     project: &Value,
@@ -339,6 +359,32 @@ pub(crate) fn create_agent_session_params_for_project(
                         (
                             command.to_string(),
                             with_claude_bypass_consent(family.as_deref(), command),
+                        )
+                    })
+                    .and_then(|(before, after)| (after != before).then_some(after))
+                {
+                    plan.insert(
+                        "startupText".to_string(),
+                        Value::String(as_atuin_ignored_shell_input(&command)),
+                    );
+                    plan.insert("command".to_string(), Value::String(command));
+                }
+                // The home folder's secret folders, denied through the agent's own settings on
+                // this run (home_secret_folders.rs).
+                let launch_cwd =
+                    read_text(params, "cwd").or_else(|| read_text_value(project, "path"));
+                if let Some(command) = plan
+                    .get("command")
+                    .and_then(Value::as_str)
+                    .map(|command| {
+                        (
+                            command.to_string(),
+                            with_home_secret_folders_denied(
+                                family.as_deref(),
+                                launch_cwd.as_deref(),
+                                is_gbot_chat(Some(&runtime_settings)),
+                                command,
+                            ),
                         )
                     })
                     .and_then(|(before, after)| (after != before).then_some(after))
@@ -874,6 +920,19 @@ fn project_with_global_agent_list(db: &Connection, project: &Value) -> Option<Va
         }
     }
     None
+}
+
+/// The approvals mode the owner's own launcher setting gives `agent_id` in `project` (its agent
+/// list, else the global one), whatever a create call sends (security_full_access.rs).
+pub(crate) fn owner_agent_accept_all_mode(
+    db: &Connection,
+    project: &Value,
+    agent_id: &str,
+) -> Option<String> {
+    let global = project_with_global_agent_list(db, project);
+    let project = global.as_ref().unwrap_or(project);
+    let config = resolve_project_agent_config(project, agent_id, None);
+    read_text_from_map(&config, "acceptAllMode")
 }
 
 pub(crate) fn create_agent_session_default_title(

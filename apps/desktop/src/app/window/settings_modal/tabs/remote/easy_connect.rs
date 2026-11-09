@@ -24,13 +24,14 @@
 //! CDXC:RemotePairing 2026-10-27 WHY:
 //! The phone's Paste a pairing code sheet tells the user to click Copy as text on the computer, and testers found no such button. Copy as text sits right under the QR tile on the card and under the QR in the popup, and copies the bare `ghostex-ec1:`/`ghostex-ts1:` code (gxserver's `text`), not the link the QR carries: every phone app and every computer reads the bare code, including phones from before the link (10.32 and older), whose scanner calls the link "not a Ghostex code". The button reads Copied for a moment after a click, like the other copy buttons on this page.
 use super::super::super::super::native_modal_kit::*;
+use super::super::super::fields::RowControl;
 use super::super::super::fields::{
     ButtonSize, ButtonVariant, icon, qr_code, settings_button_sized, settings_icon,
     settings_icon_button, switch_control,
 };
 use super::model::easy_connect_status_badge;
 use super::style::*;
-use super::{PathCard, RemoteTab, paired_devices, ssh_row};
+use super::{PathCard, RemoteTab, paired_devices};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, ClickEvent, Context, FontWeight, InteractiveElement as _, IntoElement,
@@ -40,9 +41,6 @@ use gpui::{
 use gpui_component::{h_flex, v_flex};
 use serde_json::json;
 
-const SSH_REQUIRED_ON: &str = "Required. Easy Connect carries SSH to this computer.";
-const SSH_REQUIRED_OFF: &str = "Required. Easy Connect carries SSH to this computer; turning it on asks for an admin password once.";
-
 /// `.settings-remote-path-card`: the bordered card with its header row (the accordion handle
 /// and the switch beside it) and, while open, its body.
 #[allow(clippy::too_many_arguments)]
@@ -50,9 +48,10 @@ pub(super) fn path_card(
     t: &RemoteTokens,
     id: &'static str,
     head: AnyElement,
-    switch: AnyElement,
+    switch: impl Into<RowControl>,
     body: Option<AnyElement>,
 ) -> AnyElement {
+    let switch = switch.into();
     v_flex()
         .id(id)
         .w_full()
@@ -63,12 +62,16 @@ pub(super) fn path_card(
         .bg(hsla(t.card(0.18)))
         .child(
             h_flex()
+                .id(SharedString::from(format!("{id}-head")))
                 .w_full()
                 .items_center()
                 .gap(px(12.0))
                 .pr(px(12.0))
+                .when_some(switch.toggle, |row, press| {
+                    row.switch_row_press(switch_row_wash(t.p.foreground), false, press)
+                })
                 .child(head)
-                .child(switch),
+                .child(switch.element),
         )
         .children(body.map(|body| {
             v_flex()
@@ -205,14 +208,12 @@ fn easy_connect_body(
     if let Some(error) = install_error {
         body = body.child(error_line(t, error));
     }
-    body = body.child(ssh_row::ssh_access_row(
+    // SSH access is set in the Current machine card above the tabs; this step only says whether
+    // it is on (CDXC:RemotePairing 2026-11-08 in current_machine.rs).
+    body = body.child(super::current_machine::ssh_status_line(
         tab,
         t,
         "easy-connect-ssh",
-        SSH_REQUIRED_OFF,
-        SSH_REQUIRED_ON,
-        false,
-        window,
         cx,
     ));
     body = if is_on {
@@ -225,6 +226,7 @@ fn easy_connect_body(
     }
     if is_on {
         body = body.child(paired_devices::paired_devices_list(tab, t, rpc, cx));
+        body = body.child(super::relay::relay_section(tab, t, rpc, window, cx));
     }
     body.into_any_element()
 }
@@ -491,11 +493,28 @@ fn qr_placeholder(
         .into_any_element()
 }
 
-/// `card`'s bare pairing code (gxserver's `text`), what Copy as text puts on the clipboard.
+/*
+CDXC:RemotePairing 2026-11-08 FIX:
+User (GitHub #495, 11.1.1): every copy button must give a code that can pair. Since 11.1.0 gxserver
+puts the one-time secret in the Easy Connect code only while the Show QR sheet is open
+(`openTunnel`); with it closed it answers the address without a secret (an empty QR payload), which
+a phone can't pair with and a computer refuses ("This code can't pair a computer by itself"). So an
+Easy Connect code is copied only when it carries the secret, which its non-empty QR payload says:
+Copy as text shows in the Show QR sheet and nowhere the code can't pair. The Tailscale code carries
+no secret and is copied as before.
+*/
+/// `card`'s bare pairing code (gxserver's `text`), what Copy as text puts on the clipboard: for Easy
+/// Connect only a code that can pair (with its one-time secret, so with a QR payload).
 fn pairing_text(tab: &RemoteTab, card: PathCard) -> Option<String> {
     let pairing = tab.pairing.as_ref()?;
     let text = match card {
-        PathCard::EasyConnect => pairing.easy_connect.as_ref()?.text.clone(),
+        PathCard::EasyConnect => {
+            let code = pairing.easy_connect.as_ref()?;
+            if code.payload.is_empty() {
+                return None;
+            }
+            code.text.clone()
+        }
         PathCard::Tailscale => pairing.tailscale.as_ref()?.text.clone(),
     };
     (!text.is_empty()).then_some(text)
@@ -514,7 +533,12 @@ fn copy_text_button(
     Some(settings_button_sized(
         &t.p,
         id,
-        if copied { "Copied" } else { "Copy as text" },
+        // Q1879: an Easy Connect code is called that everywhere; the Tailscale code keeps its label.
+        match (copied, card) {
+            (true, _) => "Copied",
+            (false, PathCard::EasyConnect) => "Copy Easy Connect code",
+            (false, PathCard::Tailscale) => "Copy as text",
+        },
         Some(if copied {
             ICON_CIRCLE_CHECK_FILLED
         } else {
@@ -578,8 +602,11 @@ fn phone_panel(tab: &mut RemoteTab, t: &RemoteTokens, cx: &mut Context<RemoteTab
                 "Click the QR here and point the phone at it. If it can’t scan, click ",
                 Emph::Plain,
             ),
-            ("Copy as text", Emph::Strong),
-            (" and paste the code on the phone.", Emph::Plain),
+            ("Copy Easy Connect code", Emph::Strong),
+            (
+                " under the QR and paste the code on the phone.",
+                Emph::Plain,
+            ),
         ],
     ];
     if let Some(code) = &code {
@@ -680,20 +707,29 @@ fn computer_panel(
         )],
     };
     let steps: Vec<Vec<(&str, Emph)>> = vec![
-        vec![(
-            "On the other computer, open Ghostex → Settings → Remote → Add a machine.",
-            Emph::Plain,
-        )],
         vec![
-            ("Choose ", Emph::Plain),
+            ("Click ", Emph::Plain),
+            ("Show QR", Emph::Strong),
+            (" below, then ", Emph::Plain),
+            ("Copy Easy Connect code", Emph::Strong),
+            (". The code works once, for 5 minutes.", Emph::Plain),
+        ],
+        vec![
+            (
+                "On the other computer, open Ghostex → Settings → Remote → Add a machine (or that computer’s entry), choose ",
+                Emph::Plain,
+            ),
             ("Easy Connect code", Emph::Strong),
-            (" and paste the copied code.", Emph::Plain),
+            (" and paste it.", Emph::Plain),
         ],
         step_three,
         vec![
             ("Click ", Emph::Plain),
             ("Add machine", Emph::Strong),
-            (", then open it from the sidebar.", Emph::Plain),
+            (
+                ". Both screens show three words: approve the other computer here, under Paired devices, if they match.",
+                Emph::Plain,
+            ),
         ],
     ];
     let list = v_flex()
@@ -726,49 +762,33 @@ fn computer_panel(
                 .text_color(hsla(t.foreground))
                 .child("Use a code on your other computer"),
         )
-        .child("To add this computer on another computer, copy its Easy Connect code below.")
+        .child(
+            "To add this computer on another computer, give it this computer’s Easy Connect code.",
+        )
         .child(list);
-    if paired_only(tab) {
-        meta = meta.child(
-            "Only paired devices can connect, so first run tailcat genkey --client --key=client-default on the other computer and add the key it prints under Advanced → Allowed client keys.",
-        );
-    }
-    if let Some(code) = &code {
-        let copied = tab.copied.contains("remote-copy-code");
-        // The bare code: every computer's Easy Connect code field reads it, older ones not the link.
-        let payload = code.text.clone();
-        let leading_icon = if copied {
-            ICON_CIRCLE_CHECK_FILLED
-        } else {
-            ICON_COPY
-        };
+    // Pairing v2 (CDXC:RemotePairing 2026-11-08 in server/src/remote_access/computer_pairing.rs):
+    // the other computer pairs like a phone, with the code from this computer's Show QR sheet, the
+    // only place the code carries its one-time secret (CDXC:RemotePairing 2026-11-08 FIX above).
+    if code.is_some() {
         let button = settings_button_sized(
             &t.p,
-            "remote-copy-code",
-            "Copy Easy Connect code",
-            Some(leading_icon),
+            "remote-computer-show-qr",
+            "Show QR",
+            Some(ICON_QRCODE),
             ButtonVariant::Primary,
             ButtonSize::Sm,
             false,
             None,
-            move |tab: &mut RemoteTab, _window, cx| {
-                tab.copy("remote-copy-code".into(), payload.clone(), cx);
+            move |tab: &mut RemoteTab, window, cx| {
+                tab.qr_preview = Some(PathCard::EasyConnect);
+                tab.qr_preview_focus.focus(window, cx);
+                // Ask at once, so the code with its secret is there when the sheet opens.
+                tab.refresh_fast(cx);
+                cx.notify();
             },
             cx,
         );
-        let tooltip: SharedString = if copied {
-            "Copied".into()
-        } else {
-            "Copy Easy Connect code for another computer".into()
-        };
-        meta = meta.child(
-            h_flex().mt(px(2.0)).gap(px(8.0)).child(
-                div()
-                    .id("remote-copy-code-tooltip")
-                    .tooltip(super::super::super::fields::tooltip_text(tooltip))
-                    .child(button),
-            ),
-        );
+        meta = meta.child(h_flex().mt(px(2.0)).gap(px(8.0)).child(button));
     }
     div()
         .w_full()
@@ -782,11 +802,10 @@ fn computer_panel(
         .into_any_element()
 }
 
-/// "Only paired devices can connect" is on: the allow-list holds at least one key.
-pub(super) fn paired_only(tab: &RemoteTab) -> bool {
-    tab.easy_connect
-        .as_ref()
-        .is_some_and(|status| !status.allowed_client_keys.is_empty())
+/// "Only paired devices can connect": always, since an empty allow-list is closed
+/// (CDXC:RemotePairing 2026-11-08 in server/src/tailcat/supervisor.rs).
+pub(super) fn paired_only(_tab: &RemoteTab) -> bool {
+    true
 }
 
 /// `.settings-remote-off-block`: the faded QR placeholder and the Turn on button.
@@ -880,6 +899,11 @@ pub(super) fn qr_preview_dialog(
     };
     let grid = tab.qr_for(tailscale, &payload);
     let copy = copy_text_button(tab, t, "remote-qr-copy-text", card, cx);
+    // Pairing v2 (GitHub #495): a phone that scanned this code waits here with its three words.
+    let waiting = (!tailscale)
+        .then(|| tab.pending_devices.first().cloned())
+        .flatten();
+    let approving = tab.approving_device.is_some();
     let qr_size = QR_PREVIEW_SIZE
         .min(window.viewport_size().height.as_f32() - QR_PREVIEW_CHROME_HEIGHT)
         .max(QR_PLACEHOLDER_SIZE)
@@ -985,6 +1009,54 @@ pub(super) fn qr_preview_dialog(
                 )
                 .children(copy.map(|button| div().pt(px(8.0)).child(button))),
         )
+        .children(waiting.map(|device| {
+            v_flex()
+                .w_full()
+                .items_center()
+                .gap(px(4.0))
+                .p(px(12.0))
+                .rounded(px(MODAL_RADIUS_CONTROL))
+                .border_1()
+                .border_color(hsla(colors.border))
+                .text_center()
+                .child(
+                    div()
+                        .text_color(hsla(colors.muted))
+                        .child(format!("{} is waiting. Check it shows:", device.name)),
+                )
+                .child(
+                    div()
+                        .text_size(px(18.0))
+                        .line_height(px(26.0))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(hsla(colors.foreground))
+                        .child(device.words.join(" · ")),
+                )
+                .child(
+                    div()
+                        .text_size(px(13.0))
+                        .line_height(px(18.57))
+                        .text_color(hsla(colors.muted))
+                        .child("If they match, approve it. If the words differ, deny it under Paired devices."),
+                )
+                .child({
+                    let approval_id = device.approval_id.clone();
+                    settings_button_sized(
+                        &t.p,
+                        "remote-qr-approve-pending",
+                        if approving { "Approving…" } else { "Approve" },
+                        None,
+                        ButtonVariant::Default,
+                        ButtonSize::Default,
+                        approving,
+                        None,
+                        move |tab: &mut RemoteTab, _window, cx| {
+                            tab.approve_pending_device(approval_id.clone(), cx)
+                        },
+                        cx,
+                    )
+                })
+        }))
         .into_any_element();
     Some(dialog_overlay(
         "remote-qr-preview-overlay",

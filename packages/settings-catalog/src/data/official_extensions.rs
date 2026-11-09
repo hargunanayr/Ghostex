@@ -151,6 +151,19 @@ pub const GHOSTEX_OFFICIAL_EXTENSIONS: J = J::Arr(&[
         ("settingsKey", J::Str("botAutomationsHidden")),
         ("title", J::Str("Bot automations")),
     ]),
+    // CDXC:GBots 2026-11-08 DECISION:
+    // User: native GBots show "under Chief of Staff in Main Hub"; the GBots switch stays and turns them on or off, and needs Main Hub on (`requiresExtension: chief`). Off by default under a key that enables (`gbotsEnabled`); turning it on needs the owner's presence (security_relaxing.rs). Supersedes the 2026-11-06 entry, which put the previous GBots in the Bots space.
+    J::Obj(&[
+        ("appWide", J::Bool(true)),
+        ("description", J::Str("Your own team of bots under Chief of Staff in Main Hub, each with its own instructions and memory, running on your Claude Code or Codex. Needs Main Hub.")),
+        ("category", J::Str("experimental")),
+        ("id", J::Str("gbots")),
+        ("placement", J::Str("feature")),
+        ("requiresExtension", J::Str("chief")),
+        ("settingsKey", J::Str("gbotsEnabled")),
+        ("settingsKeyEnables", J::Bool(true)),
+        ("title", J::Str("GBots")),
+    ]),
     J::Obj(&[
         ("description", J::Str("Browse your project’s notes, plans, and reference files together in one focused reading space.")),
         ("category", J::Str("code-and-files")),
@@ -291,7 +304,7 @@ pub const GHOSTEX_OFFICIAL_EXTENSIONS: J = J::Arr(&[
     ]),
     // CDXC:VoiceMode 2026-10-25 DECISION:
     // User: "voice agent should be an extension so ppl can disable it's button and not see it top of the app if they want". This supersedes the 2026-10-20 decision that the voice agent is built in and not an extension (pages/voice_agent.rs). A whole-feature entry like Read aloud, on by default with a new key (`voiceAgentHidden`, default false, like `connectorsHidden`) and not behind Enable Experimental Features, so nothing changes for anyone who has not touched it. Off hides the header's headset and its arrow menu, the voice call rows and the three hotkeys, ends a call that is running, and gxserver refuses new calls (server/src/voice_agent/feature.rs); the phone follows through `builtInFeaturesOff`. Saved voice settings and the remembered conversation are kept.
-    // CDXC:VoiceMode 2026-10-30 DECISION: User picked option A for the page while this is off on 2026-10-25: "It stays in Settings with only the xAI key and Dictation history, plus a note that Dictate uses that key". Dictate is a separate feature, so the page (Settings > Extensions > Voice agent) is not in `settingsPages`; only the call rows (`settingKeys`) go. On 2026-10-30 Dictate started using the OpenAI key when no xAI key is saved (Q781), and the user answered Q795 "show the OpenAI key too": while this is off the page keeps both keys and the Dictation history, so the OpenAI key is no longer one of the `settingKeys`. Supersedes "only the xAI key".
+    // CDXC:VoiceMode 2026-11-08 DECISION: User: Voice becomes two pages, "Dictation" and "Voice Agent" (CDXC:VoiceMode 2026-11-08 in pages/dictation.rs). The 2026-10-25 option A ("It stays in Settings with only the xAI key and Dictation history") and Q795 ("show the OpenAI key too") are kept by the Dictation page, which shows the key its engine needs and the Dictation history whether this is on or off, so the Voice Agent page is this feature's `settingsPages` and leaves the rail while it is off, with its key rows. Supersedes the 2026-10-30 version, where the shared page stayed for the keys.
     // SEE-ALSO: server/src/voice_agent/feature.rs (gxserver's gate), apps/desktop/src/app/voice_agent/conversation.rs (`voice_agent_on`), apps/mobile/app/src/voice/featureSwitch.ts, docs/2026-10-20/voice-mode/voice-agent-client-contract.md.
     J::Obj(&[
         ("description", J::Str("Talk with a voice agent about your agent sessions: the headset at the top of the window starts a call, and its arrow starts one about a single session, here and in the phone app. Dictate in the chat box is separate and keeps working when this is off.")),
@@ -301,20 +314,34 @@ pub const GHOSTEX_OFFICIAL_EXTENSIONS: J = J::Arr(&[
         ("settingsKey", J::Str("voiceAgentHidden")),
         ("appWide", J::Bool(true)),
         ("title", J::Str("Voice agent")),
-        ("settingKeys", J::Arr(&[J::Str("voiceAgentProvider"), J::Str("voiceAgentXaiVoice"), J::Str("voiceAgentOpenaiVoice"), J::Str("voiceAgentSpeed"), J::Str("voiceAgentCallMode"), J::Str("voiceAgentMemory")])),
+        ("settingKeys", J::Arr(&[J::Str("voiceAgentProvider"), J::Str("voiceAgentXaiKey"), J::Str("voiceAgentOpenaiKey"), J::Str("voiceAgentXaiVoice"), J::Str("voiceAgentOpenaiVoice"), J::Str("voiceAgentSpeed"), J::Str("voiceAgentCallMode"), J::Str("voiceAgentMemory")])),
+        ("settingsPages", J::Arr(&[J::Str("voiceAgent")])),
         ("hotkeys", J::Arr(&[J::Str("toggleVoiceAgent"), J::Str("voiceCallAboutSession"), J::Str("holdToTalk")])),
+    ]),
+    // CDXC:Chief 2026-11-08 DECISION:
+    // User: "please disable chief of staff for now and make it an extension so ppl aren't confused by it until i finish working on it (call it beta in settings pls)", then "i mean the Main Hub thingy". One whole-feature entry, Main Hub, with a Beta badge, off by default (`mainHubHidden`, default true, user-only so no agent can switch it): off, the home project is an ordinary project (gxserver publishes no `isHome` or `isChief`, and hides Chief of Staff's chats), Chief of Staff's agent sleeps and loses its head role, the home folder's secret-folder list is not applied, and nothing says Main Hub or Chief of Staff; on, all of it comes back with its chat and memory. Supersedes Chief's own entry (Q1734-Q1750, on by default).
+    // SEE-ALSO: server/src/chief/ (the session, the head role, `chief_on`), packages/settings-catalog/src/data/defaults.rs (`mainHubHidden`), packages/settings-catalog/src/help/supplemental.rs.
+    J::Obj(&[
+        ("description", J::Str("The home for chats that don't belong to a project, with Chief of Staff, an agent that can see and steer all your other agents, pinned at the top.")),
+        ("category", J::Str("experimental")),
+        ("id", J::Str("chief")),
+        ("placement", J::Str("feature")),
+        ("settingsKey", J::Str("mainHubHidden")),
+        ("appWide", J::Bool(true)),
+        ("badge", J::Str("Beta")),
+        ("title", J::Str("Main Hub")),
+        ("settingKeys", J::Arr(&[J::Str("chiefShowOnAllSpaces"), J::Str("chiefConfirmNewChat"), J::Str("homeSecretFolders")])),
     ]),
     // CDXC:VoiceMode 2026-10-21 DECISION:
     // User: Read aloud ships as a Ghostex extension, disabled by default (2026-10-20), and (Q23) as a built-in extension, not a Store extension: a Store extension cannot reach the chat composer, a message's actions or the phone. A whole-feature entry like Workspaces, with a new key (`readAloudHidden`, default on = hidden) because the settings file stores every default; off hides the reply action, the ⋯ menu rows, the Voice and Speed rows and the two hotkeys, and keeps their saved values. No `platforms` list: the switch also governs the phone and Ghostex in a browser that talk to this computer, so it exists on Linux too, where the desktop draws no controls (Q25; `readAloudUnavailable` says why).
     // SEE-ALSO: packages/gx-chat-core/src/read_aloud/ (the rules), server/src/ghostex_cli/sessions/mobile_summary.rs (`builtInFeatures`, how the phone learns the switch), docs/2026-10-20/voice-mode/read-aloud-client-contract.md.
     J::Obj(&[
         ("description", J::Str("Hear the agent's replies spoken aloud: Read aloud on a reply, and Auto-read in the chat's ⋯ menu, which speaks each finished reply of the chat you're looking at. Uses this device's own voices.")),
-        ("category", J::Str("features")),
+        ("category", J::Str("experimental")),
         ("id", J::Str("readAloud")),
         ("placement", J::Str("feature")),
         ("settingsKey", J::Str("readAloudHidden")),
         // CDXC:VoiceMode 2026-10-22 DECISION: User: "it's ok to bring read aloud work into this release just make it experimental for now if not finished yet (show experimental features makes it appear in the extensions where if enabled then it actually work)". Gated by Enable Experimental Features like Connectors: its card, its Chat rows and its hotkeys show only while that is on, and the phone hears it is on (`builtInFeatures`) only then.
-        ("gatedBy", J::Str("showBetaFeatures")),
         ("appWide", J::Bool(true)),
         ("title", J::Str("Read aloud")),
         ("settingKeys", J::Arr(&[J::Str("readAloudVoice"), J::Str("readAloudRate"), J::Str("readAloudUnavailable")])),
@@ -358,26 +385,37 @@ pub const GHOSTEX_OFFICIAL_EXTENSIONS: J = J::Arr(&[
         ("appWide", J::Bool(true)),
         ("title", J::Str("Claude")),
     ]),
+    // CDXC:Extensions 2026-11-09 DECISION:
+    // User: "let's please add an extension to the app like the claude one that opens different claude accounts but this one is to open different grok bot logins". Built like Claude: its own sidebar button beside Claude's, the page in the sessions column's place with the same takeover (apps/desktop/src/app/claude_web/takeover.rs), and a bar above the page to switch logins. Ghostex has no saved Grok accounts, so the logins are its own (`grokWebLogins`), each a named browser profile with its own cookies; the bar adds one, Settings > Files & Links > Browser renames and removes them. The start page is one setting for every login (`grokWebStartPage`, grok.com by default; the coordinator, for the user: "that url is mine but it should open grok.com usually"), as Claude has no per-account settings. A whole-feature entry with a new key (`grokWebHidden`, default on = hidden, so it starts off like Claude). Off removes the button, the page and the two rows; every login's sign-in is kept.
+    // SEE-ALSO: apps/desktop/src/app/claude_web/grok.rs (the logins and the bar), apps/desktop/src/app/claude_web/place.rs (Claude or Grok).
+    J::Obj(&[
+        ("description", J::Str("Use grok.com inside Ghostex from a button in the sidebar, with several Grok logins kept apart, each with its own sign-in, and a bar above the page to switch between them or add another.")),
+        ("category", J::Str("features")),
+        ("id", J::Str("grokWeb")),
+        ("placement", J::Str("feature")),
+        ("settingsKey", J::Str("grokWebHidden")),
+        ("appWide", J::Bool(true)),
+        ("title", J::Str("Grok")),
+        ("settingKeys", J::Arr(&[J::Str("grokWebStartPage"), J::Str("grokWebLogins")])),
+    ]),
     // CDXC:Extensions 2026-10-19 DECISION:
     // User (Q306): Connectors, OS Integration and Debugging join the Settings rail's Extensions group, and "for the ones that aren't in extensions already add them to extensions and allow disabling/enabling them". Q313: "Switch on top of the gate": each is on by default and its page shows only while its switch is on and its gate (`gatedBy`) is open: Enable Experimental Features for Connectors and OS Integration. Debugging has no gate (CDXC:Settings 2026-10-29 in rail.rs: Show Advanced never hides a page), only its switch. Its Store card is left out while the gate is closed. Turning Connectors off also turns off `ghostex connectors` and its gxserver routes (server/src/connectors/gate.rs, whose CDXC:Connectors 2026-10-15 decision still holds). New `…Hidden` keys default to false, so nobody's Settings changes.
     J::Obj(&[
         ("description", J::Str("Connect Gmail, Slack, Linear and more apps to a workspace so its agents can use them, from the Connectors page and the ghostex connectors commands.")),
-        ("category", J::Str("features")),
+        ("category", J::Str("experimental")),
         ("id", J::Str("connectors")),
         ("placement", J::Str("feature")),
         ("settingsKey", J::Str("connectorsHidden")),
-        ("gatedBy", J::Str("showBetaFeatures")),
         ("appWide", J::Bool(true)),
         ("title", J::Str("Connectors")),
         ("settingsPages", J::Arr(&[J::Str("connectors")])),
     ]),
     J::Obj(&[
         ("description", J::Str("Make Ghostex your default editor, terminal-link handler and script runner, and check how this computer opens its files and links.")),
-        ("category", J::Str("features")),
+        ("category", J::Str("experimental")),
         ("id", J::Str("osIntegration")),
         ("placement", J::Str("feature")),
         ("settingsKey", J::Str("osIntegrationHidden")),
-        ("gatedBy", J::Str("showBetaFeatures")),
         ("appWide", J::Bool(true)),
         ("title", J::Str("OS Integration")),
         ("settingsPages", J::Arr(&[J::Str("osIntegration")])),
@@ -400,12 +438,86 @@ pub const GHOSTEX_OFFICIAL_EXTENSIONS: J = J::Arr(&[
         ("settingsKey", J::Str("extensionsTitlebarButtonHidden")),
         ("title", J::Str("Extensions")),
     ]),
+    // CDXC:Extensions 2026-11-09 DECISION:
+    // User, on the Extensions tabs page (Q2043): "remove the 'Experimental features' toggle itself
+    // and move toggling each of those individually here instead". Enable Experimental Features
+    // (`showBetaFeatures`) is gone; everything it turned on is its own switch in the Experimental
+    // tab, off by default. Keep Awake (the ⋯ menu entry, the top bar control and Settings >
+    // General > Power), All Automations (projectless automations, a coming-soon overlay while
+    // off) and Terminal shaders (macOS) are new entries; Read aloud, Connectors and OS
+    // Integration lost their gate. Someone who had the old switch on keeps what it showed:
+    // `migrate_experimental_features_switch` in lib.rs.
+    J::Obj(&[
+        ("description", J::Str("Keep this computer awake for a while from the ⋯ menu or the button at the top of the window, with its own settings under Settings > General > Power.")),
+        ("category", J::Str("experimental")),
+        ("id", J::Str("keepAwake")),
+        ("placement", J::Str("feature")),
+        ("settingsKey", J::Str("keepAwakeEnabled")),
+        ("settingsKeyEnables", J::Bool(true)),
+        ("appWide", J::Bool(true)),
+        ("title", J::Str("Keep Awake")),
+        ("platforms", J::Arr(&[J::Str("macos")])),
+        ("settingKeys", J::Arr(&[J::Str("hideKeepAwakeTitlebarControl"), J::Str("keepAwakeDefaultDurationMinutes"), J::Str("keepAwakeActivation"), J::Str("keepAwakeDeactivation"), J::Str("keepAwakeAllowDisplaySleep"), J::Str("keepAwakePreventLidSleep"), J::Str("keepAwakeActivateOnLaunch"), J::Str("keepAwakeActivateOnExternalDisplay"), J::Str("keepAwakeWhileWorkingSessions"), J::Str("keepAwakeBatteryThresholdPercent"), J::Str("keepAwakeDeactivateOnLowPowerMode")])),
+    ]),
+    J::Obj(&[
+        ("description", J::Str("Automations that belong to no project, in Automate's All Automations board. While this is off the board shows that it is coming soon.")),
+        ("category", J::Str("experimental")),
+        ("id", J::Str("allAutomations")),
+        ("placement", J::Str("feature")),
+        ("settingsKey", J::Str("allAutomationsEnabled")),
+        ("settingsKeyEnables", J::Bool(true)),
+        ("appWide", J::Bool(true)),
+        ("title", J::Str("All Automations")),
+    ]),
+    J::Obj(&[
+        ("description", J::Str("Apply the shaders from Ghostex's terminal config in order. Metal only; tested on Apple Silicon, not yet on Intel Macs. Turn off to restore ordinary rendering in the same sessions.")),
+        ("category", J::Str("experimental")),
+        ("id", J::Str("terminalShaders")),
+        ("placement", J::Str("feature")),
+        ("settingsKey", J::Str("terminalShadersEnabled")),
+        ("settingsKeyEnables", J::Bool(true)),
+        ("appWide", J::Bool(true)),
+        ("title", J::Str("Terminal shaders")),
+        ("platforms", J::Arr(&[J::Str("macos")])),
+    ]),
+    // CDXC:Extensions 2026-11-09 DECISION: User (Q2000 C on the Faster rendering page): "keep the
+    // toggle but move this to the extensions -> experimental (since we're taking away the
+    // experimental toggle in about page)". Its key, value and default (off) are unchanged; the
+    // About page's Advanced section, which held only it, is gone.
+    J::Obj(&[
+        ("description", J::Str("Redraw only the parts of a window that changed, so Ghostex uses less CPU while agents stream and you scroll. Turn it off if part of a window stops updating.")),
+        ("category", J::Str("experimental")),
+        ("id", J::Str("fasterRendering")),
+        ("placement", J::Str("feature")),
+        ("settingsKey", J::Str("fasterRendering")),
+        ("settingsKeyEnables", J::Bool(true)),
+        ("appWide", J::Bool(true)),
+        ("title", J::Str("Faster rendering")),
+    ]),
+    // CDXC:SessionChat 2026-11-09 DECISION: User, after picking design C for the tool calls ("one
+    // quiet line per run, rows inside"): "let's keep the current way how things work as is ... still
+    // keep the new behavior under a toggle please". Off by default; the tool rows stay the look
+    // (gx-chat-core `transcript/tool_card.rs`).
+    J::Obj(&[
+        ("description", J::Str("Draw each run of an agent's tool calls as one quiet line that says what it is doing or did, with the calls as rows under it. Detailed view opens the lines, Simple keeps them shut. Off keeps the tool rows.")),
+        ("category", J::Str("experimental")),
+        ("id", J::Str("toolCallLines")),
+        ("placement", J::Str("feature")),
+        ("settingsKey", J::Str("chatToolCallLines")),
+        ("settingsKeyEnables", J::Bool(true)),
+        ("appWide", J::Bool(true)),
+        ("title", J::Str("Tool call lines")),
+    ]),
 ]);
 
 pub const GHOSTEX_OFFICIAL_EXTENSION_CATEGORIES: J = J::Arr(&[
     J::Obj(&[
+        // CDXC:Extensions 2026-11-09 DECISION: User (Q2041): "features is bad category, too
+        // general, wtf is features". These are the parts of Ghostex itself you can switch off;
+        // with the page in tabs, Built-in sits beside Views, Panels & menus, Installed and
+        // Community, which say what they are or where they come from.
         ("id", J::Str("features")),
-        ("label", J::Str("Features")),
+        ("label", J::Str("Built-in")),
         ("typeLabel", J::Str("Feature")),
     ]),
     J::Obj(&[
@@ -432,5 +544,14 @@ pub const GHOSTEX_OFFICIAL_EXTENSION_CATEGORIES: J = J::Arr(&[
         ("id", J::Str("menus-and-panels")),
         ("label", J::Str("Menus and panels")),
         ("typeLabel", J::Str("Menu item")),
+    ]),
+    // Last, at the right of the tabs (User, Q2041: "Experimental should be the last one on the
+    // right"). CDXC:Extensions 2026-11-09 DECISION: User (Q2038 on the Features list page): the features
+    // shown only while Experimental features is on get their own group, "move gbots there too
+    // please and main hub for now".
+    J::Obj(&[
+        ("id", J::Str("experimental")),
+        ("label", J::Str("Experimental")),
+        ("typeLabel", J::Str("Feature")),
     ]),
 ]);

@@ -43,6 +43,10 @@ pub fn machine_state_copy(state: &str) -> (&'static str, Option<&'static str>) {
             "Cannot sign in to machine",
             Some("The machine rejected the saved SSH username, password or key."),
         ),
+        "pairingRequired" => (
+            "Pair this computer again",
+            Some("That computer's Easy Connect lets in only computers paired with it since Ghostex 11.1."),
+        ),
         "sshFailed" => ("Cannot reach machine", Some("SSH connection failed.")),
         "tunnelFailed" => ("Cannot reach machine", Some("SSH tunnel failed.")),
         "keychainFailed" => (
@@ -70,6 +74,36 @@ pub fn machine_state_copy(state: &str) -> (&'static str, Option<&'static str>) {
             Some("Reconnect the machine to try again."),
         ),
         _ => ("Connecting to machine…", None),
+    }
+}
+
+/// The two-word status a machine's tile shows for its connection state.
+///
+/// CDXC:RemoteMachines 2026-11-08 DECISION: User (Q2024 on the remote tile page, after "please wtf
+/// is this fucking error" about a tile that held "Remote setup failed: gxserver runs on that
+/// machine, but its zmx program is missing or broken, so new sessions cannot start." in six
+/// wrapped lines): a machine tile never holds a paragraph. It shows these short words with a red dot
+/// for a failure; the title and the reason stay in the machine's sheet and the sidebar notice
+/// ([`machine_state_copy`]), which have room for them.
+pub fn machine_state_short_word(state: &str) -> &'static str {
+    match state {
+        "connected" => "Connected",
+        "installing" => "Installing…",
+        "downloadingRemoteServerPackage" => "Downloading…",
+        "disconnected" => "Not connected",
+        "installApprovalRequired" => "Setup needed",
+        "installFailed" => "Setup failed",
+        "authFailed" => "Sign-in refused",
+        "pairingRequired" => "Pair again",
+        "presentationSubscribeFailed" | "presentationStreamFailed" => "Reconnecting…",
+        // A gxserver of another protocol (`gpui_remote_protocol_mismatch_message`).
+        "unsupported" => "Needs update",
+        "unsupportedRemotePlatform" => "Unsupported",
+        "invalid" => "Incomplete",
+        "sshFailed" | "tunnelFailed" | "keychainFailed" | "tokenUnavailable" | "failed" => {
+            "Can't reach"
+        }
+        _ => "Connecting…",
     }
 }
 

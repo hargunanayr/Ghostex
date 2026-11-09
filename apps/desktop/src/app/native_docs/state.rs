@@ -3,7 +3,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use gpui::{Entity, FocusHandle, ScrollHandle, SharedString, Subscription, Task};
+use gpui::{
+    Entity, FocusHandle, ScrollHandle, SharedString, Subscription, Task, UniformListScrollHandle,
+};
 use gpui_component::input::{EditorState, InputState};
 
 /// The project a Docs view belongs to. A change of any part reloads the files from scratch.
@@ -370,6 +372,9 @@ pub(crate) struct DocsDocument {
     /// Reopened from the last visit (`native_docs_restore_open_files`) rather than opened now, so
     /// a file deleted since then closes quietly (`native_docs_apply_read`).
     pub(crate) restored: bool,
+    /// Shown but never saved: a remote file a chat linked to outside the project (`readOnly` in
+    /// gxserver's answer, CDXC:Docs 2026-11-07 in server/src/project_docs/chat_file.rs).
+    pub(crate) read_only: bool,
 }
 
 impl DocsDocument {
@@ -422,6 +427,7 @@ impl DocsDocument {
             data_view_open,
             data_view: None,
             restored: false,
+            read_only: false,
         }
     }
 }
@@ -467,7 +473,8 @@ pub(crate) struct NativeDocsState {
     pub(crate) expand_all: bool,
     /// The open file's row, to scroll to after Reveal open file.
     pub(crate) reveal_request: Option<String>,
-    pub(crate) tree_scroll: ScrollHandle,
+    /// The tree is a virtual list (`files_list.rs`): only the rows on screen are built.
+    pub(crate) tree_scroll: UniformListScrollHandle,
     /// The open file tabs' row (`open_file_tabs.rs`) scrolls sideways; it was last scrolled to the
     /// shown file at that place in the row (`tab_revealed`), so it follows the shown file, and the
     /// shown file's tab moving, without undoing a scroll by hand.
@@ -484,6 +491,10 @@ pub(crate) struct NativeDocsState {
     pub(crate) pending_origin: Option<crate::TerminalSessionId>,
     /// A file asked for before Docs synced to the current project.
     pub(crate) pending_open: Option<String>,
+    /// Remote files outside the project that a session's chat linked to, by their absolute path:
+    /// the remote project (its scoped id) and the session whose chat named them. Their reads carry
+    /// that `sessionId`, which gxserver checks against the chat (`remote_files.rs`).
+    pub(crate) remote_chat_files: std::collections::HashMap<String, (String, String)>,
     /// A published page asked for before Docs synced to the current project.
     pub(crate) pending_page: Option<super::published_page::DocsPendingPage>,
     /// Open File was asked for before Files drew; its next draw shows the search box.
@@ -504,8 +515,6 @@ pub(crate) struct NativeDocsState {
     /// The tree's and Open Files' keyboard focus.
     pub(crate) tree_focus_handle: Option<FocusHandle>,
     pub(crate) open_files_focus_handle: Option<FocusHandle>,
-    /// Rows drawn above the tree's first entry (the loading or error line), as last drawn.
-    pub(crate) tree_status_rows: usize,
     /// The project's notes (`.ghostex/manage-annotations.json`), by file path.
     pub(crate) notes: super::annotations::DocsAnnotationsByPath,
     pub(crate) notes_loaded: bool,
@@ -522,6 +531,9 @@ pub(crate) struct NativeDocsState {
     pub(crate) composer: Option<super::notes::DocsComposer>,
     /// The Annotations list dropdown is open.
     pub(crate) notes_list_open: bool,
+    /// The note an Annotations list click just jumped to (its index among the open file's notes)
+    /// and when, so its text shows a stronger highlight for a moment.
+    pub(crate) note_flash: Option<(usize, std::time::Instant)>,
     /// Rendered diagrams, formulas, images and code colours, shared by every open document.
     pub(crate) blocks: super::blocks::SharedCache,
     /// The formatting bar's view toggles (the Docs editor's defaults: all on).

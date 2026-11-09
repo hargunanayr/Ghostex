@@ -3,10 +3,8 @@
 //! Ported row for row from the sidebar page's session menu (frozen in the deleted
 //! `tooling/gx-core/sidebar-page-frozen/session-menu.ts`; see git history).
 //!
-//! CDXC:ContextMenus 2026-09-19 DECISION:
-//! The user asked for a different pin icon in the sidebar context menu. Pin uses the upright
-//! pushpin that pairs with Unpin's crossed-out pushpin (the React menu's IconPinned); the card
-//! hover button keeps the diagonal pin. Every sidebar menu label is Title Case ("Close Inactive",
+//! CDXC:ContextMenus 2026-09-19 DECISION (2026-11-08 update):
+//! User, 2026-11-08: "this pin is fugly please fix. we should use the other look for the pin we have in the app already (filled / unfilled)". Every pin in the app is now the one Tabler pin pair: Pin shows the outline (`pin-outline`) and Unpin the filled pin (`pin-filled`), in this menu, its hover button and the bulk menus. This supersedes the 2026-09-19 upright pushpin and crossed-out pushpin. Every sidebar menu label is Title Case ("Close Inactive",
 //! "Pin Selected"), except disabled status sentences.
 
 use crate::sidebar_view::ordering::session_is_snoozed;
@@ -289,7 +287,11 @@ fn action_rows(
         pin: caps.can_pin_session.then(|| {
             MenuItem::row(
                 if row.is_pinned { "Unpin" } else { "Pin" },
-                if row.is_pinned { "pinned-off" } else { "pin" },
+                if row.is_pinned {
+                    "pin-filled"
+                } else {
+                    "pin-outline"
+                },
                 MenuCommand::command(message::set_session_pinned(id, !row.is_pinned)),
             )
         }),
@@ -478,7 +480,7 @@ fn move_to_group_item(id: &str, moves: Option<&SessionGroupMoves>, stale: bool) 
     MenuItem::submenu("Move to Group", "layout-sidebar-right-expand", children).with_page()
 }
 
-/// An orchestrator's Goal & Instructions and Memory editors, and a thread's Mark Thread Done or
+/// An orchestrator's Goal & Instructions, Memory and Playbook overrides editors, and a thread's Mark Thread Done or
 /// Reopen Thread, after a separator. An orchestrator's block goes on with Sleep Inactive Threads.
 ///
 /// CDXC:Coordinators 2026-10-13 DECISION:
@@ -499,6 +501,13 @@ fn coordinator_rows(row: &SessionRow, stale: bool) -> Vec<MenuItem> {
             "Memory…",
             "brain",
             MenuCommand::coordinator_session(id, "memory"),
+        ));
+        // CDXC:Coordinators 2026-11-07: the user's playbook overrides (for every coordinator on
+        // this one's computer) open from here too; see server/src/coordinators/playbook.rs.
+        rows.push(MenuItem::row(
+            "Playbook overrides…",
+            "book",
+            MenuCommand::coordinator_session(id, "playbookOverrides"),
         ));
     } else if row.coordinator_parent.is_some() {
         let state = row.thread_state.as_deref();
@@ -581,7 +590,7 @@ fn full_menu(
         }
         menu.push(if action == HoverAction::Pin && !row.is_pinned {
             MenuItem {
-                icon: Some("pinned".to_string()),
+                icon: Some("pin-outline".to_string()),
                 ..item.clone()
             }
         } else {
@@ -743,9 +752,9 @@ fn full_menu(
         });
     }
     // CDXC:Coordinators 2026-10-04 SEE-ALSO: promote_session_to_coordinator in server/src/coordinators/promote.rs (the user's decision that Make Coordinator lives here and never disturbs the running session); gxserver refuses the same sessions this row is hidden on, by the same agent list (`COORDINATOR_AGENT_FAMILIES` in gx-protocol). The phone's session menu (apps/mobile/app/src/screens/sessions-screen/sidebar-menus.ts) offers it too.
+    // CDXC:Coordinators 2026-11-07 FIX: a reporter on Discord asked "why orchestrator cannot be promoted to a session in a remote machine from the desktop app?" (they had found it only in the CLI), and the user answered "I'll add that command too looks like it's not showing in ui". A connected computer's row offers Make Coordinator too: the desktop sends `/api/promoteCoordinator` to the gxserver that runs the session (gx_store/create/coordinator.rs), which installs the orchestrator skill on that computer and queues the playbook there.
     if !caps.is_browser_session
         && !group.is_stale
-        && !group.is_remote
         && !in_box
         && !row.is_draft
         && !row.is_coordinator
@@ -812,7 +821,7 @@ fn full_menu(
             .filter(|row| {
                 can_sleep(row)
                     && !row.has_background_work
-                    && row.pending_question_count == 0
+                    && !row.has_question()
                     && !row.awaiting_approval
             })
             .map(|row| row.sidebar_session_id.clone())

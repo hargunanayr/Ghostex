@@ -37,6 +37,25 @@ pub(crate) struct NativeSidebarSnapshot {
     pub(crate) collections: Vec<NativeSidebarCollection>,
     pub(crate) order: Vec<NativeSidebarOrderItem>,
     pub(crate) more_menu: Value,
+    /// The Chief built-in extension is on (`mainHubHidden`, Main Hub), so its row is drawn under the Spaces
+    /// bar (native_sidebar/chief.rs).
+    #[serde(default)]
+    pub(crate) chief_enabled: bool,
+    /// Each computer's Chief: the selected machine's, or with computers combined this computer's
+    /// first (gx-core `SidebarView::chiefs`).
+    #[serde(default)]
+    pub(crate) chiefs: Vec<NativeSidebarChief>,
+    /// The home groups' headers (gx-core `SidebarView::home_headers`): each home group is drawn
+    /// with Main Hub's row as its header (native_sidebar/chief.rs).
+    #[serde(skip)]
+    pub(crate) home_headers: Vec<NativeSidebarHome>,
+    /// The machines whose Chief is a home header; the others keep the row under the Spaces bar.
+    #[serde(skip)]
+    pub(crate) machines_with_home: Vec<String>,
+    /// Main Hub's GBots section (gx-core `SidebarView::gbots`), drawn inside the home group
+    /// (native_sidebar/gbots_rows.rs).
+    #[serde(skip)]
+    pub(crate) gbots: Vec<ghostex_gx_core::GbotsSectionView>,
     pub(crate) search_shortcut: Option<String>,
     pub(crate) commands_shortcut: Option<String>,
 }
@@ -104,6 +123,10 @@ pub(crate) struct NativeSidebarSection {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NativeSidebarSession {
     pub(crate) session_id: String,
+    /// A computer's Chief of Staff (gx-core `SessionRow::is_chief`): its right-click menu starts
+    /// with New Chat, Change Agent and its editors (native_sidebar/chief.rs).
+    #[serde(default)]
+    pub(crate) is_chief: bool,
     pub(crate) display_title: Option<String>,
     pub(crate) alias: String,
     pub(crate) activity: String,
@@ -249,4 +272,38 @@ fn deserialize_sessions<'de, D: serde::Deserializer<'de>>(
 ) -> Result<Vec<Arc<NativeSidebarSession>>, D::Error> {
     Vec::<NativeSidebarSession>::deserialize(deserializer)
         .map(|sessions| sessions.into_iter().map(Arc::new).collect())
+}
+
+/// One computer's home group header (gx-core `HomeHeaderView`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct NativeSidebarHome {
+    /// The home project's group.
+    pub(crate) group_id: String,
+    /// `local`, or the remote machine's id.
+    pub(crate) machine_id: String,
+    pub(crate) machine_label: String,
+    /// That computer's Chief; `None` before its first open.
+    pub(crate) chief: Option<NativeSidebarChief>,
+}
+
+/// One computer's Chief row (gx-core `ChiefRowView`).
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NativeSidebarChief {
+    /// `local`, or the remote machine's id.
+    pub(crate) machine_id: String,
+    pub(crate) machine_label: String,
+    pub(crate) is_local: bool,
+    pub(crate) project_id: String,
+    pub(crate) session_id: String,
+    /// The row's sidebar session id (`<machine>:<project>:<session>` for a remote one).
+    pub(crate) sidebar_session_id: String,
+    pub(crate) activity: String,
+    pub(crate) has_question: bool,
+    pub(crate) awaiting_approval: bool,
+    pub(crate) has_background_work: bool,
+    /// A failed model change, a failed program status or a stuck turn: the red dot.
+    pub(crate) failed: bool,
+    pub(crate) lifecycle_state: String,
+    pub(crate) is_focused: bool,
 }

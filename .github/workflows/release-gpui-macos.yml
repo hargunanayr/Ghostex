@@ -19,6 +19,8 @@ on:
         default: ''
         type: string
     secrets:
+      GHOSTEX_COMPONENT_SIGNING_KEY:
+        required: false
       APPLE_DEVELOPER_ID_P12_BASE64:
         required: true
       APPLE_DEVELOPER_ID_P12_PASSWORD:
@@ -50,6 +52,13 @@ permissions:
   attestations: write
   contents: write
   id-token: write
+
+# Ghostex's component signing key (tooling/release-gpui/component-signing.mjs): publish-component.mjs
+# signs every component archive it records; GHOSTEX_REQUIRE_COMPONENT_SIGNATURES makes it, and the seal, refuse unsigned ones (#495).
+env:
+  GHOSTEX_COMPONENT_SIGNING_KEY: ${{ secrets.GHOSTEX_COMPONENT_SIGNING_KEY }}
+  # The app's sealed on-demand-resources.json must carry every archive's signature.
+  GHOSTEX_REQUIRE_COMPONENT_SIGNATURES: '1'
 
 jobs:
   build:
@@ -172,15 +181,15 @@ jobs:
         id: ghosttykit_cache
         with:
           path: .dependencies/ghostty/macos/GhosttyKit.xcframework
-          key: warm-ghosttykit-macos-arm64-zig0.17.0-${{ steps.cache_keys.outputs.zig }}
+          key: warm-ghosttykit-macos-arm64-zig0.17.1-${{ steps.cache_keys.outputs.zig }}
       - name: Install build tools
         run: tooling/release-gpui/retry.sh 3 5 -- brew install cmake ninja rsync xcodegen
       - name: Install pinned Zig toolchain
         run: |
           tooling/release-gpui/retry.sh 3 5 -- bash -c 'curl -fsSL https://mise.run | sh'
-          tooling/release-gpui/retry.sh 3 5 -- "$HOME/.local/bin/mise" install zig@0.17.0
-          ZIG_BIN="$HOME/.local/share/mise/installs/zig/0.17.0/bin/zig"
-          [[ "$($ZIG_BIN version)" == "0.17.0" ]]
+          tooling/release-gpui/retry.sh 3 5 -- "$HOME/.local/bin/mise" install zig@0.17.1
+          ZIG_BIN="$HOME/.local/share/mise/installs/zig/0.17.1/bin/zig"
+          [[ "$($ZIG_BIN version)" == "0.17.1" ]]
           printf 'ZIG=%s\nGHOSTEX_ZIG=%s\n' \
             "$ZIG_BIN" "$ZIG_BIN" >> "$GITHUB_ENV"
       - name: Seed pinned VS Code ripgrep cache
@@ -296,6 +305,8 @@ jobs:
             GHOSTEX_ON_DEMAND_CODE_SERVER_LINUX_ARM64_ARCHIVE; do
             printf '%s=%s\n' "$name" "${!name}" >> "$GITHUB_ENV"
           done
+          # Record the Collab component (release-gpui-collab.yml, tooling/collab/seal-component.sh) before sealing.
+          echo "GHOSTEX_COLLAB_SEAL=1" >> "$GITHUB_ENV"
       - name: Prepare references and GhosttyKit
         env:
           GH_TOKEN: ${{ github.token }}

@@ -194,6 +194,7 @@ pub(crate) fn create_started_workspace_terminal(
         prompt_editor: prompt_editor.clone(),
         session_name: zmx_name.clone(),
         zmx_executable_path: zmx.executable_path.clone(),
+        session_token: crate::security::session_token_for_launch(&project_id, &session_id, &[]),
     });
     if let Err(error) = run_zmx_start_command(&zmx_name, &zmx.executable_path, start_command) {
         return Err(workspace_terminal_failure_with_cleanup(
@@ -615,7 +616,7 @@ pub fn dispatch_zmx_lifecycle_endpoint(
                 waiting on the user, so every client's inactivity sweep is declined here too; an
                 explicit Sleep on the row still goes through.
                 */
-                if crate::session_chat_async_questions::pending_question_count(&session) > 0 {
+                if crate::session_approval::session_has_question(&session) {
                     return Ok(ZmxEndpointOutput {
                         created_workspace_terminal: None,
                         result: json!({ "declined": "pendingQuestion", "session": session }),

@@ -76,6 +76,13 @@ permissions:
   contents: write
   id-token: write
 
+# Ghostex's component signing key (tooling/release-gpui/component-signing.mjs): publish-component.mjs
+# signs every component archive it records; GHOSTEX_REQUIRE_COMPONENT_SIGNATURES makes it, and the seal, refuse unsigned ones (#495).
+env:
+  GHOSTEX_COMPONENT_SIGNING_KEY: ${{ secrets.GHOSTEX_COMPONENT_SIGNING_KEY }}
+  # The app's sealed on-demand-resources.json must carry every archive's signature.
+  GHOSTEX_REQUIRE_COMPONENT_SIGNATURES: '1'
+
 jobs:
   build:
     # CDXC:Release 2026-10-31 WHY:
@@ -99,6 +106,9 @@ jobs:
       CARGO_INCREMENTAL: '0'
       KACHE_STORE_SET: linux-${{ inputs.arch }}-1
       GHOSTEX_RELEASE_BUILD_ONLY: ${{ inputs.build_only && '1' || '0' }}
+      # Record the Collab component (release-gpui-collab.yml, tooling/collab/seal-component.sh) before sealing.
+      GHOSTEX_COLLAB_SEAL: '1'
+      GHOSTEX_COLLAB_OPTIONAL: ${{ inputs.build_only && '1' || '0' }}
       LINUX_ARCH: ${{ inputs.arch }}
       LINUX_DEB_ARCH: ${{ inputs.arch == 'arm64' && 'arm64' || 'amd64' }}
       LINUX_RPM_ARCH: ${{ inputs.arch == 'arm64' && 'aarch64' || 'x86_64' }}
@@ -216,9 +226,9 @@ jobs:
       - name: Install pinned Zig toolchain
         run: |
           tooling/release-gpui/retry.sh 3 5 -- bash -c 'curl -fsSL https://mise.run | sh'
-          tooling/release-gpui/retry.sh 3 5 -- "$HOME/.local/bin/mise" install zig@0.17.0
-          ZIG_BIN="$HOME/.local/share/mise/installs/zig/0.17.0/bin/zig"
-          [[ "$($ZIG_BIN version)" == "0.17.0" ]]
+          tooling/release-gpui/retry.sh 3 5 -- "$HOME/.local/bin/mise" install zig@0.17.1
+          ZIG_BIN="$HOME/.local/share/mise/installs/zig/0.17.1/bin/zig"
+          [[ "$($ZIG_BIN version)" == "0.17.1" ]]
           printf 'ZIG=%s\nGHOSTEX_ZIG=%s\n' "$ZIG_BIN" "$ZIG_BIN" >> "$GITHUB_ENV"
       - name: Install JavaScript dependencies
         run: tooling/release-gpui/retry.sh 3 5 -- bun install --frozen-lockfile
@@ -453,11 +463,14 @@ jobs:
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: build/release-gpui/${{ inputs.version }}/linux-tar-${{ env.LINUX_ARCH }}/ghostex-${{ inputs.version }}-linux-${{ env.LINUX_ARCH }}.tar.zst
+      # CDXC:Release 2026-11-08 WHY: the AppImage product is the image and its .zsync file (product-inputs.mjs), and a reuse redispatch verifies an attestation for every file of the product, so attesting only the image made 11.1.0's reuse refuse "ghostex-11.1.0-linux-x64.AppImage.zsync has no verifiable build attestation".
       - name: Attest the AppImage
         if: ${{ contains(inputs.packages, 'appimage') && !inputs.build_only }}
         uses: actions/attest-build-provenance@v4
         with:
-          subject-path: build/release-gpui/${{ inputs.version }}/linux-appimage-${{ env.LINUX_ARCH }}/ghostex-${{ inputs.version }}-linux-${{ env.LINUX_ARCH }}.AppImage
+          subject-path: |
+            build/release-gpui/${{ inputs.version }}/linux-appimage-${{ env.LINUX_ARCH }}/ghostex-${{ inputs.version }}-linux-${{ env.LINUX_ARCH }}.AppImage
+            build/release-gpui/${{ inputs.version }}/linux-appimage-${{ env.LINUX_ARCH }}/ghostex-${{ inputs.version }}-linux-${{ env.LINUX_ARCH }}.AppImage.zsync
       - name: Attest the DEB package
         if: ${{ contains(inputs.packages, 'deb') && !inputs.build_only }}
         uses: actions/attest-build-provenance@v4

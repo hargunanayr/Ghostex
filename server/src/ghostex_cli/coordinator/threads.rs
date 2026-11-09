@@ -156,7 +156,7 @@ fn remote_project_like(
 }
 
 /// CDXC:Coordinators 2026-09-30 WHY:
-/// The task reaches the thread as a message from the coordinator (so its chat shows who sent it and `Reply to` names the coordinator), wrapped with the goal, standing instructions, memory and reporting rules. The thread is linked before its agent starts, so the supervisor sees its first turn from the beginning.
+/// The task reaches the thread as a message from the coordinator (so its chat shows who sent it and `Reply to` names the coordinator), wrapped with the goal, standing instructions and reporting rules (memory notes are the coordinator's own since 2026-11-07, brief.rs `thread_brief`). The thread is linked before its agent starts, so the supervisor sees its first turn from the beginning.
 pub(in crate::ghostex_cli) fn start_thread(parsed: &ParsedArgs) -> CliResult<()> {
     let title = flag_text(&parsed.flags, "title")
         .ok_or_else(|| CliError::Other("start-thread needs --title \"<3 to 6 words>\".".into()))?;
@@ -168,20 +168,10 @@ pub(in crate::ghostex_cli) fn start_thread(parsed: &ParsedArgs) -> CliResult<()>
     let (coordinator_row, flags) = target_coordinator(parsed)?;
     let view = read_view(&coordinator_row, &flags)?;
     let coordinator = &view["coordinator"];
-    let notes = coordinator["memory"]
-        .as_array()
-        .map(|notes| {
-            notes
-                .iter()
-                .map(|note| agents::text(note, "text").to_string())
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
     let brief = thread_brief(
         &BriefContext {
             goal: agents::text(coordinator, "goal"),
             instructions: agents::text(coordinator, "instructions"),
-            notes: &notes,
             worktree: parsed.flags.truthy("worktree"),
         },
         &task,
@@ -197,8 +187,12 @@ pub(in crate::ghostex_cli) fn start_thread(parsed: &ParsedArgs) -> CliResult<()>
     // `--computer` runs the thread on a connected computer; the coordinator stays here.
     let local_flags = flags.clone();
     let (flags, remote_server_id) = thread_computer_flags(parsed, &local_flags)?;
+    // `--path <folder>`: gxserver adds the folder as a project (on the `--computer` one too) and
+    // starts the thread there (gbots/project.rs `add_create_project_path`).
+    let folder = flag_text(&parsed.flags, "path");
     let project_id = match (flag_text(&parsed.flags, "projectId"), &remote_server_id) {
         (Some(project_id), _) => project_id,
+        (None, _) if folder.is_some() => String::new(),
         (None, None) => agents::text(coordinator, "projectId").to_string(),
         (None, Some(_)) => remote_project_like(&coordinator_row, &flags)?,
     };
@@ -214,6 +208,11 @@ pub(in crate::ghostex_cli) fn start_thread(parsed: &ParsedArgs) -> CliResult<()>
         "title": title,
         "markedHandovers": true,
     });
+    if project_id.is_empty() {
+        if let Some(folder) = &folder {
+            create["projectPath"] = json!(folder);
+        }
+    }
     if let Some(model) = flag_text(&parsed.flags, "model") {
         create["agentModel"] = json!(model);
     }
@@ -225,15 +224,29 @@ pub(in crate::ghostex_cli) fn start_thread(parsed: &ParsedArgs) -> CliResult<()>
         create["account"] = json!(account);
     }
     let worktree = parsed.flags.truthy("worktree");
-    let (session_id, branch, worktree_path) = if worktree {
+    let (session_id, branch, worktree_path, created_project) = if worktree {
         if let Some(base) = flag_text(&parsed.flags, "baseBranch") {
             create["baseBranch"] = json!(base);
+        }
+        // A worktree thread's agent starts inside this create, before the link below is written,
+        // so its coordinator markers name the coordinator here (coordinators/launch_env.rs). Not
+        // on another computer: that one keeps no record of the link (issue #463).
+        let coordinator_ref = agents::text(&coordinator_row, "globalRef");
+        if remote_server_id.is_none() && !coordinator_ref.is_empty() {
+            create[crate::coordinators::COORDINATOR_THREAD_OF_PARAM] = json!(coordinator_ref);
+        }
+        // There it is kept on the session instead, so the worktree it gets is trusted like a local
+        // thread's (CDXC:Coordinators 2026-11-08 at `coordinator_thread_folder_trusted`).
+        if remote_server_id.is_some() && !coordinator_ref.is_empty() {
+            create[crate::coordinators::REMOTE_COORDINATOR_THREAD_OF_PARAM] =
+                json!(coordinator_ref);
         }
         let created = call_gxserver_rpc("/api/createWorktreeSession", &create, &flags)?;
         (
             agents::text(&created, "sessionId").to_string(),
             Some(agents::text(&created, "branch").to_string()),
             Some(agents::text(&created, "worktreePath").to_string()),
+            agents::text(&created, "projectId").to_string(),
         )
     } else {
         let created = call_gxserver_rpc("/api/createAgentSession", &create, &flags)?;
@@ -241,7 +254,14 @@ pub(in crate::ghostex_cli) fn start_thread(parsed: &ParsedArgs) -> CliResult<()>
             agents::text(&created["session"], "sessionId").to_string(),
             None,
             None,
+            agents::text(&created["session"], "projectId").to_string(),
         )
+    };
+    // The project gxserver added for `--path`.
+    let project_id = if project_id.is_empty() {
+        created_project
+    } else {
+        project_id
     };
     if session_id.is_empty() {
         return Err(CliError::Other(

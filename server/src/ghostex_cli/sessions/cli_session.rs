@@ -15,9 +15,14 @@ pub(super) fn to_cli_session(
 ) -> Value {
     let p = |key: &str| presentation_session.and_then(|value| value.get(key));
     let s = |key: &str| session.get(key);
-    let lifecycle_state = js_string(s("lifecycleState"));
+    let raw_lifecycle_state = js_string(s("lifecycleState"));
     let provider_state =
         js_string(s("providerState").and_then(|value| value.get("lifecycleState")));
+    let lifecycle_state = if provider_state == "missing" && raw_lifecycle_state == "running" {
+        "sleeping".to_string()
+    } else {
+        raw_lifecycle_state
+    };
     let activity = normalize_cli_session_activity(p("activity"));
     let status: Value = if lifecycle_state == "sleeping" {
         json!("sleep")
@@ -156,7 +161,7 @@ pub(super) fn to_cli_session(
     );
     /*
      * CDXC:SessionStatus 2026-09-25 WHY:
-     * The phone's session row draws the same status as the desktop sidebar row, which reads these three off the presentation session: the pink question dot (`pendingQuestionCount`), the grey background-work dot (`backgroundWorkDetectedAt`) and the Close After Done countdown (`closeAfterDoneDeadlineAt`). Presentation is the only source; an older daemon omits them. `to_mobile_session_summary` below forwards them again, and the phone reads them in apps/mobile/app/src/components/sessions/sessionStatus.ts.
+     * The phone's session row draws the same status as the desktop sidebar row, which reads these off the presentation session: the pink question dot (`pendingQuestionCount` or `awaitingAnswer`), the grey background-work dot (`backgroundWorkDetectedAt`) and the Close After Done countdown (`closeAfterDoneDeadlineAt`). Presentation is the only source; an older daemon omits them. `to_mobile_session_summary` below forwards them again, and the phone reads them in apps/mobile/app/src/components/sessions/sessionStatus.ts.
      */
     insert_js(
         &mut map,
@@ -172,6 +177,12 @@ pub(super) fn to_cli_session(
     insert_js(&mut map, "awaitingApproval", &[p("awaitingApproval")]);
     // The red not-moving dot (server/src/coordinators/stall.rs); absent while it moves.
     insert_js(&mut map, "stuckSince", &[p("stuckSince")]);
+    // The red blocked dot: every account out of usage, or an error recovery could not get past
+    // (CDXC:Notifications 2026-11-08 in packages/gx-core/src/alert_rule.rs); absent while not blocked.
+    insert_js(&mut map, "blockedSince", &[p("blockedSince")]);
+    insert_js(&mut map, "blockedReason", &[p("blockedReason")]);
+    // A question card waits for the user (CDXC:SessionStatus 2026-10-31 in server/src/session_approval.rs); absent when false.
+    insert_js(&mut map, "awaitingAnswer", &[p("awaitingAnswer")]);
     // CDXC:Sidebar 2026-10-30 SEE-ALSO: the phone's Unified list (apps/mobile/app/src/contract/unified/) reads what gx-core's Unified sidebar reads: when the working stint began (its "came back" moment and Working timer) and a failed model change (its Failed status).
     insert_js(&mut map, "workingStartedAt", &[p("workingStartedAt")]);
     insert_js(
@@ -214,6 +225,12 @@ pub(super) fn to_cli_session(
     insert_js(&mut map, "sessionNote", &[p("sessionNote")]);
     // CDXC:Coordinators 2026-10-01 SEE-ALSO: mobile_summary.rs forwards it too; the phone's session row draws the coordinator crown from it (apps/mobile/app/src/components/sessions/SessionRow.tsx) and nests threads under it from the three fields after it (apps/mobile/app/src/contract/coordinatorTree.ts).
     insert_js(&mut map, "coordinatorRole", &[p("coordinatorRole")]);
+    // CDXC:Chief 2026-11-08 WHY: the phone draws Chief's row from this flag and leaves the session out of its project (apps/mobile/app ChiefRow).
+    insert_js(&mut map, "isChief", &[p("isChief")]);
+    insert_js(&mut map, "chiefEarlier", &[p("chiefEarlier")]);
+    // A GBot chat's bot and who opened it; the phone folds it under its bot (apps/mobile/app GbotsRows).
+    insert_js(&mut map, "gbotsChat", &[p("gbotsChat")]);
+    insert_js(&mut map, "mainHubHidden", &[p("mainHubHidden")]);
     insert_js(
         &mut map,
         "coordinatorProjectId",

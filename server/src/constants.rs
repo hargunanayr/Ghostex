@@ -171,4 +171,13 @@ pub const GXSERVER_MIGRATION_IDS: &[&str] = &[
     "0057_coordinator_board_answers",
     "0058_coordinator_board_answered",
     "0059_paired_device_api_token",
+    "0060_coordinator_board_tag",
+    "0061_tailcat_relay",
+    "0062_pairing_v2_device_keys",
+    "0063_projects_revision",
+    "0064_side_chat_index",
+    "0065_gbots",
+    "0066_gbots_routines",
+    "0067_gbots_problems",
+    "0068_gbots_day_watch",
 ];

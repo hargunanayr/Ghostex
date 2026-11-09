@@ -66,6 +66,9 @@ pub(crate) struct SessionChatReadResolution {
     switchable_agents: Option<Value>,
     /// Whether the session runs on its own login, so the chat offers no account (CDXC:AgentProviders 2026-10-09 in accounts/launch.rs).
     uses_own_login: bool,
+    /// The agents turned on in Settings › Agents (`crate::agents::enabled_agent_icons`), in the
+    /// fingerprint so a long-polling phone learns when one is turned on or off.
+    enabled_agent_icons: Vec<String>,
     fingerprint: String,
 }
 
@@ -138,6 +141,10 @@ pub(crate) fn resolve_session_chat_read_state(
     let switchable_agents = project
         .as_ref()
         .and_then(|project| crate::agents::switchable_session_agents_value(project, &session));
+    let enabled_agent_icons = project
+        .as_ref()
+        .map(crate::agents::enabled_agent_icons)
+        .unwrap_or_default();
     let uses_own_login = project
         .as_ref()
         .and_then(|project| crate::accounts::launch::provider(project, &session))
@@ -329,6 +336,7 @@ pub(crate) fn resolve_session_chat_read_state(
     if uses_own_login {
         uses_own_login.hash(&mut hasher);
     }
+    enabled_agent_icons.hash(&mut hasher);
     let fingerprint = format!("{:016x}", hasher.finish());
 
     Ok(SessionChatReadResolution {
@@ -345,6 +353,7 @@ pub(crate) fn resolve_session_chat_read_state(
         available_agents,
         switchable_agents,
         uses_own_login,
+        enabled_agent_icons,
         fingerprint,
     })
 }
@@ -537,6 +546,7 @@ pub(crate) async fn handle_read_session_chat_http(
         available_agents,
         switchable_agents,
         uses_own_login,
+        enabled_agent_icons,
         fingerprint,
     } = resolution;
 
@@ -584,6 +594,9 @@ pub(crate) async fn handle_read_session_chat_http(
     }
     // On every answer, so a client tells "this daemon says no" from an older daemon that never sends it.
     result.insert("usesOwnLogin".to_string(), json!(uses_own_login));
+    // Rides every read, so the model menu on every client (the phone included) hides the tabs of
+    // agents that are off.
+    result.insert("enabledAgentIcons".to_string(), json!(enabled_agent_icons));
     // The Catch me up switch rides every read, so a client without the settings file (the phone) learns it too.
     result.insert(
         "catchUp".to_string(),
@@ -655,6 +668,8 @@ pub(crate) async fn handle_read_session_chat_http(
     crate::side_chats::insert_side_chats(&mut result, &project_id, &session_id);
     crate::secret_requests::insert_secret_requests(&mut result, &project_id, &session_id);
     crate::coordinators::insert_relayed_answers(&mut result, &project_id, &session_id);
+    crate::autopilot::insert_chat_autopilot(&mut result, &project_id, &session_id);
+    crate::collab_shim::insert_chat_collab(&mut result, &project_id, &session_id);
     crate::agent_message_deliveries::insert_agent_message_deliveries(
         &mut result,
         &project_id,
@@ -693,15 +708,36 @@ pub(crate) async fn handle_read_session_chat_http(
         // CDXC:AgentProviders 2026-10-07 WHY: a missed deadline answers with the last settled
         // reading, however old, instead of none. Leaving it out drew the loading skeleton over a
         // chat whose model gxserver knew seconds earlier (a reopened Cursor chat sat 3.6s on it).
+        // CDXC:SessionChat 2026-11-08 WHY: GitHub #502: of two new Claude threads on a headless
+        // Linux computer, both at "Trust this folder?", one could not be opened in chat mode. A
+        // session that has not reported its conversation gets into chat only when this read
+        // carries its screen's notice (the desktop's `probe_agents_chat_notice_admission`), and
+        // nothing had read that unfollowed screen before, so a capture slower than half a second
+        // answered with no notice and the click was refused. Such a session has no transcript to
+        // show yet, so its read waits for the screen longer; a session with a conversation keeps
+        // the short wait.
         let detector = SessionChatOptionDetector::new(state);
-        let detection = match tokio::time::timeout(
-            crate::session_chat::SEED_OPTION_DETECTION_DEADLINE,
-            detector.detect(&project_id, &session_id, terminal_agent.as_deref(), false),
-        )
-        .await
-        {
+        let detection_deadline = if agent_session_id.is_none() {
+            crate::session_chat::STARTING_SESSION_DETECTION_DEADLINE
+        } else {
+            crate::session_chat::SEED_OPTION_DETECTION_DEADLINE
+        };
+        // CDXC:SessionChat 2026-11-08 WHY:
+        // User: "scroll up a lot in this long chat we're in and then click on the Needs you question pill and it takes like 5 seconds before it jumps to it". Every read waited for the screen probe, which on a running agent took the whole half-second deadline, so each older page and each jump paid it before the transcript was even read. A page of history (`beforeOffset`) shows rows, not the screen: it answers with the last settled reading at once, exactly as a read whose probe missed the deadline does, and only the live tail read waits for the screen.
+        let probe = async {
+            if before_offset.is_some() {
+                return Err(());
+            }
+            tokio::time::timeout(
+                detection_deadline,
+                detector.detect(&project_id, &session_id, terminal_agent.as_deref(), false),
+            )
+            .await
+            .map_err(|_| ())
+        };
+        let detection = match probe.await {
             Ok(detection) => detection,
-            Err(_) => {
+            Err(()) => {
                 let mut cached = detector.cached(&project_id, &session_id);
                 if cached.options.is_none() {
                     // Nothing cached yet (the first read after a gxserver start): the launch

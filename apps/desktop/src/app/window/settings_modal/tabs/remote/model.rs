@@ -43,7 +43,41 @@ pub(crate) struct TailcatStatus {
     pub(super) ports: Vec<u32>,
     pub(super) allowed_client_keys: Vec<String>,
     pub(super) last_error: Option<String>,
+    /// The second address's relay (`TailcatRelayStatus` in server/src/tailcat/types.rs).
+    pub(super) relay: TailcatRelay,
     pub(super) raw: Value,
+}
+
+/// `TailcatRelayStatus`: the relay choice and the second helper's state.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct TailcatRelay {
+    /// `ghostex`, `public` or `custom`.
+    pub(super) mode: String,
+    pub(super) custom_host: String,
+    pub(super) host: Option<String>,
+    pub(super) running: bool,
+    pub(super) token: Option<String>,
+    pub(super) reachable: Option<bool>,
+    pub(super) last_error: Option<String>,
+}
+
+fn read_tailcat_relay(value: Option<&Value>) -> TailcatRelay {
+    let Some(relay) = value.filter(|relay| relay.is_object()) else {
+        // A gxserver from before the second address has only the public relays.
+        return TailcatRelay {
+            mode: "public".to_string(),
+            ..TailcatRelay::default()
+        };
+    };
+    TailcatRelay {
+        mode: non_empty(relay, "mode").unwrap_or_else(|| "ghostex".to_string()),
+        custom_host: text(relay, "customHost").unwrap_or_default(),
+        host: non_empty(relay, "host"),
+        running: relay.get("running").and_then(Value::as_bool) == Some(true),
+        token: non_empty(relay, "token"),
+        reachable: relay.get("reachable").and_then(Value::as_bool),
+        last_error: non_empty(relay, "lastError"),
+    }
 }
 
 /// `readTailcatStatusResult`.
@@ -85,6 +119,7 @@ pub(super) fn read_tailcat_status_result(value: &Value) -> Result<TailcatStatus,
             })
             .unwrap_or_default(),
         last_error: text(status, "lastError"),
+        relay: read_tailcat_relay(status.get("relay")),
         raw: status.clone(),
     })
 }
@@ -241,6 +276,55 @@ pub(crate) struct PairedDevice {
     pub(super) last_seen_at: Option<String>,
     /// The phone's Easy Connect client key; `None` for a phone paired by an older Ghostex app.
     pub(super) tailcat_client_key: Option<String>,
+    /// Paired before 11.0.1 (`status: "legacy"`): it has no access left and must pair again.
+    pub(super) legacy: bool,
+    /// Paired through its own SSH login (Tailscale, the local network), GitHub #495.
+    pub(super) over_ssh: bool,
+}
+
+/// `GxserverPendingDevice`: a phone that scanned the QR and waits for the owner's approval
+/// (pairing v2, GitHub #495).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct PendingDevice {
+    pub(super) id: String,
+    pub(super) name: String,
+    pub(super) platform: String,
+    /// The three words the phone must show too.
+    pub(super) words: Vec<String>,
+    /// Its `pairingApproveDevice` approval request.
+    pub(super) approval_id: String,
+    /// It asked over its own SSH login (`/api/pairOverSsh`), not with the Show QR code.
+    pub(super) over_ssh: bool,
+}
+
+/// The `pending` half of `/api/pairedDevices` (and of `/api/removePairedDevice`'s answer); empty
+/// from a gxserver older than pairing v2.
+pub(super) fn read_pending_devices(value: &Value) -> Vec<PendingDevice> {
+    value
+        .get("pending")
+        .and_then(Value::as_array)
+        .map(|pending| {
+            pending
+                .iter()
+                .filter_map(|device| {
+                    let words: Vec<String> = device
+                        .get("words")?
+                        .as_array()?
+                        .iter()
+                        .filter_map(|word| word.as_str().map(str::to_string))
+                        .collect();
+                    Some(PendingDevice {
+                        id: text(device, "id")?,
+                        name: text(device, "name").unwrap_or_default(),
+                        platform: text(device, "platform").unwrap_or_default(),
+                        words,
+                        approval_id: text(device, "approvalId").unwrap_or_default(),
+                        over_ssh: device.get("overSsh").and_then(Value::as_bool) == Some(true),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// `readPairedDevicesResult`.
@@ -261,6 +345,8 @@ pub(super) fn read_paired_devices_result(value: &Value) -> Result<Vec<PairedDevi
             paired_at: text(device, "pairedAt").unwrap_or_default(),
             last_seen_at: non_empty(device, "lastSeenAt"),
             tailcat_client_key: non_empty(device, "tailcatClientKey"),
+            legacy: text(device, "status").as_deref() == Some("legacy"),
+            over_ssh: device.get("overSsh").and_then(Value::as_bool) == Some(true),
         })
         .collect())
 }
@@ -400,8 +486,16 @@ pub(super) fn format_paired_device_day(iso: &str, now: i64) -> String {
 
 /// `formatPairedDeviceDetail`.
 pub(super) fn format_paired_device_detail(device: &PairedDevice, now: i64) -> String {
+    if device.legacy {
+        return "Paired before Ghostex 11.1.0, so it no longer connects. Pair it again from the phone, or remove it.".to_string();
+    }
     let paired = format!(
-        "Paired {}",
+        "{} {}",
+        if device.over_ssh {
+            "Signs in over SSH · paired"
+        } else {
+            "Paired"
+        },
         format_paired_device_day(&device.paired_at, now)
     );
     if is_paired_device_connected_now(device, now) {
@@ -490,6 +584,31 @@ pub(super) struct EasyConnectCode {
     pub(super) name: String,
     pub(super) user: String,
     pub(super) ssh_port: u32,
+    /// The other computer's gxserver API port, which pairing reaches through the tunnel.
+    pub(super) port: u32,
+    /// The one-time pairing secret: only a code from the other computer's Show QR window has one.
+    pub(super) secret: Option<String>,
+}
+
+/// What pairing this computer with the one behind an Easy Connect code needs (`/api/pairComputer`),
+/// or `None` when the code has no one-time secret (CDXC:RemotePairing 2026-11-08 in
+/// server/src/remote_access/computer_pairing.rs).
+pub(super) fn computer_pairing_params(input: &str) -> Option<Value> {
+    match read_pairing_code(input)? {
+        PairingCode::EasyConnect(EasyConnectCode {
+            address,
+            name,
+            port,
+            secret: Some(secret),
+            ..
+        }) => Some(serde_json::json!({
+            "address": address,
+            "port": port,
+            "secret": secret,
+            "name": name,
+        })),
+        _ => None,
+    }
 }
 
 /// `ReadPairingCodeResult`.
@@ -531,13 +650,15 @@ fn read_easy_connect_code(value: &Value) -> Option<EasyConnectCode> {
     let address = non_empty(value, "address")?;
     let name = non_empty(value, "name")?;
     let user = non_empty(value, "user")?;
-    read_port(value.get("port"))?;
+    let port = read_port(value.get("port"))?;
     let ssh_port = read_port(value.get("sshPort"))?;
     Some(EasyConnectCode {
         address,
         name,
         user,
         ssh_port,
+        port,
+        secret: non_empty(value, "secret"),
     })
 }
 
@@ -566,7 +687,7 @@ fn read_easy_connect_compact_code(body: &str) -> Option<EasyConnectCode> {
     }
     let mut rest = bytes.as_slice();
     let address = read_field(&mut rest)?;
-    let _secret = read_field(&mut rest)?;
+    let secret = read_field(&mut rest)?;
     let port = read_u16(&mut rest)?;
     let ssh_port = read_u16(&mut rest)?;
     let user = String::from_utf8(read_field(&mut rest)?).ok()?;
@@ -582,6 +703,9 @@ fn read_easy_connect_compact_code(body: &str) -> Option<EasyConnectCode> {
         name,
         user,
         ssh_port: u32::from(ssh_port),
+        port: u32::from(port),
+        secret: (!secret.is_empty())
+            .then(|| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(secret)),
     })
 }
 
@@ -742,6 +866,8 @@ pub(super) struct MachineDraft {
     pub(super) ssh_identity_file: String,
     pub(super) ssh_password: String,
     pub(super) ssh_password_saved: bool,
+    /// Ride the SSH connection the user signed in to instead of signing in again (GitHub #496).
+    pub(super) reuse_ssh_connection: bool,
     pub(super) ssh_port: String,
     pub(super) ssh_user: String,
     pub(super) wsl_distribution: String,
@@ -792,6 +918,8 @@ pub(super) fn machine_draft_from_settings(machine: &Value) -> MachineDraft {
         ssh_identity_file: text(machine, "sshIdentityFile").unwrap_or_default(),
         ssh_password: String::new(),
         ssh_password_saved: machine.get("sshPasswordSaved").and_then(Value::as_bool) == Some(true),
+        reuse_ssh_connection: machine.get("reuseSshConnection").and_then(Value::as_bool)
+            == Some(true),
         ssh_port: machine
             .get("sshPort")
             .and_then(Value::as_f64)
@@ -871,6 +999,12 @@ pub(super) fn normalize_remote_machine_draft(draft: &MachineDraft) -> Option<Val
         "sshHost": if draft.easy_connect { "" } else { draft.ssh_host.as_str() },
         "sshIdentityFile": draft.ssh_identity_file,
         "sshPasswordSaved": draft.ssh_password_saved,
+        // An Easy Connect machine is dialed on this computer's own forwarder, and a Windows WSL
+        // machine's gxserver listens inside that distribution where a local forward cannot land,
+        // so neither has a connection of the user's to reuse.
+        "reuseSshConnection": draft.reuse_ssh_connection
+            && !draft.easy_connect
+            && draft.wsl_distribution.trim().is_empty(),
         "sshPort": ssh_port,
         "sshUser": draft.ssh_user,
         "wslDistribution": wsl_distribution,
@@ -957,6 +1091,8 @@ mod pairing_code_tests {
             name: "Studio".to_string(),
             user: "madda".to_string(),
             ssh_port: 22,
+            port: 58744,
+            secret: Some("s3cr3t".to_string()),
         })
     }
 
@@ -989,6 +1125,9 @@ mod pairing_code_tests {
             name: "Studio\u{2019}s Mac".to_string(),
             user: "madda".to_string(),
             ssh_port: 22,
+            port: 58744,
+            // The vector's secret bytes, as gxserver wrote them (base64url).
+            secret: Some("ZGVmZ2hpamtsbW5vcHFycw".to_string()),
         }));
         for payload in [
             COMPACT_VECTOR.to_string(),
@@ -1043,30 +1182,35 @@ mod pairing_code_tests {
     }
 }
 
+/// What a machine tile says instead of its SSH target or version.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct TileStatus {
+    pub(super) text: &'static str,
+    /// Drawn with a red dot.
+    pub(super) failed: bool,
+}
+
 /// What a machine tile says instead of its SSH target or version: that it is this computer, or
-/// why its connection is failing. `None` keeps the usual line.
+/// that its connection is failing. `None` keeps the usual line.
 ///
 /// CDXC:RemoteMachines 2026-10-28 WHY: a failing machine's tile said nothing (the tab only counted
 /// "0/1 connected"), so the reason was only visible in the sidebar (found testing on Linux; every
-/// platform). The tile now carries the same sanitized reason, or the state's own words when the
-/// app has none, and a machine that is this computer says so.
-pub(super) fn machine_tile_status(
-    state: Option<&str>,
-    this_computer: bool,
-    message: Option<&str>,
-) -> Option<String> {
+/// platform). A machine that is this computer says so.
+///
+/// CDXC:RemoteMachines 2026-11-08 DECISION: User (Q2024): the tile shows only the state's short
+/// words with a red dot (`machine_state_short_word`); the reason it used to wrap over six lines
+/// is the first thing in the machine's sheet (`machine_status_panel` in machines.rs).
+pub(super) fn machine_tile_status(state: Option<&str>, this_computer: bool) -> Option<TileStatus> {
     if this_computer && state == Some("connected") {
-        return Some("This is this computer".to_string());
+        return Some(TileStatus {
+            text: "This computer",
+            failed: false,
+        });
     }
     let state = state.filter(|state| ghostex_gx_core::machine_state_is_failure(state))?;
-    let (title, detail) = ghostex_gx_core::machine_state_copy(state);
-    let reason = message
-        .map(str::trim)
-        .filter(|message| !message.is_empty())
-        .or(detail);
-    Some(match reason {
-        Some(reason) => format!("{title}: {reason}"),
-        None => title.to_string(),
+    Some(TileStatus {
+        text: ghostex_gx_core::machine_state_short_word(state),
+        failed: true,
     })
 }
 
@@ -1076,27 +1220,15 @@ mod machine_tile_status_tests {
 
     #[test]
     fn a_failing_machine_says_why_and_this_computer_says_so() {
-        assert_eq!(
-            machine_tile_status(
-                Some("sshFailed"),
-                false,
-                Some("SSH could not resolve the remote host.")
-            )
-            .as_deref(),
-            Some("Cannot reach machine: SSH could not resolve the remote host.")
-        );
-        assert_eq!(
-            machine_tile_status(Some("authFailed"), false, None).as_deref(),
-            Some(
-                "Cannot sign in to machine: The machine rejected the saved SSH username, password or key."
-            )
-        );
-        assert_eq!(
-            machine_tile_status(Some("connected"), true, None).as_deref(),
-            Some("This is this computer")
-        );
-        assert_eq!(machine_tile_status(Some("connected"), false, None), None);
-        assert_eq!(machine_tile_status(Some("connecting"), false, None), None);
-        assert_eq!(machine_tile_status(None, false, None), None);
+        let text = |state, this_computer| {
+            machine_tile_status(Some(state), this_computer).map(|status| status.text)
+        };
+        assert_eq!(text("sshFailed", false), Some("Can't reach"));
+        assert_eq!(text("authFailed", false), Some("Sign-in refused"));
+        assert_eq!(text("installFailed", false), Some("Setup failed"));
+        assert_eq!(text("connected", true), Some("This computer"));
+        assert_eq!(text("connected", false), None);
+        assert_eq!(text("connecting", false), None);
+        assert_eq!(machine_tile_status(None, false), None);
     }
 }

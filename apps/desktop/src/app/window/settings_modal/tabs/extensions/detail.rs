@@ -5,6 +5,7 @@
 //! details, permissions and Install. The install consent (install-consent.tsx (deleted 2026-10-01)) sits over either.
 use super::super::super::super::native_modal_kit::*;
 use super::super::super::catalog::SettingOption;
+use super::super::super::fields::RowControl;
 use super::super::super::fields::{
     FieldStates, SizedButtonSize, SizedButtonVariant, settings_icon, settings_select,
     settings_sized_button, settings_square_button, settings_text_input, small_switch_control,
@@ -181,9 +182,11 @@ impl ExtensionsTab {
         leading: Option<AnyElement>,
         title: &str,
         caption: &str,
-        control: AnyElement,
+        control: impl Into<RowControl>,
     ) -> AnyElement {
+        let control = control.into();
         h_flex()
+            .id(SharedString::from(format!("detail-control-{title}")))
             .w_full()
             .min_h(px(56.0))
             .px(px(16.0))
@@ -191,6 +194,9 @@ impl ExtensionsTab {
             .items_center()
             .justify_between()
             .gap(px(16.0))
+            .when_some(control.toggle, |row, press| {
+                row.switch_row_press(switch_row_wash(p.foreground), false, press)
+            })
             .child(
                 h_flex()
                     .min_w_0()
@@ -217,7 +223,7 @@ impl ExtensionsTab {
                             ),
                     ),
             )
-            .child(div().flex_shrink_0().child(control))
+            .child(div().flex_shrink_0().child(control.element))
             .into_any_element()
     }
 
@@ -635,6 +641,7 @@ impl ExtensionsTab {
                         },
                         cx,
                     )
+                    .into_any_element()
                 }
                 "dropdown" => {
                     let options: Vec<SettingOption> = definition
@@ -1133,7 +1140,7 @@ fn markdown_view(p: &SettingsPalette, id: SharedString, markdown: String) -> Any
 /// 20/18/16px on a 1.3 line with 20px above and 8px below, 10.4px between blocks, the 20px list
 /// gutter with 4px between items, and inline code as a small bordered chip. Strong text is 500, not
 /// bold: `.ghostex-settings-shadcn.ghostex-settings-shadcn :is(b, strong) { font-weight: 500 }` in
-/// packages/core-ui/styles.css.
+/// packages/core-ui/styles.css (deleted 2026-11-06).
 fn markdown_style(p: &SettingsPalette) -> gpui_component::text::TextViewStyle {
     use gpui::{StyleRefinement, relative, rems};
     #[derive(serde::Deserialize)]

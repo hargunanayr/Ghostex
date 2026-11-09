@@ -41,7 +41,8 @@ impl GhostexGpuiApp {
     /// The bot's name when this is a Hermes launch into a local bot, which gxserver runs as the
     /// bot (`bot_agent_config` in server/src/bot_projects.rs); `None` for any other agent.
     pub(super) fn gx_store_bot_name(&self, project_id: &str, agent_id: &str) -> Option<String> {
-        if !agent_id.trim().eq_ignore_ascii_case("hermes-agent") {
+        let agent_id = agent_id.trim();
+        if !agent_id.eq_ignore_ascii_case("hermes-agent") {
             return None;
         }
         let project = self
@@ -65,5 +66,69 @@ impl GhostexGpuiApp {
     ) {
         let group_id = message.get("groupId").and_then(Value::as_str);
         self.gx_store_request_agent_launch("hermes-agent", group_id, None, cx);
+    }
+}
+
+impl GhostexGpuiApp {
+    /// Makes a GBot (`/api/gbots` op `create`). Its row arrives under Chief of Staff through the
+    /// presentation like any added project, so nothing waits on the answer but a failure, which
+    /// shows as a toast with gxserver's sentence.
+    pub(crate) fn gx_store_create_gbot(
+        &mut self,
+        name: String,
+        title: String,
+        instructions: String,
+        agent: String,
+        preset: Option<String>,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let mut params = json!({
+            "op": "create",
+            "name": name,
+            "title": title,
+            "soul": instructions,
+            "agentId": agent,
+        });
+        // A preset fills the look, description and starter notes (server/src/gbots/team_file/).
+        if let Some(preset) = preset {
+            params["preset"] = json!(preset);
+        }
+        cx.spawn(async move |this, cx| {
+            #[allow(unused_mut)]
+            let mut created = gx_rpc(None, "/api/gbots", params.clone()).await;
+            // Adding a GBot asks for the owner's approval (server/src/server/security_gates.rs):
+            // Touch ID shows while the call is out; when it wasn't used the phone may still
+            // approve, and the repeated call then adds it.
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(id) = created
+                .as_ref()
+                .err()
+                .and_then(|error| error.approval_required())
+                .and_then(|approval| approval["id"].as_str())
+                .map(str::to_string)
+            {
+                created = match crate::app::window::collab_share::wait_for_approval(id.clone())
+                    .await
+                {
+                    Ok(()) => {
+                        let mut again = params;
+                        again["approvalId"] = json!(id);
+                        gx_rpc(None, "/api/gbots", again).await
+                    }
+                    Err(message) => Err(super::super::GxRpcError::transport("/api/gbots", message)),
+                };
+            }
+            if let Err(error) = created {
+                let _ = this.update(cx, |this, cx| {
+                    this.gx_store_create_toast(
+                        "warning",
+                        "GBot not created",
+                        Some(&error.message),
+                        cx,
+                    );
+                });
+            }
+        })
+        .detach();
     }
 }

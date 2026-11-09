@@ -190,6 +190,13 @@ pub enum Effect {
     /// `settingsSyncNote` from this computer's gxserver: a synced setting changed on two computers
     /// apart and the later edit won (the "changed on X · Undo" note; `note` as gxserver sends it).
     SettingsSyncNote { note: Value },
+    /// `approvalRequestsChanged` from a computer's gxserver: show a new approval request as a card
+    /// with Approve and Deny, or drop the card of one decided elsewhere.
+    ApprovalRequestsChanged {
+        machine: MachineId,
+        change: String,
+        request: Option<ghostex_gx_protocol::approval::ApprovalRequest>,
+    },
     /// The machine's stream just went live: a first connect, or back after a loss, when the
     /// payload-less announcements above may have been missed. Read the HUD, the recent projects
     /// and the notification feed again (`refetch.rs`).
@@ -223,6 +230,10 @@ pub enum Effect {
     /// A live delta showed a session of this computer newly stuck (gxserver's `stuckSince`): play
     /// the not-moving sound and show a banner unless the user turned those off.
     SessionStuckRaised { session: SessionKey },
+    /// A live delta showed a session of this computer newly blocked (gxserver's `blockedSince`:
+    /// out of usage on every account, or an error recovery could not get past): play the
+    /// not-moving sound and show a banner with `reason` unless the user turned those off.
+    SessionBlockedRaised { session: SessionKey, reason: String },
     /// Persist the user's last selected session of a project (it must survive restarts, and the
     /// project being closed and reopened).
     ///
@@ -558,6 +569,15 @@ impl Core {
                 output
                     .effects
                     .push(Effect::SettingsSyncNote { note: frame.note });
+            }
+            // Each computer's gxserver asks for its own approvals; the app answers on that one.
+            ServerEvent::ApprovalRequestsChanged(frame) => {
+                let frame = *frame;
+                output.effects.push(Effect::ApprovalRequestsChanged {
+                    machine: machine.clone(),
+                    change: frame.change,
+                    request: frame.request,
+                });
             }
             // Only this computer's gxserver is home to boxes; a box's own gxserver or a remote
             // computer announcing one is not this client's registry.

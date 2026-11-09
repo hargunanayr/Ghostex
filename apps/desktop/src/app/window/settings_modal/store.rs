@@ -293,6 +293,9 @@ pub(crate) struct SettingsStore {
     /// The Windows Developer Mode notice of Agents and Integrations is folded to its icon
     /// (`windowsLinkNoticeCollapsed` in `settingsModalNavigation`, tabs/machine_picker.rs).
     windows_link_notice_collapsed: bool,
+    /// The Extensions page's open tab (`extensionsTab` in `settingsModalNavigation`; ids from
+    /// tabs/extensions/page_tabs.rs), reopened next time (User, Q2044).
+    extensions_tab: String,
 }
 
 impl EventEmitter<SettingsStoreEvent> for SettingsStore {}
@@ -340,6 +343,7 @@ impl SettingsStore {
             extensions_group_open: false,
             picked_machine: None,
             windows_link_notice_collapsed: false,
+            extensions_tab: String::new(),
         };
         store.picked_machine = store.request.initial_machine_id.clone();
         store.windows_link_notice_collapsed = store
@@ -347,6 +351,12 @@ impl SettingsStore {
             .get("windowsLinkNoticeCollapsed")
             .and_then(Value::as_bool)
             .unwrap_or(false);
+        store.extensions_tab = store
+            .value("settingsModalNavigation")
+            .get("extensionsTab")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
         store.active_tab = store.initial_tab();
         store.extensions_group_open = store
             .value("settingsModalNavigation")
@@ -508,6 +518,16 @@ impl SettingsStore {
             },
             cx,
         );
+    }
+
+    /// Shows `values` again without saving them: a save the owner didn't confirm (GitHub #495,
+    /// app/owner_security/settings.rs) leaves the settings as they were.
+    pub(crate) fn revert_settings(&mut self, values: Map<String, Value>, cx: &mut Context<Self>) {
+        for (key, value) in values {
+            self.settings.set(&key, value);
+        }
+        self.refresh_search();
+        cx.notify();
     }
 
     /// `resetSetting(key)`: back to `DEFAULT_ghostex_SETTINGS[key]`.
@@ -714,7 +734,6 @@ impl SettingsStore {
     }
 
     fn refresh_search(&mut self) {
-        let show_experimental = self.bool("showBetaFeatures");
         let mut hidden_keys =
             ghostex_settings_catalog::built_in_extensions::hidden_setting_keys_with(|key| {
                 Some(self.bool(key))
@@ -725,12 +744,10 @@ impl SettingsStore {
         ));
         let tab_hidden_keys = hidden_keys.clone();
         if self.general_search.query != self.search_query
-            || self.general_search.show_experimental != show_experimental
             || self.general_search.hidden_keys != hidden_keys
             || self.general_search.sections.is_empty()
         {
-            self.general_search =
-                GeneralSearch::new(&self.search_query, show_experimental, hidden_keys);
+            self.general_search = GeneralSearch::new(&self.search_query, hidden_keys);
         }
         let debugging_mode = self.bool("debuggingMode");
         self.tab_searches = settings_catalog()
@@ -775,13 +792,23 @@ impl SettingsStore {
 
     /// `showOSIntegrationSettingsTab`.
     pub(crate) fn os_integration_visible(&self) -> bool {
-        self.bool("showBetaFeatures")
+        self.built_in_extension_on(ghostex_settings_catalog::built_in_extensions::OS_INTEGRATION)
+    }
+
+    /// Whether built-in extension `id` is on here (its switch, this platform).
+    pub(crate) fn built_in_extension_on(&self, id: &str) -> bool {
+        ghostex_settings_catalog::built_in_extensions::enabled_with(id, |key| Some(self.bool(key)))
+    }
+
+    /// Settings > General > Power: Keep Awake's own settings, shown while Keep Awake is on.
+    pub(crate) fn keep_awake_on(&self) -> bool {
+        self.built_in_extension_on("keepAwake")
     }
 
     /// CDXC:Connectors 2026-10-16 DECISION:
-    /// User: Connectors is experimental, so "hide all these under 'experimental' until i test it well and tell you": the Connectors page shows only while Enable Experimental Features is on, the same switch gxserver's Connectors routes follow (server/src/connectors/gate.rs).
+    /// User: Connectors is experimental, so "hide all these under 'experimental' until i test it well and tell you": the Connectors page shows only while its switch is on, the same switch gxserver's Connectors routes follow (server/src/connectors/gate.rs). Since 2026-11-09 that is its own switch in Settings > Extensions > Experimental, off by default, not Enable Experimental Features (gone).
     pub(crate) fn connectors_visible(&self) -> bool {
-        self.bool("showBetaFeatures")
+        self.built_in_extension_on(ghostex_settings_catalog::built_in_extensions::CONNECTORS)
     }
 
     /// A page a whole-feature built-in extension owns (Actions, Open In) leaves the rail and the
@@ -792,8 +819,25 @@ impl SettingsStore {
         })
     }
 
+    /// Collab's component as gxserver last reported it (`/api/extensionComponents`,
+    /// [`refresh_collab_component`]).
+    pub(crate) fn collab_component(&self) -> Value {
+        self.host_payload(COLLAB_COMPONENT_PAYLOAD)
+            .cloned()
+            .unwrap_or(Value::Null)
+    }
+
+    /// CDXC:Collab 2026-11-08 DECISION:
+    /// User (#495, Q1732): Collab is an extension; Settings > Collab shows only once it is installed on this computer (Settings > Extensions installs it).
+    pub(crate) fn collab_installed(&self) -> bool {
+        self.collab_component()["installed"] == true
+    }
+
     /// `resolveSettingsModalTabForVisibility`.
     pub(crate) fn resolve_tab(&self, tab: SettingsTabId) -> SettingsTabId {
+        if tab == SettingsTabId::Collab && !self.collab_installed() {
+            return SettingsTabId::Extensions;
+        }
         if (tab == SettingsTabId::OsIntegration && !self.os_integration_visible())
             || (tab == SettingsTabId::Connectors && !self.connectors_visible())
             || !self.built_in_extension_allows_page(tab)
@@ -1029,6 +1073,7 @@ impl SettingsStore {
             "activeTab": self.active_tab.id(),
             "extensionsGroupOpen": self.extensions_group_open,
             "windowsLinkNoticeCollapsed": self.windows_link_notice_collapsed,
+            "extensionsTab": self.extensions_tab,
             "scrollTopByTab": Value::Object(tops),
             "version": 1,
         })
@@ -1072,6 +1117,21 @@ impl SettingsStore {
     /// The Extensions group's header: opens or closes the group and saves it.
     pub(crate) fn toggle_extensions_group(&mut self, cx: &mut Context<Self>) {
         self.extensions_group_open = !self.extensions_group_open;
+        self.persist_navigation(cx);
+        cx.notify();
+    }
+
+    /// The Extensions page's open tab id (empty: the first tab).
+    pub(crate) fn extensions_tab(&self) -> &str {
+        &self.extensions_tab
+    }
+
+    /// Opens Extensions tab `id` and saves it for the next visit.
+    pub(crate) fn set_extensions_tab(&mut self, id: &str, cx: &mut Context<Self>) {
+        if self.extensions_tab == id {
+            return;
+        }
+        self.extensions_tab = id.to_string();
         self.persist_navigation(cx);
         cx.notify();
     }
@@ -1152,6 +1212,24 @@ pub(crate) fn store_gxserver_rpc(
     );
 }
 
+/// [`SettingsModalCommand::ApproveRequest`]: `reply` runs on the main thread once it is approved
+/// or with why not.
+pub(crate) fn store_approve_request(
+    store: &Entity<SettingsStore>,
+    id: String,
+    reply: impl FnOnce(Result<Value, String>, &mut App) + 'static,
+    cx: &mut App,
+) {
+    let host = store.read(cx).host.clone();
+    host(
+        SettingsModalCommand::ApproveRequest {
+            id,
+            reply: Box::new(reply),
+        },
+        cx,
+    );
+}
+
 /// [`store_gxserver_rpc`] on the machine the page shows: this computer's gxserver for `None`, else
 /// that remote machine's (`SettingsModalCommand::RemoteGxserverRpc`).
 pub(crate) fn store_machine_gxserver_rpc(
@@ -1209,6 +1287,39 @@ pub(crate) fn store_host_message(store: &Entity<SettingsStore>, message: Value, 
     host(SettingsModalCommand::HostMessage(message), cx);
 }
 
+/// The host payload kind [`refresh_collab_component`] keeps Collab's component under.
+pub(crate) const COLLAB_COMPONENT_PAYLOAD: &str = "collabComponent";
+
+/// Reads Collab's component from this computer's gxserver (installed, version, an update, an
+/// install under way) into the store.
+pub(crate) fn refresh_collab_component(store: &Entity<SettingsStore>, cx: &mut App) {
+    if !store.read(cx).request().gxserver_rpc_available {
+        return;
+    }
+    let weak = store.downgrade();
+    store_gxserver_rpc(
+        store,
+        "/api/extensionComponents",
+        serde_json::json!({ "op": "list" }),
+        Duration::from_secs(10),
+        move |result, cx| {
+            let Some(mut item) = result.ok().and_then(|answer| {
+                answer["components"].as_array().and_then(|components| {
+                    components
+                        .iter()
+                        .find(|component| component["name"] == "collab")
+                        .cloned()
+                })
+            }) else {
+                return;
+            };
+            item["type"] = Value::String(COLLAB_COMPONENT_PAYLOAD.to_string());
+            let _ = weak.update(cx, |store, cx| store.receive_host_payload(item, cx));
+        },
+        cx,
+    );
+}
+
 /// Creates the store entity.
 pub(crate) fn new_settings_store(
     host: SettingsModalHost,
@@ -1227,5 +1338,7 @@ pub(crate) fn new_settings_store(
         ),
         cx,
     );
+    // The rail lists Settings > Collab only while Collab is installed.
+    refresh_collab_component(&store, cx);
     store
 }

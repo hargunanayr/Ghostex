@@ -79,6 +79,9 @@ pub(crate) const STATUSLINE_WATCH_POLL: Duration = Duration::from_millis(100);
 /// answering without the screen-derived fields. See
 /// `CDXC:AgentScreenDetection` and `CDXC:AgentScreenDetection`.
 pub(crate) const SEED_OPTION_DETECTION_DEADLINE: Duration = Duration::from_millis(500);
+/// How long a read waits for that probe when the session has not reported its conversation yet:
+/// its screen is all its chat can show (CDXC:SessionChat 2026-11-08 in session_chat_read.rs).
+pub(crate) const STARTING_SESSION_DETECTION_DEADLINE: Duration = Duration::from_millis(3_000);
 /// How long the steady-state model/effort/notice probe may take before the
 /// reconcile pass abandons it. The probe runs on the blocking pool but is
 /// awaited inline, so without a deadline a daemon that accepts the capture
@@ -981,6 +984,17 @@ impl SessionChatIncrementalState {
         stretch: Option<crate::session_chat_codex_thoughts::CodexThoughtStretch>,
     ) {
         self.codex_thoughts = stretch;
+    }
+
+    /// Where the next line not yet read in full starts: what a reader that keeps its place across
+    /// a restart resumes from (with [`Self::rebase`]).
+    pub(crate) fn line_start(&self) -> u64 {
+        self.pending_start
+    }
+
+    /// The time of the newest row read so far, for [`Self::seed_last_message_timestamp`].
+    pub(crate) fn last_message_timestamp(&self) -> Option<i64> {
+        self.last_message_timestamp
     }
 
     pub fn rebase(&mut self, offset: u64) {

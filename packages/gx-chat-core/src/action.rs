@@ -82,9 +82,15 @@ action_kinds! {
     ToggleCoordinatorThreadsMore => "toggleCoordinatorThreadsMore",
     ToggleCoordinatorBoardGroup => "toggleCoordinatorBoardGroup",
     CoordinatorBoardMore => "coordinatorBoardMore",
+    ShowCoordinatorBoardGroup => "showCoordinatorBoardGroup",
     CoordinatorBoardChange => "coordinatorBoardChange",
     CoordinatorBoardAnswer => "coordinatorBoardAnswer",
     InsertBoardReference => "insertBoardReference",
+    HideCoordinatorIntro => "hideCoordinatorIntro",
+    ToggleAutopilot => "toggleAutopilot",
+    SetCollabGuest => "setCollabGuest",
+    ResolveCollabMessage => "resolveCollabMessage",
+    UseCoordinatorIntroExample => "useCoordinatorIntroExample",
     ToggleBackgroundTasks => "toggleBackgroundTasks",
     OpenCoordinatorThread => "openCoordinatorThread",
     OpenSideChat => "openSideChat",
@@ -143,6 +149,7 @@ action_kinds! {
     InsertSkill => "insertSkill",
     LoadImage => "loadImage",
     LoadPageThumbnail => "loadPageThumbnail",
+    GbotCard => "gbotCard",
 
     // Sending.
     Send => "send",
@@ -273,6 +280,8 @@ action_kinds! {
     SetVerbose => "setVerbose",
     SetDetailLevel => "setDetailLevel",
     Retry => "retry",
+    // Retry on the card of a session whose computer is offline (`session/computer.rs`).
+    ComputerRetry => "computerRetry",
     Refresh => "refresh",
     LoadEarlier => "loadEarlier",
     LoadWork => "loadWork",

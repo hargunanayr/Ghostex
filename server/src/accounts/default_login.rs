@@ -3,6 +3,8 @@
 //! CDXC:AgentProviders 2026-10-26 WHY:
 //! A signed-out default login does not always lose its Keychain item: on 2026-10-26 Claude rewrote it at 12:24:38Z, the second account 4's sessions on the default login failed with "Login expired", and `claude auth status` has said `loggedIn: false` since, while `~/.claude.json` still names account 4 (MS). The missing-item check alone kept cswap's shortcut, so every start on MS, a Claude cloud session among them ("Cloud sessions need a claude.ai sign-in"), ran on the dead default login. When the item is there, Claude's own `claude auth status` decides; anything it cannot answer keeps cswap's choice.
 //! SEE-ALSO: server/src/zmx/provider.rs (session starts and wakes), server/src/accounts/restart.rs (in-place account switch), server/src/agents/drafts.rs (draft agent switch), server/src/accounts/launch.rs (one-shot jobs, and `claude_account_argv` for Claude cloud sessions).
+//! CDXC:AgentProviders 2026-11-07 WHY:
+//! claude-swap 0.30.0 (realiti4/claude-swap#516, the fix for #515) reads the default login's identity from `~/.claude.json` even with `CLAUDE_CONFIG_DIR` already set, takes its shortcut onto that login and drops the variable, so the route below no longer gets past it: on 1.0.0 a signed-out default login that `~/.claude.json` still names put every new session on that account back at "Login expired". Ghostex's build of Claude Swap (claude_swap_build.rs) carries realiti4/claude-swap#563, where cswap itself skips the shortcut when the default login holds no usable token. The route stays for the cases only Ghostex can tell (Claude reports the login signed out while its tokens are still there, or the slot's saved copy is newer) and for a cswap older than 0.30.0.
 use super::claude_resets::ClaudeSlot;
 use std::{
     collections::HashMap,
@@ -195,8 +197,10 @@ fn signed_out_default_profile(home: &Path, slot: &str) -> Option<String> {
 
 /// Whether the default login certainly holds no working credential: no credential material at all, read the way Claude Swap reads a profile's (no non-empty `~/.claude/.credentials.json` and, on macOS, a Keychain miss), or material Claude itself reports signed out. A Keychain or a Claude that cannot answer counts as signed in, which leaves cswap's own choice alone.
 fn default_login_signed_out(home: &Path) -> bool {
-    let file = std::fs::read_to_string(home.join(".claude/.credentials.json"))
-        .is_ok_and(|text| !text.trim().is_empty());
+    let file = std::fs::read_to_string(
+        ghostex_paths::agent_homes::claude_default_home(home).join(".credentials.json"),
+    )
+    .is_ok_and(|text| !text.trim().is_empty());
     #[cfg(target_os = "macos")]
     if !file && keychain_item_missing("Claude Code-credentials") {
         return true;

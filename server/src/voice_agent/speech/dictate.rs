@@ -3,8 +3,7 @@
 
 use serde_json::{json, Value};
 
-use super::catalog;
-use super::models;
+use super::hex;
 use super::settings::{self, DictateSettings, Engine};
 use crate::paths::GxserverPaths;
 use crate::server::AppState;
@@ -79,7 +78,7 @@ pub(crate) fn alias_pairs(settings: &DictateSettings) -> Vec<(String, String)> {
 
 pub(crate) fn provider_of(engine: Engine) -> Option<Provider> {
     match engine {
-        Engine::Local => None,
+        Engine::Hex => None,
         Engine::OpenAi => Some(Provider::OpenAi),
         Engine::Xai => Some(Provider::Xai),
     }
@@ -88,68 +87,78 @@ pub(crate) fn provider_of(engine: Engine) -> Option<Provider> {
 /// The tooltip's first line after "Dictate · ".
 pub(crate) fn engine_label(settings: &DictateSettings) -> String {
     match settings.engine {
-        Engine::Local => format!(
-            "Local, {}",
-            catalog::model(&settings.local_model).map_or("model", |spec| spec.short_title)
-        ),
         Engine::OpenAi => "OpenAI gpt-4o-transcribe".to_string(),
         Engine::Xai => "xAI speech to text".to_string(),
-    }
-}
-
-fn gigabytes(bytes: u64) -> String {
-    format!("{:.2} GB", bytes as f64 / 1e9)
-}
-
-/// Why the chosen engine can't transcribe right now: `(code, sentence)`.
-pub(crate) fn engine_problem(
-    paths: &GxserverPaths,
-    settings: &DictateSettings,
-) -> Option<(&'static str, String)> {
-    match provider_of(settings.engine) {
-        None => {
-            let spec = catalog::model(&settings.local_model)?;
-            if models::is_ready(paths, spec) {
-                return None;
-            }
-            Some(match models::progress(spec) {
-                Some(percent) => (
-                    "modelDownloading",
-                    format!("{} is downloading ({percent}%).", spec.short_title),
-                ),
-                None => (
-                    "modelMissing",
-                    format!(
-                        "Not downloaded yet. Click to download ({})",
-                        gigabytes(spec.download_bytes())
-                    ),
-                ),
-            })
-        }
-        Some(provider) => match keys::key_state(paths, provider) {
-            KeyState::Saved => None,
-            KeyState::Unreadable => Some((
-                "keyUnreadable",
-                format!(
-                    "The saved {} API key can't be read anymore. Paste it again in Settings.",
-                    provider.label()
-                ),
-            )),
-            KeyState::Missing => Some((
-                "noKey",
-                format!("Add your {} API key in Settings.", provider.label()),
-            )),
+        Engine::Hex => match &settings.hex_model {
+            Some(model) => format!("Hex, {model}"),
+            None => "Hex".to_string(),
         },
     }
 }
 
-/// `DictateEngine` in the API contract.
-pub(crate) fn engine_view(state: &AppState, settings: &DictateSettings) -> Value {
-    let problem = engine_problem(&state.paths, settings);
+/// [`engine_label`], with the Hex model's own name when Hex answered.
+fn engine_label_with(settings: &DictateSettings, hex_state: Option<&hex::State>) -> String {
+    if let (Engine::Hex, Some(hex::State::Ready { models, .. })) = (settings.engine, hex_state) {
+        if let Ok(model) = hex::chosen_model(models, settings.hex_model.as_deref()) {
+            return format!("Hex, {}", model.name);
+        }
+    }
+    engine_label(settings)
+}
+
+/// Hex's state when the engine is Hex (a few local requests: call it off the async runtime).
+pub(crate) fn hex_state_for(
+    paths: &GxserverPaths,
+    settings: &DictateSettings,
+) -> Option<hex::State> {
+    (settings.engine == Engine::Hex).then(|| hex::state(&paths.home_dir))
+}
+
+/// Why the chosen engine can't transcribe right now: `(code, sentence)`. `hex_state` is Hex's
+/// state when the caller already asked it (it is asked here otherwise, blocking).
+pub(crate) fn engine_problem(
+    paths: &GxserverPaths,
+    settings: &DictateSettings,
+    hex_state: Option<&hex::State>,
+) -> Option<(&'static str, String)> {
+    if settings.engine == Engine::Hex {
+        let asked;
+        let state = match hex_state {
+            Some(state) => state,
+            None => {
+                asked = hex::state(&paths.home_dir);
+                &asked
+            }
+        };
+        return hex::problem(state, settings.hex_model.as_deref());
+    }
+    let provider = provider_of(settings.engine)?;
+    match keys::key_state(paths, provider) {
+        KeyState::Saved => None,
+        KeyState::Unreadable => Some((
+            "keyUnreadable",
+            format!(
+                "The saved {} API key can't be read anymore. Paste it again in Settings.",
+                provider.label()
+            ),
+        )),
+        KeyState::Missing => Some((
+            "noKey",
+            format!("Add your {} API key in Settings.", provider.label()),
+        )),
+    }
+}
+
+/// `DictateEngine` in the API contract. `hex_state` is [`hex_state_for`]'s answer.
+pub(crate) fn engine_view(
+    state: &AppState,
+    settings: &DictateSettings,
+    hex_state: Option<&hex::State>,
+) -> Value {
+    let problem = engine_problem(&state.paths, settings, hex_state);
     json!({
         "engine": settings.engine.id(),
-        "label": engine_label(settings),
-        "modelId": (settings.engine == Engine::Local).then_some(settings.local_model.as_str()),
+        "label": engine_label_with(settings, hex_state),
         "ready": problem.is_none(),
         "problem": problem.map(|(code, message)| json!({"code": code, "message": message})),
         "polish": settings.polish.enabled && super::cleanup::polish_available(state),

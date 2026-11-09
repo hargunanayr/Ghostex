@@ -27,12 +27,8 @@ impl Provider {
     /// SEE-ALSO: packages/shared/ghostex-settings/types.ts (deleted 2026-10-01) (windowsTerminalBackend), apps/desktop/src/windows_terminal_backend/platform/.
     pub(crate) fn install_command(self, home: &std::path::Path) -> String {
         match self {
-            // CDXC:AgentProviders 2026-10-16 DECISION in claude_swap_windows.rs: Ghostex's own build on Windows.
-            Self::Claude if super::claude_swap_windows::applies() => format!(
-                "uv tool install --force {}",
-                super::claude_swap_windows::URL
-            ),
-            Self::Claude => "uv tool install claude-swap".to_string(),
+            // CDXC:AgentProviders 2026-11-07 DECISION in claude_swap_build.rs: Ghostex's own build for now.
+            Self::Claude => super::claude_swap_build::install_command(),
             Self::Codex if cfg!(windows) => {
                 "irm https://github.com/maddada/codex-swap/releases/latest/download/install.ps1 | iex"
                     .to_string()
@@ -120,12 +116,28 @@ pub(crate) struct SavedAccount {
     /// login error from before then never marks it again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub login_confirmed_at: Option<String>,
+    /// Arrived through settings sync from another computer and not signed in here yet: it has no
+    /// slot (`selector` is empty) until the user signs in on this computer (CDXC:SettingsSync
+    /// 2026-11-07 in gx-core settings_sync/lists.rs). Cleared by that sign-in (`register`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub synced: Option<SyncedAccount>,
 }
 impl SavedAccount {
     /// Automatic switching and the automatic new-session rules may pick this account.
     pub(crate) fn auto_switchable(&self) -> bool {
-        self.eligible && !self.user_disabled && self.login_expired_at.is_none()
+        self.eligible
+            && !self.user_disabled
+            && self.login_expired_at.is_none()
+            && !self.selector.is_empty()
     }
+}
+/// Where a synced account came from, the number it has there and its email (for the sign-in).
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", default)]
+pub(crate) struct SyncedAccount {
+    pub from: String,
+    pub number: String,
+    pub email: String,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]

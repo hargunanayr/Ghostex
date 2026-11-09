@@ -92,7 +92,8 @@ impl GxStoreHost {
                 effect @ (Effect::ArmAttentionAcknowledge { .. }
                 | Effect::ReportAgentActivity { .. }
                 | Effect::SessionAttentionRaised { .. }
-                | Effect::SessionStuckRaised { .. }) => self.app_effects.push(effect),
+                | Effect::SessionStuckRaised { .. }
+                | Effect::SessionBlockedRaised { .. }) => self.app_effects.push(effect),
                 // The core's effect list grows with each milestone; a new one is wired when the
                 // milestone that introduces it lands.
                 _ => {}
@@ -144,14 +145,20 @@ impl GhostexGpuiApp {
             effect @ (Effect::ArmAttentionAcknowledge { .. }
             | Effect::ReportAgentActivity { .. }
             | Effect::SessionAttentionRaised { .. }
-            | Effect::SessionStuckRaised { .. }) => {
+            | Effect::SessionStuckRaised { .. }
+            | Effect::SessionBlockedRaised { .. }) => {
                 self.gx_store_perform_attention_effect(effect, cx)
             }
             Effect::MachineLive { machine } => {
                 self.gx_store_refresh_notification_feed(machine.clone(), cx);
+                self.owner_security_show_pending_requests(
+                    machine.remote_id().map(str::to_string),
+                    cx,
+                );
                 if machine.is_local() {
                     self.navigation_history_refresh(cx);
                     self.gx_store_refresh_cloud_boxes(cx);
+                    self.gx_store_check_security_upgrade_notice(cx);
                 }
                 self.gx_store_perform_hud_effect(Effect::MachineLive { machine }, cx);
             }
@@ -160,6 +167,16 @@ impl GhostexGpuiApp {
             }
             Effect::RefetchCloudBoxes => self.gx_store_refresh_cloud_boxes(cx),
             Effect::SettingsSyncNote { note } => self.gx_store_show_settings_sync_note(&note, cx),
+            Effect::ApprovalRequestsChanged {
+                machine,
+                change,
+                request,
+            } => self.owner_security_on_approval_change(
+                machine.remote_id().map(str::to_string),
+                &change,
+                request,
+                cx,
+            ),
             _ => {}
         }
     }

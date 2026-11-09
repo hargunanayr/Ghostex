@@ -150,15 +150,11 @@ impl GhostexGpuiApp {
         );
     }
 
-    /// Runs what the modal asked for through the handlers the React Settings modal's messages
-    /// reach: saves go to the settings service like `updateSettingsPatch` / `updateSettings`, and a
-    /// posted message goes through the same app-modal bridge as the React host's
-    /// `{ type: "sidebarCommand", message }`.
-    fn handle_gpui_settings_modal_command(
+    /// A save from the Settings window, through the settings service like `updateSettingsPatch` /
+    /// `updateSettings`. Other commands are ignored here.
+    pub(crate) fn save_gpui_settings_modal_command(
         &mut self,
-        kind: GpuiAppModalKind,
         command: SettingsModalCommand,
-        bridge: &AppModalHostBridgeEventHandler,
         cx: &mut gpui::Context<Self>,
     ) {
         match command {
@@ -184,7 +180,36 @@ impl GhostexGpuiApp {
                     cx,
                 );
             }
+            _ => {}
+        }
+    }
+
+    /// Runs what the modal asked for through the handlers the React Settings modal's messages
+    /// reach: saves go to the settings service like `updateSettingsPatch` / `updateSettings`, and a
+    /// posted message goes through the same app-modal bridge as the React host's
+    /// `{ type: "sidebarCommand", message }`.
+    fn handle_gpui_settings_modal_command(
+        &mut self,
+        kind: GpuiAppModalKind,
+        command: SettingsModalCommand,
+        bridge: &AppModalHostBridgeEventHandler,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        // A save that loosens security asks for the system prompt first (GitHub #495).
+        let command = match self.owner_security_hold_settings_save(kind, command, cx) {
+            Some(command) => command,
+            None => return,
+        };
+        match command {
+            command @ (SettingsModalCommand::SavePatch { .. }
+            | SettingsModalCommand::SaveSettings { .. }) => {
+                self.save_gpui_settings_modal_command(command, cx);
+            }
             SettingsModalCommand::PostMessage(message) => {
+                // A password typed with a machine whose save waits for the prompt waits with it.
+                if crate::app::owner_security::settings::wait_behind_held_save(&message) {
+                    return;
+                }
                 bridge(AppModalHostBridgeEvent::Message(
                     serde_json::json!({ "message": message, "type": "sidebarCommand" }).to_string(),
                 ));
@@ -218,6 +243,20 @@ impl GhostexGpuiApp {
                             this.note_agentbox_status_answer(status, cx);
                         });
                     }
+                    cx.update(|cx| reply(result, cx));
+                })
+                .detach();
+            }
+            SettingsModalCommand::ApproveRequest { id, reply } => {
+                // The system prompt, then the signed approval; never on the main thread.
+                let background = cx.background_executor().clone();
+                cx.spawn(async move |_, cx| {
+                    let result = background
+                        .spawn(async move {
+                            crate::app::owner_security::approve_local_request_id(&id)
+                                .map(|()| serde_json::json!({ "approved": true }))
+                        })
+                        .await;
                     cx.update(|cx| reply(result, cx));
                 })
                 .detach();

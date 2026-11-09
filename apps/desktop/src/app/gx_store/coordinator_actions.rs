@@ -1,6 +1,6 @@
 //! An orchestrator's and a thread's rows in the session context menu: Goal & Instructions,
-//! Memory, Mark Thread Done and Reopen Thread (`coordinatorSessionAction`), on this computer or a
-//! remote one.
+//! Memory, Playbook overrides, Mark Thread Done and Reopen Thread (`coordinatorSessionAction`), on
+//! this computer or a remote one.
 //!
 //! SEE-ALSO: packages/gx-core/src/sidebar_menu/session.rs (`coordinator_rows`), server/src/server/coordinator_resolve.rs (`/api/resolveCoordinatorThread`), apps/desktop/src/app/coordinator_details_modal_lifecycle.rs.
 
@@ -89,11 +89,65 @@ impl GhostexGpuiApp {
                             mode,
                             remote,
                             &read["coordinator"],
+                            None,
+                            None,
                             cx,
                         ),
                         Err(error) => this.dispatch_gpui_app_modal_toast(
                             "warning",
                             "Could not read the coordinator",
+                            &error.message,
+                            cx,
+                        ),
+                    });
+                })
+                .detach();
+            }
+            // The user's playbook overrides, kept by the gxserver that runs this orchestrator.
+            Some("playbookOverrides") => {
+                cx.spawn(async move |this, cx| {
+                    let coordinator =
+                        gx_rpc(remote.clone(), "/api/readCoordinator", ids.clone()).await;
+                    let playbook = gx_rpc(
+                        remote.clone(),
+                        "/api/readCoordinatorPlaybook",
+                        json!({ "projectId": ids["projectId"] }),
+                    )
+                    .await;
+                    // What that coordinator reads, for View playbook; without a session the read
+                    // is not recorded as its.
+                    let guide = gx_rpc(
+                        remote.clone(),
+                        "/api/readCoordinatorGuide",
+                        json!({ "projectId": ids["projectId"] }),
+                    )
+                    .await
+                    .map_err(|error| error.message)
+                    .and_then(|view| {
+                        view["guide"].as_str().map(str::to_string).ok_or_else(|| {
+                            "That computer's Ghostex could not show its playbook.".to_string()
+                        })
+                    });
+                    let _ = this.update(cx, |this, cx| match (coordinator, playbook) {
+                        // A gxserver older than overrides answers none: nothing to edit there.
+                        (Ok(_), Ok(view)) if view.get("overrides").is_none() => this
+                            .dispatch_gpui_app_modal_toast(
+                                "warning",
+                                "Update Ghostex on that computer",
+                                "Its Ghostex is older than playbook overrides.",
+                                cx,
+                            ),
+                        (Ok(read), Ok(view)) => this.open_gpui_coordinator_details_modal(
+                            CoordinatorDetailsMode::Overrides,
+                            remote,
+                            &read["coordinator"],
+                            Some(&view),
+                            Some(guide),
+                            cx,
+                        ),
+                        (Err(error), _) | (_, Err(error)) => this.dispatch_gpui_app_modal_toast(
+                            "warning",
+                            "Could not read the playbook overrides",
                             &error.message,
                             cx,
                         ),

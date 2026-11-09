@@ -86,8 +86,8 @@ only to get a phone JavaScript fix out).
 
 1. Commit and push the phone change (submodule first, then the pointer in the
    main repo, as in step 2). The dispatcher has `release:actions`' checks: `gh`
-   auth, branch `main`, a clean tree, `HEAD == origin/main`, and
-   `apps/mobile/app` checked out at the commit main records.
+   auth, a clean tree, `HEAD == origin/main` (on `main`, a worktree branch or a
+   detached HEAD), and `apps/mobile/app` checked out at the commit main records.
 2. `bun run release:ota -- --dry-run` prints what would publish: the main and
    phone commits, the version (the newest GitHub release, so phones read it as
    "that release plus a fix"), each platform's runtime version and what
@@ -140,7 +140,10 @@ version, never by re-tagging.
 ### 2. Commit and push everything, and fix the release point
 
 The dispatcher refuses unless `git status --porcelain --untracked-files=all`
-is empty **and** `HEAD == origin/main`. The coordinator meets this by
+is empty **and** `HEAD == origin/main`. The checkout may be `main`, a worktree
+branch or a detached HEAD, as long as it is exactly origin/main, so a thread
+can dispatch from its own worktree while the user's folder holds `main`. The
+coordinator meets this by
 committing and pushing all pending work first, not by waiting for an empty
 tree:
 
@@ -463,6 +466,19 @@ while any other exit `0` means only that a job changed state.
   the secret, and don't report on it.
 - **Component tags** (code-server, CEF) go to the components repo with
   `GHOSTEX_COMPONENTS_GITHUB_TOKEN`. They are automatic.
+- **Signed agent skills (not automatic; every release, once the release is live)**:
+  installed apps update Ghostex's bundled skills only from a list Ghostex signed
+  (`server/src/agent_skills_remote.rs`, #495 follow-up). Once the release is live, sign
+  the skills at the release tag:
+  `gh workflow run publish-agent-skills.yml --repo maddada/Ghostex --ref vX.Y.Z`,
+  then watch it (`gh run list --repo maddada/Ghostex --workflow publish-agent-skills.yml --limit 1`).
+  It replaces `ghostex-skills.json` on the `agent-skills` release. Check the list names the
+  tag's commit:
+  `gh release download agent-skills --repo maddada/Ghostex -p ghostex-skills.json -O - | jq -r .statement | sed -n 2p`
+  must equal `git rev-list -n 1 vX.Y.Z`. **11.1.1 is the first release that needs it**: until
+  it runs once, no install picks up a skill update, so don't report 11.1.1 done before it
+  has. If it fails, read its log; a missing or wrong `GHOSTEX_COMPONENT_SIGNING_KEY` secret
+  stops it before anything is uploaded.
 
 ### 8. Verify
 
@@ -501,6 +517,7 @@ Optional, on a Mac after `brew update`, the full check with no skip flags:
 - the version, the run URL, the release URL, and the wall time;
 - each platform: live, reused or failed, plus what you did about each failure;
 - the release-point sha, the Sparkle appcast commit, and the Homebrew PR (number and state);
+- the "Publish agent skills" run (URL and result) and the commit its signed list names;
 - anything left for them: a missing Homebrew PR, or a platform whose
   rebuild failed twice;
 - a reminder that `main` received the bot's `chore: release X.Y.Z` commit, so

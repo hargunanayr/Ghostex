@@ -3,13 +3,13 @@
 //!
 //! CDXC:DelayedSend 2026-09-15 DECISION:
 //! User: the React app modals are being rebuilt in GPUI one at a time and each native dialog must match its React twin 1 to 1: the same layout, copy, colors, states and behaviour in both appearances. Session Automations keeps one trigger per send, whole hours and minutes for After a delay (remaining deadlines rounded up to the next minute), the awake-agent picker polled every 3 seconds while the dialog is open, and the reserved trigger detail slot so switching triggers never moves the footer.
-//! SEE-ALSO: packages/core-ui/delayed-send-modal.tsx (deleted 2026-10-01) and the `.delayed-send-*` rules in packages/core-ui/styles/modals.css and modals-light.css (the React twin), apps/desktop/views/delayed-send-agents.ts (deleted 2026-10-01) (the awake-agent polling mirrored here), apps/desktop/src/app/window/native_modal_kit/ (shared chrome and controls), apps/desktop/src/app/delayed_send_modal_lifecycle.rs (open, bridge commands, agent replies), apps/desktop/src/bin/native_modal_demo/delayed_send.rs (standalone preview).
+//! SEE-ALSO: packages/core-ui/delayed-send-modal.tsx (deleted 2026-10-01) and the `.delayed-send-*` rules in packages/core-ui/styles/modals.css (deleted 2026-11-06) and modals-light.css (deleted 2026-11-06) (the React twin), apps/desktop/views/delayed-send-agents.ts (deleted 2026-10-01) (the awake-agent polling mirrored here), apps/desktop/src/app/window/native_modal_kit/ (shared chrome and controls), apps/desktop/src/app/delayed_send_modal_lifecycle.rs (open, bridge commands, agent replies), apps/desktop/src/bin/native_modal_demo/delayed_send.rs (standalone preview).
 use super::native_modal_kit::*;
 use chrono::{Local, NaiveTime, TimeZone as _};
 use gpui::{
-    AnyElement, App, AppContext as _, ClickEvent, Context, FocusHandle, FontWeight,
-    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render, Rgba,
-    SharedString, StatefulInteractiveElement as _, Styled as _, Window, div, px, rgb,
+    AnyElement, App, AppContext as _, Context, FocusHandle, FontWeight, InteractiveElement as _,
+    IntoElement, KeyDownEvent, ParentElement as _, Render, Rgba, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Window, div, px, rgb,
 };
 use gpui_component::date_picker::{DatePicker, DatePickerEvent, DatePickerState};
 use gpui_component::input::{Escape, InputEvent, InputState};
@@ -818,10 +818,21 @@ impl GpuiDelayedSendModalWindow {
             .gap(px(16.0))
             .child(
                 h_flex()
+                    .id(id)
+                    .role(gpui::Role::Switch)
+                    .aria_toggled(a11y_toggled(checked))
+                    .aria_label(title)
                     .w_full()
                     .px(px(16.0))
                     .gap(px(8.0))
                     .items_start()
+                    .switch_row_press(
+                        switch_row_wash(p.foreground),
+                        false,
+                        bind_press(cx, move |this: &mut Self, window, cx| {
+                            on_toggle(this, window, cx);
+                        }),
+                    )
                     .child(
                         v_flex()
                             .flex_1()
@@ -845,12 +856,7 @@ impl GpuiDelayedSendModalWindow {
                     )
                     .child(
                         div()
-                            .id(id)
                             .flex_shrink_0()
-                            .cursor_pointer()
-                            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                                on_toggle(this, window, cx);
-                            }))
                             .child(modal_switch(&p, checked, false)),
                     ),
             )

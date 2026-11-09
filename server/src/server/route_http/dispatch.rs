@@ -9,13 +9,14 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 use crate::{
-    auth::{bearer_token, is_authorized_client_headers, is_authorized_headers},
+    auth::{bearer_token, hash_device_api_token, is_authorized_headers},
     connected_computers::{authorize_peer_token, PeerAuthorization},
     extensions::serve_extension_static,
     protocol::{
         endpoint_for, is_remote_endpoint_allowed, protocol_mismatch_error, rpc_error,
         EndpointDescriptor, ListenerKind, MinimalHealthResponse, Transport,
     },
+    security::Principal,
 };
 
 use super::*;
@@ -28,6 +29,9 @@ pub(super) struct RouteHttpRequest {
     pub(super) request_id: String,
     pub(super) body_json: Value,
     pub(super) token_extension_id: Option<String>,
+    /// Who is calling, settled at the auth gate (`crate::security::Principal`). Handlers pass
+    /// it to `require_owner_presence` and to capability checks.
+    pub(super) caller: Principal,
 }
 
 pub(in crate::server) async fn route_http(
@@ -51,7 +55,15 @@ pub(in crate::server) async fn route_http(
         && path.starts_with(crate::file_links::FILE_LINK_ROUTE_PREFIX)
     {
         let query = parts.uri.query().map(str::to_string);
-        return crate::file_links::serve(method, path, query, parts.headers, body).await;
+        return crate::file_links::serve(
+            state.paths.root_dir.clone(),
+            method,
+            path,
+            query,
+            parts.headers,
+            body,
+        )
+        .await;
     }
 
     // Before the page itself: `/visual/<id>/scroll` is the page's own scroll position.
@@ -101,7 +113,17 @@ pub(in crate::server) async fn route_http(
     }
 
     if path.starts_with(crate::connected_computers::RELAY_ROUTE_PREFIX) {
-        if !is_authorized_headers(&parts.headers, &state.auth_token) {
+        /*
+        CDXC:SessionLinks 2026-11-08 FIX:
+        GitHub #497. Inside a session the CLI sends that session's own `gxs_` token, not the token file, so the relay's front gate turned every agent away once sessions had tokens ("Only this computer's own agents can reach its connected computers"), and a coordinator could not relay anything. The token file (agent level), a session's token and the owner's own session now pass, as the caller they are: the relay judges the calls that depend on it (connected_computers/thread_scope.rs).
+        */
+        let relay_caller = if is_authorized_headers(&parts.headers, &state.auth_token) {
+            Some(Principal::LocalAgent)
+        } else {
+            bearer_token(&parts.headers)
+                .and_then(|token| state.security.session_tokens.resolve(token))
+        };
+        let Some(relay_caller) = relay_caller else {
             return routed_json(
                 Some(crate::connected_computers::RELAY_ROUTE_PREFIX.to_string()),
                 StatusCode::UNAUTHORIZED,
@@ -111,9 +133,17 @@ pub(in crate::server) async fn route_http(
                     Some(request_id),
                 ),
             );
-        }
-        return crate::connected_computers::relay(method, &path, parts.headers, body, request_id)
-            .await;
+        };
+        return crate::connected_computers::relay(
+            method,
+            &path,
+            parts.headers,
+            body,
+            request_id,
+            &relay_caller,
+            &state.paths,
+        )
+        .await;
     }
 
     let endpoint = endpoint_for(&path);
@@ -256,14 +286,44 @@ pub(in crate::server) async fn route_http(
         }
         _ => {}
     }
-    if endpoint.requires_auth
-        && !is_authorized_client_headers(
-            &parts.headers,
-            &state.auth_token,
-            &state.device_api_tokens,
-        )
+    // Which paired phone's own token (if any) authorized this request is settled once, here,
+    // before the body is read: a phone removed while its body arrives must not pass the gate as
+    // itself and then reach the push registration as the main token (CDXC:Notifications
+    // 2026-11-07 DECISION in push/registration.rs).
+    let caller_device = bearer_token(&parts.headers).and_then(|token| {
+        state
+            .device_api_tokens
+            .entry_for(token)
+            .map(|entry| (hash_device_api_token(token), entry.device_id))
+    });
+    let caller_token_hash = caller_device.as_ref().map(|(hash, _)| hash.clone());
+    // A Ghostex Collab share token (the component's, server/src/collab_shim/registry.rs): only
+    // its own chat, only `GUEST_READ_ENDPOINTS`, checked again against the request's ids once the
+    // body is read.
+    let share = (endpoint.requires_auth
         && token_extension_id.is_none()
         && peer.is_none()
+        && !is_authorized_headers(&parts.headers, &state.auth_token)
+        && caller_token_hash.is_none())
+    .then(|| bearer_token(&parts.headers).and_then(crate::collab_shim::registry::authorize_token))
+    .flatten();
+    // A session's own `gxs_` token or the desktop's `gxo_` owner session (crate::security).
+    // Chief's own token is the head for this request while its extension is on (chief/head.rs).
+    let token_principal = bearer_token(&parts.headers)
+        .and_then(|token| state.security.session_tokens.resolve(token))
+        .map(|principal| crate::chief::settle_principal(principal, &state.paths));
+    if share.is_some()
+        && !crate::collab_shim::registry::GUEST_READ_ENDPOINTS.contains(&endpoint.path.as_str())
+    {
+        return crate::collab_shim::http::guest_refusal(endpoint.path, request_id);
+    }
+    if endpoint.requires_auth
+        && !is_authorized_headers(&parts.headers, &state.auth_token)
+        && caller_token_hash.is_none()
+        && token_extension_id.is_none()
+        && peer.is_none()
+        && share.is_none()
+        && token_principal.is_none()
     {
         return routed_json(
             Some(endpoint.path),
@@ -275,6 +335,17 @@ pub(in crate::server) async fn route_http(
             ),
         );
     }
+
+    let caller = resolve_caller(
+        is_authorized_headers(&parts.headers, &state.auth_token),
+        token_principal,
+        token_extension_id.as_deref(),
+        caller_device
+            .as_ref()
+            .map(|(hash, device_id)| (hash.as_str(), device_id.as_deref())),
+        peer.as_ref(),
+        share.as_ref(),
+    );
 
     let body_json = if method == Method::POST {
         let body_limit_bytes = json_body_limit_bytes(&endpoint.path);
@@ -341,6 +412,38 @@ pub(in crate::server) async fn route_http(
         );
     }
 
+    // The Collab component's own calls carry the host token gxserver gave it at start, which only
+    // this handler checks (server/src/collab_shim/http.rs).
+    if endpoint.path == ghostex_gx_protocol::collab_component::COLLAB_HOST_ENDPOINT {
+        return crate::collab_shim::http::handle_host_http(
+            &state,
+            &parts.headers,
+            request_id,
+            &body_json,
+        )
+        .await;
+    }
+
+    if let Some(share) = share {
+        if let Some(response) = crate::collab_shim::http::route_guest(
+            &state,
+            share,
+            &parts.headers,
+            &endpoint.path,
+            request_id.clone(),
+            &body_json,
+        )
+        .await
+        {
+            return response;
+        }
+    }
+
+    // An agent another computer starts here gets its hook first (agent_hooks/peer_start.rs).
+    if let Some(PeerAuthorization::Allowed { name, .. }) = &peer {
+        crate::agent_hooks::install_for_peer_agent_start(&state, &endpoint.path, &body_json, name)
+            .await;
+    }
     // The exchange needs to know which computer's token asked, which no area handler sees.
     if endpoint.path == crate::settings_sync::EXCHANGE_ENDPOINT {
         let peer_server_id = match &peer {
@@ -355,12 +458,40 @@ pub(in crate::server) async fn route_http(
         )
         .await;
     }
+    // Push registration needs to know which paired phone's own token (if any) authorized the
+    // request, settled at the auth gate above.
+    if endpoint.path == crate::push::REGISTER_PUSH_TOKEN_ENDPOINT {
+        return crate::push::handle_register_push_token_http(
+            &state,
+            endpoint.path,
+            request_id,
+            &body_json,
+            caller_token_hash,
+        )
+        .await;
+    }
+    if let Some(response) = super::super::security_http::route_security_http(
+        &state,
+        &caller,
+        &endpoint.path,
+        &request_id,
+        &body_json,
+    ) {
+        return response;
+    }
+    // Route capabilities and the owner's signed approval for sensitive actions (#495).
+    if let Some(response) =
+        super::super::security_gates::gate(&state, &caller, &endpoint.path, &request_id, &body_json)
+    {
+        return response;
+    }
     let request = RouteHttpRequest {
         state,
         endpoint,
         request_id,
         body_json,
         token_extension_id,
+        caller,
     };
     // Every area matches distinct literal endpoint paths, so the order the areas are tried in
     // never changes which arm answers.
@@ -452,6 +583,10 @@ pub(in crate::server) async fn route_http(
         Ok(response) => return response,
         Err(request) => request,
     };
+    let request = match route_gbots_http(request).await {
+        Ok(response) => return response,
+        Err(request) => request,
+    };
     let request = match route_connectors_http(request).await {
         Ok(response) => return response,
         Err(request) => request,
@@ -477,4 +612,50 @@ pub(in crate::server) async fn route_http(
             Some(request_id),
         ),
     )
+}
+
+/*
+CDXC:Security 2026-11-08 WHY:
+One principal per request, settled from the same checks the gate just made, in the order the gate trusts them: the main token, then a session's or the owner's own token, an extension's, a paired phone's, a connected computer's, a Collab guest's. Until Phase 2 of #495 mints session tokens and the desktop's owner session, the main token resolves to `LocalAgent` (the agent level the token file is being downgraded to), and a phone is its paired device (pairing v2 tokens name it; a token loaded without a device, in tests, keeps its hash's first 12 characters).
+*/
+fn resolve_caller(
+    main_token: bool,
+    token_principal: Option<Principal>,
+    extension_id: Option<&str>,
+    device: Option<(&str, Option<&str>)>,
+    peer: Option<&PeerAuthorization>,
+    share: Option<&ghostex_gx_protocol::collab_component::ShareScope>,
+) -> Principal {
+    if main_token {
+        return Principal::LocalAgent;
+    }
+    if let Some(principal) = token_principal {
+        return principal;
+    }
+    if let Some(extension_id) = extension_id {
+        return Principal::Extension {
+            extension_id: extension_id.to_string(),
+        };
+    }
+    // Pairing v2 tokens name their device; a bare hash (tests) keeps the hash-derived id.
+    if let Some((hash, device_id)) = device {
+        return Principal::Device {
+            device_id: device_id.map_or_else(
+                || format!("token:{}", &hash[..hash.len().min(12)]),
+                str::to_string,
+            ),
+        };
+    }
+    if let Some(PeerAuthorization::Allowed { server_id, name }) = peer {
+        return Principal::Peer {
+            server_id: server_id.clone(),
+            name: name.clone(),
+        };
+    }
+    if let Some(share) = share {
+        return Principal::Guest {
+            share_id: share.share_id.clone(),
+        };
+    }
+    Principal::Anonymous
 }

@@ -107,10 +107,17 @@ pub(crate) struct GpuiRemoteMachineConfig {
     pub(crate) ssh_port: Option<u16>,
     pub(crate) ssh_user: Option<String>,
     pub(crate) has_saved_password: bool,
+    /// The machine reuses the multiplexing connection the user's own SSH config keeps open
+    /// (GitHub #496): Ghostex never logs in to it, and a host that asks for a verification code
+    /// on every login can be reached through the master the user signed in to in a terminal.
+    pub(crate) reuse_ssh_connection: bool,
     pub(crate) wsl_distribution: Option<String>,
     pub(crate) disabled: bool,
     /// The connect's shared SSH login (`GpuiRemoteSshConnectionShare`); set only on the copy one connect runs with.
     pub(crate) ssh_control_path: Option<String>,
+    /// The user asked to reinstall the Ghostex-installed gxserver there (Settings > Remote > the
+    /// machine's Reinstall): the connect replaces that package even when its build matches.
+    pub(crate) reinstall_package: bool,
 }
 
 impl GpuiRemoteMachineConfig {
@@ -220,6 +227,9 @@ pub(crate) enum GpuiRemoteGxserverConnectState {
     /// cannot fix that, and every retry is another failed login the machine may lock the account
     /// over, so the reconnect ladder stops here until the user reconnects or saves a new password.
     AuthFailed,
+    /// An Easy Connect machine this computer must pair with again since 11.1 (an empty allow-list
+    /// is closed): the dial cannot get through until it does, so the ladder stops here too.
+    PairingRequired,
     SshFailed,
     TokenUnavailable,
     KeychainFailed,
@@ -237,6 +247,7 @@ impl GpuiRemoteGxserverConnectState {
             Self::Connected => "success",
             Self::InstallApprovalRequired
             | Self::Invalid
+            | Self::PairingRequired
             | Self::Unsupported
             | Self::UnsupportedRemotePlatform => "warning",
             Self::InstallFailed
@@ -259,6 +270,7 @@ impl GpuiRemoteGxserverConnectState {
             Self::InstallFailed => "Remote install failed",
             Self::Invalid => "Remote connect failed",
             Self::AuthFailed => "Remote sign-in failed",
+            Self::PairingRequired => "Pair this computer again",
             Self::SshFailed => "Remote SSH failed",
             Self::TokenUnavailable => "Remote token unavailable",
             Self::KeychainFailed => "Remote token not saved",
@@ -279,6 +291,7 @@ impl GpuiRemoteGxserverConnectState {
             Self::InstallFailed => "installFailed",
             Self::Invalid => "invalid",
             Self::AuthFailed => "authFailed",
+            Self::PairingRequired => "pairingRequired",
             Self::SshFailed => "sshFailed",
             Self::TokenUnavailable => "tokenUnavailable",
             Self::KeychainFailed => "keychainFailed",
@@ -299,6 +312,7 @@ impl GpuiRemoteGxserverConnectState {
             Self::InstallFailed => "installFailed",
             Self::Invalid => "invalid",
             Self::AuthFailed => "authFailed",
+            Self::PairingRequired => "pairingRequired",
             Self::SshFailed => "sshFailed",
             Self::TokenUnavailable => "tokenUnavailable",
             Self::KeychainFailed => "keychainFailed",
@@ -331,6 +345,7 @@ pub(crate) fn gpui_remote_gxserver_connect_state_from_wire_status(
             Some(GpuiRemoteGxserverConnectState::PresentationStreamFailed)
         }
         "authFailed" => Some(GpuiRemoteGxserverConnectState::AuthFailed),
+        "pairingRequired" => Some(GpuiRemoteGxserverConnectState::PairingRequired),
         "sshFailed" => Some(GpuiRemoteGxserverConnectState::SshFailed),
         "tokenUnavailable" => Some(GpuiRemoteGxserverConnectState::TokenUnavailable),
         "tunnelFailed" => Some(GpuiRemoteGxserverConnectState::TunnelFailed),
@@ -351,6 +366,7 @@ pub(crate) fn gpui_remote_gxserver_status_state_is_broken(state: &str) -> bool {
     matches!(
         state,
         "authFailed"
+            | "pairingRequired"
             | "disconnected"
             | "failed"
             | "keychainFailed"
@@ -464,7 +480,12 @@ pub(crate) struct GpuiRemoteAskpassScript {
 
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 pub(crate) struct GpuiRemoteSpawnedTunnel {
-    pub(crate) child: Child,
+    /// The tunnel's ssh process, which owns the forward; `None` when the forward lives in the
+    /// user's own SSH master instead (GitHub #496).
+    pub(crate) child: Option<Child>,
+    /// The forward this tunnel registered in the user's SSH master, taken back when the tunnel
+    /// ends (GitHub #496).
+    pub(crate) forward: Option<GpuiRemoteSharedSshForward>,
     pub(crate) _askpass: Option<GpuiRemoteAskpassScript>,
 }
 

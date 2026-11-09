@@ -5,8 +5,8 @@
 use super::super::super::catalog::{SettingOption, module, settings_catalog};
 use super::super::super::fields::{
     ButtonVariant, PageAction, RowSpec, SELECT_WIDTH, SettingsDialogSpec, dialog_footer,
-    select_field, setting_row, settings_button, settings_dialog, settings_section,
-    settings_segmented, settings_select, static_note, text_field, toggle_field,
+    home_secret_folders_field, select_field, setting_row, settings_button, settings_dialog,
+    settings_section, settings_segmented, settings_select, static_note, text_field, toggle_field,
 };
 use super::super::super::palette::SettingsPalette;
 use super::super::super::search::{TabSearch, should_show_setting};
@@ -25,6 +25,11 @@ const TITLE_AGENT: &str = "sessionTitleGenerationAgent";
 const CUSTOM_TITLE_COMMAND: &str = "customSessionTitleGenerationCommand";
 const ACCEPT_ALL: &str = "agentAcceptAllEnabled";
 const TRUST_PROJECT_FOLDERS: &str = "trustProjectFoldersAutomatically";
+const SHOW_ON_ALL_SPACES: &str = "chiefShowOnAllSpaces";
+const CONFIRM_NEW_CHAT: &str = "chiefConfirmNewChat";
+/// Whether Chief of Staff adds GBots without asking (server/src/server/security_gates.rs).
+const CHIEF_ADDS_GBOTS: &str = "gbotsChiefAddsOnItsOwn";
+const HOME_SECRET_FOLDERS: &str = "homeSecretFolders";
 /// How the agent a project's new-session button starts is remembered (gx-core `agent_choice.rs`).
 const NEW_SESSION_AGENT_SCOPE: &str = "newSessionAgentScope";
 /// A shadcn `Select` with this many items becomes the searchable dropdown.
@@ -301,6 +306,97 @@ impl AgentsTab {
             ));
         }
         settings_section(p, "Defaults", None, None, rows)
+    }
+
+    /// The Home folder card: where Main Hub's home shows, whether New Chat asks, and the
+    /// folders agents started in the home folder can't read (server/src/agents/home_secret_folders.rs).
+    pub(super) fn render_home_folder(
+        &mut self,
+        p: &SettingsPalette,
+        search: &TabSearch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Div> {
+        let section = search.section("homeFolder");
+        let values = self.store.read(cx).values();
+        // The card belongs to the Main Hub beta extension: off, nothing of it shows.
+        let main_hub_on = ghostex_settings_catalog::built_in_extensions::on_with(
+            ghostex_settings_catalog::built_in_extensions::CHIEF,
+            |key| values.value(key).as_bool(),
+        );
+        if !main_hub_on {
+            return None;
+        }
+        let mut rows: Vec<AnyElement> = Vec::new();
+        if should_show_setting(&section, SHOW_ON_ALL_SPACES, None) {
+            rows.push(toggle_field(
+                self,
+                p,
+                SHOW_ON_ALL_SPACES,
+                RowSpec::new("Show Main Hub on all Spaces").description(
+                    "Show Main Hub and your home folder's sessions at the top of every Space. Off, they stay at the top of the Space you moved them to.",
+                ),
+                values.bool(SHOW_ON_ALL_SPACES),
+                cx,
+            ));
+        }
+        if should_show_setting(&section, CONFIRM_NEW_CHAT, None) {
+            rows.push(toggle_field(
+                self,
+                p,
+                CONFIRM_NEW_CHAT,
+                RowSpec::new("Ask before New Chat").description(
+                    "Ask before New Chat or Change Agent starts a new chat with Chief of Staff. Your earlier chats stay in Main Hub either way.",
+                ),
+                values.bool(CONFIRM_NEW_CHAT),
+                cx,
+            ));
+        }
+        // Shown while GBots are on (they need Main Hub, checked above).
+        let gbots_on = ghostex_settings_catalog::built_in_extensions::on_with(
+            ghostex_settings_catalog::built_in_extensions::GBOTS,
+            |key| values.value(key).as_bool(),
+        );
+        if gbots_on && should_show_setting(&section, CHIEF_ADDS_GBOTS, None) {
+            rows.push(toggle_field(
+                self,
+                p,
+                CHIEF_ADDS_GBOTS,
+                RowSpec::new("Chief of Staff may add GBots on its own").description(
+                    "Chief of Staff adds a GBot when a job needs one and tells you in a card you can undo. Off, it asks you before adding each one.",
+                ),
+                values.bool(CHIEF_ADDS_GBOTS),
+                cx,
+            ));
+        }
+        if should_show_setting(&section, HOME_SECRET_FOLDERS, None) {
+            let value = values.value(HOME_SECRET_FOLDERS);
+            let default = settings_catalog()
+                .default_value(HOME_SECRET_FOLDERS)
+                .cloned()
+                .unwrap_or(Value::Null);
+            let modified = !value.is_null() && value != default;
+            let found_by_search =
+                section.is_searching && section.visible_keys.contains(HOME_SECRET_FOLDERS);
+            rows.push(home_secret_folders_field(
+                self,
+                p,
+                found_by_search,
+                RowSpec::new("Folders agents can't read in your home folder")
+                    .description(
+                        "Agents Ghostex starts in your home folder are kept out of these folders and files. Claude Code's file tools and every Codex command are held to the list; Claude's shell commands and other agents are not.",
+                    )
+                    .modified(modified),
+                modified.then(|| reset_to(HOME_SECRET_FOLDERS)),
+                &value,
+                window,
+                cx,
+            ));
+        }
+        if rows.is_empty() {
+            return None;
+        }
+        settings_section(p, "Home folder", None, None, rows)
     }
 
     /// The Skip permissions? confirmation (`w-[25rem] gap-4 p-5`, nested).

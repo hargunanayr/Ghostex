@@ -123,7 +123,7 @@ fn log(state: &AppState, level: LogLevel, event: &str, error: Option<String>, de
         details: Some(details),
     });
 }
-struct Plan {
+pub(crate) struct Plan {
     project: String,
     session: String,
     claim: String,
@@ -141,11 +141,25 @@ pub(crate) fn holds_queue(
     session: &Value,
     notice: &SessionChatTerminalNotice,
 ) -> bool {
-    if !retryable(notice)
-        || session
-            .pointer("/runtimeSettings/accountRecoverySuppressed")
-            .and_then(Value::as_bool)
-            == Some(true)
+    retryable(notice)
+        && recovery_retries(
+            repository,
+            session,
+            notice.kind == "usageLimit" || notice.account_disabled(),
+        )
+}
+/// Whether this pass would retry the session's failed turn by itself: its recovery is on and not
+/// stopped, and for anything but a usage limit (or a disabled account) retries after temporary
+/// errors are on too.
+pub(crate) fn recovery_retries(
+    repository: &DomainRepository<'_>,
+    session: &Value,
+    usage_limit: bool,
+) -> bool {
+    if session
+        .pointer("/runtimeSettings/accountRecoverySuppressed")
+        .and_then(Value::as_bool)
+        == Some(true)
     {
         return false;
     }
@@ -162,8 +176,7 @@ pub(crate) fn holds_queue(
         return false;
     };
     let policy = launch::effective_policy(&registry, provider, session);
-    policy.enabled
-        && (notice.kind == "usageLimit" || notice.account_disabled() || policy.retry_errors)
+    policy.enabled && (usage_limit || policy.retry_errors)
 }
 fn time(value: Option<&Value>) -> Option<DateTime<Utc>> {
     value
@@ -174,7 +187,7 @@ fn time(value: Option<&Value>) -> Option<DateTime<Utc>> {
 pub(super) fn backoff(attempt: u64) -> chrono::Duration {
     chrono::Duration::minutes((5_i64.saturating_mul(1_i64 << attempt.min(4))).min(60))
 }
-pub(super) fn save(
+pub(crate) fn save(
     state: &AppState,
     repo: &DomainRepository<'_>,
     session: &Value,
@@ -194,14 +207,17 @@ pub(super) fn save(
     {
         super::switch_progress::set_phase(&mut runtime, "failed", recovery["reason"].as_str());
     }
-    runtime.insert("accountRecovery".into(), recovery);
-    endpoint::update_session(repo, session, runtime)?;
+    let previous = runtime
+        .insert("accountRecovery".into(), recovery)
+        .unwrap_or(Value::Null);
+    // And the episode's failed row when due (CDXC:Notifications 2026-10-31 in api_errors.rs).
+    super::api_errors::store_recovery(state, repo, session, &previous, runtime)?;
     endpoint::publish(state, repo, session)
 }
 /// CDXC:AgentProviders 2026-09-11 WHY:
 /// One session used to end the whole pass: a `?` or a panic anywhere in the loop skipped every session behind it in the list, silently, for as long as the fault lasted.
 /// Each session is now planned on its own, with its errors and panics logged, and the pass outcome is logged too, because three sessions sat at the Fable limit for an hour with nothing in gxserver.jsonl to say why.
-fn collect(
+pub(crate) fn collect(
     state: &AppState,
     restart: bool,
     selected: Option<BTreeSet<SessionKey>>,
@@ -245,6 +261,13 @@ fn collect(
                 );
             }
         }
+    }
+    if narrowed {
+        super::api_errors::retain_continuations(&targets);
+    }
+    // A failed row an episode owes cannot wait for what follows, which may skip the session.
+    for session in &targets {
+        super::api_errors::settle_failure_notice(state, &repo, session);
     }
     // A provider with nothing saved follows `Policy::default`, which is on.
     if registry.accounts.is_empty()
@@ -489,7 +512,7 @@ fn restore_session(
     Ok(())
 }
 /// Decides what one session needs this pass: nothing, a state update, an account switch, a restart, or a continuation send (the returned plan).
-fn plan_session(
+pub(crate) fn plan_session(
     state: &AppState,
     db: &rusqlite::Connection,
     repo: &DomainRepository<'_>,
@@ -627,7 +650,8 @@ fn plan_session(
     if !usage_limit
         && (live_activity || (working && !detection.notice.as_ref().is_some_and(retryable)))
     {
-        if !recovery.is_null() {
+        // A failed-episode marker alone is no recovery to report progress on.
+        if recovery["status"].is_string() {
             if let Some(since) = time(recovery.get("healthySince")) {
                 if now - since >= chrono::Duration::minutes(1) {
                     recovery["attempt"] = json!(0);
@@ -673,6 +697,16 @@ fn plan_session(
             recovery["reason"] = json!(notice.title);
             recovery["updatedAt"] = json!(now.to_rfc3339());
             save(state, repo, &session, recovery)?;
+        } else if retryable(&notice)
+            && !notice.account_disabled()
+            && matches!(
+                notice.kind.as_str(),
+                crate::session_chat_notice::SESSION_CHAT_NOTICE_STREAM_ERROR | "agentError"
+            )
+        {
+            // An error recovery never retries because retries are off, whatever an earlier
+            // recovery that ended left behind: announced once.
+            super::api_errors::announce_episode(state, repo, &session)?;
         }
         return Ok(None);
     }
@@ -719,45 +753,26 @@ fn plan_session(
         .and_then(|o| o.selection.model.as_ref())
         .map(|m| m.value.clone())
         .unwrap_or_default();
-    // An account this session automatically left counts again only once a reading taken after it left says so: candidates no longer need a fresh reading (see `trusted_room`), and an older one would bounce the session straight back to the account whose limit it just hit.
-    let left = session
-        .pointer("/runtimeSettings/accountSwitch")
-        .filter(|progress| progress["source"] == "automatic")
-        .and_then(|progress| {
-            Some((
-                progress["fromAccountId"].as_str()?,
-                time(progress.get("updatedAt"))?,
-            ))
-        });
-    let read_since_left = |id: &str| {
-        left.is_none_or(|(from, at)| {
-            id != from
-                || snapshot
-                    .accounts
-                    .iter()
-                    .find(|d| endpoint::account_id(d) == id)
-                    .and_then(reading_time)
-                    .is_some_and(|t| t > at)
-        })
-    };
     // A session on its own login keeps waiting for its limit to reset instead of moving to an account (CDXC:AgentProviders 2026-10-09 in launch.rs).
-    let switch_account = if notice.kind == "usageLimit"
+    let target = if notice.kind == "usageLimit"
         && policy.at_limit == LimitAction::Switch
         && !launch::session_uses_own_login(provider, &session)
     {
-        ranked(
+        switch_target(
             &registry,
             snapshot,
             provider,
             current_id.as_deref(),
             &model,
             policy.priority,
+            &session,
         )
-        .into_iter()
-        .find(|account| read_since_left(&account.id))
-        .map(|account| account.id.clone())
     } else {
-        None
+        SwitchTarget::None
+    };
+    let switch_account = match &target {
+        SwitchTarget::Move(id) => Some(id.clone()),
+        _ => None,
     };
     if recovery.is_null() || recovery["status"].as_str() != Some("waiting") {
         let last_attempt_at = recovery["lastAttemptAt"].clone();
@@ -863,7 +878,16 @@ fn plan_session(
                     })
                     .max()
             });
-            let reason = if policy.at_limit == LimitAction::Switch {
+            let held_back = match &target {
+                SwitchTarget::HeldBack { name, left_at, .. } => Some(format!(
+                    "Waiting for a new usage reading of {name} before moving back to it: this session left it at {}.",
+                    left_at.with_timezone(&chrono::Local).format("%-I:%M %p")
+                )),
+                _ => None,
+            };
+            let reason = if let Some(held_back) = held_back.as_deref() {
+                held_back
+            } else if policy.at_limit == LimitAction::Switch {
                 super::limit_wait::NO_ROOM
             } else {
                 "Waiting for this account's usage to reset."
@@ -886,15 +910,20 @@ fn plan_session(
                             "usageError": found.and_then(|d| d.usage_error.as_deref()),
                             "usageUpdatedAt": found.and_then(|d| d.usage_updated_at.as_deref()),
                             "maxUsedPercent": found.map(|d| d.usage.iter().filter(|w| relevant(w, &model)).map(|w| w.used_percent).fold(0f64, f64::max)),
+                            "heldBackUntilNewReading": matches!(&target, SwitchTarget::HeldBack { id, .. } if *id == a.id),
                         })
                     })
                     .collect();
                 log(
                     state,
                     LogLevel::Warn,
-                    "accountRecoveryNoAccountWithRoom",
+                    if held_back.is_some() {
+                        "accountRecoveryWaitingForReading"
+                    } else {
+                        "accountRecoveryNoAccountWithRoom"
+                    },
                     None,
-                    json!({ "projectId": pid, "sessionId": sid, "model": model, "accounts": candidates }),
+                    json!({ "projectId": pid, "sessionId": sid, "model": model, "leftAt": left_account(&session).map(|(_, at)| at.to_rfc3339()), "accounts": candidates }),
                 );
             }
             recovery["reason"] = json!(reason);
@@ -909,7 +938,8 @@ fn plan_session(
                 .to_rfc3339());
             // An untracked default login has no trustworthy quota reading. Retry it conservatively rather than inventing an available percentage.
             if current_id.is_some() {
-                if policy.at_limit == LimitAction::Switch {
+                // Not the every-account-full card: an account has room, it only needs a newer reading.
+                if policy.at_limit == LimitAction::Switch && held_back.is_none() {
                     let wait = super::limit_wait::describe(
                         &registry,
                         snapshot,
@@ -1014,6 +1044,68 @@ fn trusted_room(account: &DiscoveredAccount, model: &str) -> bool {
 fn has_room(account: &DiscoveredAccount, model: &str, now: DateTime<Utc>) -> bool {
     trusted_room(account, model)
         && reading_time(account).is_some_and(|t| now - t < chrono::Duration::minutes(5))
+}
+/// Where an automatic switch at a usage limit takes the session.
+#[derive(Debug, PartialEq)]
+pub(super) enum SwitchTarget {
+    /// The best account with room.
+    Move(String),
+    /// The only accounts with room include the one this session automatically left, whose last reading predates leaving: it may still show the limit the session left it for.
+    HeldBack {
+        id: String,
+        name: String,
+        left_at: DateTime<Utc>,
+    },
+    /// No account has room.
+    None,
+}
+/// The account this session last left by an automatic switch, and when.
+///
+/// CDXC:AgentProviders 2026-11-08 WHY:
+/// The coordinator G9jt7 hit account 4's weekly limit at 08:27 (Dubai) and logged "no account with room" although account 5 was ready at 42%: it had moved from 5 to 4 automatically on 6 Nov, and this read the leave time from `accountSwitch.updatedAt`, which every later phase change re-stamps. A message sent from the composer marks the old switch `cancelled` (`user_action`), so the coordinator's reports at 08:25 and 08:27 moved "left at" past account 5's 08:24 reading, and account 5 was held back as if just left. The switch now stamps `leftAt` once; a record saved before that falls back to `updatedAt` only while no later `cancelled` has overwritten it.
+pub(super) fn left_account(session: &Value) -> Option<(&str, DateTime<Utc>)> {
+    let progress = session
+        .pointer("/runtimeSettings/accountSwitch")
+        .filter(|progress| progress["source"] == "automatic")?;
+    let at = time(progress.get("leftAt")).or_else(|| {
+        (progress["phase"] != "cancelled")
+            .then(|| time(progress.get("updatedAt")))
+            .flatten()
+    })?;
+    Some((progress["fromAccountId"].as_str()?, at))
+}
+/// The account a usage-limit switch moves `session` to. An account this session automatically left counts again only once a reading taken after it left says so: candidates no longer need a fresh reading (see `trusted_room`), and an older one would bounce the session straight back to the account whose limit it just hit.
+pub(super) fn switch_target(
+    registry: &Registry,
+    snapshot: &Snapshot,
+    provider: Provider,
+    current: Option<&str>,
+    model: &str,
+    priority: Priority,
+    session: &Value,
+) -> SwitchTarget {
+    let left = left_account(session);
+    let mut held_back = SwitchTarget::None;
+    for account in ranked(registry, snapshot, provider, current, model, priority) {
+        let Some((from, at)) = left.filter(|(from, _)| *from == account.id) else {
+            return SwitchTarget::Move(account.id.clone());
+        };
+        let read_since = snapshot
+            .accounts
+            .iter()
+            .find(|d| endpoint::account_id(d) == from)
+            .and_then(reading_time)
+            .is_some_and(|t| t > at);
+        if read_since {
+            return SwitchTarget::Move(account.id.clone());
+        }
+        held_back = SwitchTarget::HeldBack {
+            id: account.id.clone(),
+            name: account.name.clone(),
+            left_at: at,
+        };
+    }
+    held_back
 }
 pub(super) fn ranked<'a>(
     registry: &'a Registry,
@@ -1122,11 +1214,13 @@ async fn deliver(state: Arc<AppState>, plan: Plan) {
         let owned = state.clone();
         let pid = plan.project.clone();
         let sid = plan.session.clone();
+        let claim = plan.claim.clone();
         let sender: crate::session_chat_queue::SessionChatQueueSender =
             Arc::new(move |text, _images| {
                 let state = owned.clone();
-                let pid = pid.clone();
-                let sid = sid.clone();
+                let (pid, sid) = (pid.clone(), sid.clone());
+                // Its prompt hook is this continuation (api_errors::end_failure_episode).
+                super::api_errors::note_continuation(&pid, &sid, &claim, &text);
                 Box::pin(async move {
                     send_session_chat_message_internal(
                         &state,
@@ -1158,6 +1252,7 @@ async fn deliver(state: Arc<AppState>, plan: Plan) {
             }
         })
     } else {
+        super::api_errors::note_continuation(&plan.project, &plan.session, &plan.claim, CONTINUE);
         send_session_chat_message_internal(
             &state,
             &plan.project,
@@ -1260,21 +1355,22 @@ pub(crate) fn retry_now(
     let claim = uuid::Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
     runtime.insert("accountRecoverySuppressed".into(), json!(false));
-    runtime.insert(
-        "accountRecovery".into(),
-        json!({
-            "status": "retrying",
-            "trigger": crate::session_chat_notice::SESSION_CHAT_NOTICE_STREAM_ERROR,
-            "claim": claim,
-            "attempt": previous["attempt"].as_u64().unwrap_or(0),
-            "reason": "Retrying now.",
-            "errorText": error_text,
-            "previousAttemptAt": previous["lastAttemptAt"],
-            "lastAttemptAt": now,
-            "updatedAt": now,
-        }),
-    );
-    endpoint::update_session(repo, session, runtime)?;
+    let mut recovery = json!({
+        "status": "retrying",
+        "trigger": crate::session_chat_notice::SESSION_CHAT_NOTICE_STREAM_ERROR,
+        "claim": claim,
+        "attempt": previous["attempt"].as_u64().unwrap_or(0),
+        "reason": "Retrying now.",
+        "errorText": error_text,
+        "previousAttemptAt": previous["lastAttemptAt"],
+        "lastAttemptAt": now,
+        "updatedAt": now,
+    });
+    // A retry the user asked for continues the episode: no second failed notification.
+    super::api_errors::reconcile_failure_notice(&previous, &mut recovery);
+    runtime.insert("accountRecovery".into(), recovery);
+    let members = &["accountRecoverySuppressed", "accountRecovery"];
+    endpoint::update_session_members(repo, session, &runtime, members)?;
     let queue = crate::session_chat_queue::read_session_chat_queue_snapshot_with(db, pid, sid);
     let plan = Plan {
         project: pid.into(),
@@ -1325,6 +1421,7 @@ pub(crate) fn user_action(
         return Ok(());
     }
     runtime.remove("accountRecovery");
+    super::api_errors::forget_continuation(project, session);
     super::switch_progress::set_phase(&mut runtime, "cancelled", None);
     runtime.insert("accountRecoverySuppressed".into(), json!(stop));
     endpoint::update_session(&repo, &row, runtime)?;

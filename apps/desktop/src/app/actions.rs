@@ -75,6 +75,19 @@ gpui::actions!(
     ]
 );
 
+/// The path menu of a path shown in Ghostex's own UI (app/path_links.rs).
+#[derive(Clone, Debug, PartialEq, Eq, Action)]
+#[action(namespace = ghostex_gpui, no_json)]
+pub(crate) struct CopyGpuiPathLink {
+    pub(crate) path: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Action)]
+#[action(namespace = ghostex_gpui, no_json)]
+pub(crate) struct RevealGpuiPathLink {
+    pub(crate) path: String,
+}
+
 /// Window menu: bring one workspace window to the front (app/workspace_windows/).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Action)]
 #[action(namespace = ghostex_gpui, no_json)]
@@ -464,6 +477,14 @@ pub(crate) struct RunGpuiTitlebarAction {
     pub(crate) action_index: u64,
 }
 
+/// A Global Action row of the Start menu, by id: it runs as `runSidebarCommand` with the global
+/// scope, in the active project.
+#[derive(Clone, Debug, PartialEq, Eq, Action)]
+#[action(namespace = ghostex_gpui, no_json)]
+pub(crate) struct RunGpuiTitlebarGlobalAction {
+    pub(crate) command_id: String,
+}
+
 /// One row of the titlebar's ⋯ menu, by its position in `GpuiTitlebarMoreMenuItem::ALL`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Action)]
 #[action(namespace = ghostex_gpui, no_json)]
@@ -512,6 +533,23 @@ pub(crate) struct RunGpuiTitlebarHelpQuestion {
 #[action(namespace = ghostex_gpui, no_json)]
 pub(crate) struct RunGpuiTitlebarUpdates {
     pub(crate) update_all: bool,
+}
+
+/// An item row of the top bar's Updates list: runs (or retries) that item's update, or opens
+/// Settings > Updates when only the page can finish it. The list stays open to show its spinner.
+#[derive(Clone, Debug, PartialEq, Eq, Action)]
+#[action(namespace = ghostex_gpui, no_json)]
+pub(crate) struct RunGpuiTitlebarUpdateItem {
+    pub(crate) id: String,
+}
+
+/// The dismiss button of a failed item in the top bar's Updates list: hides that failure (and
+/// the button's red) until the item's next update.
+#[derive(Clone, Debug, PartialEq, Eq, Action)]
+#[action(namespace = ghostex_gpui, no_json)]
+pub(crate) struct DismissGpuiTitlebarUpdateFailure {
+    pub(crate) id: String,
+    pub(crate) error: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Action)]

@@ -14,7 +14,7 @@ use crate::composer::layout::{
 use crate::composer::links::{classify_link_href, file_position_from_href, LinkTarget};
 use crate::composer::queue::{is_queue_row_busy, move_queue_row};
 use crate::composer::reference_pills::{composer_references, ReferenceKind};
-use crate::composer::references::{insert_reference, native_path_reference, remove_reference};
+use crate::composer::references::{insert_path_references, remove_reference};
 use crate::composer::submission::{restore_undelivered_text, SubmissionMode};
 use crate::composer::suggestions::{
     complete_composer_mention, composer_native_command, suggestion_popup, suggestion_replacement,
@@ -461,8 +461,21 @@ fn suggestion_command(state: &mut ChatState, action: &UserAction) -> Vec<Effect>
         None => popup.selected,
     };
     if popup.kind == SuggestionKind::Slash {
-        let Some(command) = matches.slash_matches.get(index) else {
-            return Vec::new();
+        let rows = crate::composer::suggestions::slash_rows(&matches);
+        let command = match rows.get(index) {
+            Some(crate::composer::suggestions::SlashRow::Command(command)) => *command,
+            Some(crate::composer::suggestions::SlashRow::Skill(skill)) => {
+                // A skill picked from the `/` list at the start of the draft: its pill replaces
+                // the `/query` the whole draft holds.
+                let content = format!("{} ", crate::composer::trigger::linked_skill_mention(skill));
+                let caret = content.encode_utf16().count();
+                return vec![Effect::SetComposerText {
+                    content,
+                    caret: Some(caret),
+                    from_history: false,
+                }];
+            }
+            None => return Vec::new(),
         };
         if command.insert_text.is_none()
             && key == Some("enter")
@@ -490,7 +503,6 @@ fn suggestion_command(state: &mut ChatState, action: &UserAction) -> Vec<Effect>
         popup.kind,
         index,
         &state.composer.suggestions.text,
-        sources.agent.as_deref(),
     ) else {
         return Vec::new();
     };
@@ -534,11 +546,14 @@ fn edit_draft(state: &mut ChatState, action: &UserAction, context: &ChatContext)
     if !state.core.cleared_error && !history_changed {
         state.core.skip_closing_publish = true;
     }
-    vec![Effect::WriteStorage {
+    let mut effects = vec![Effect::WriteStorage {
         key: draft_key(state),
         value: Some(crate::composer::storage::encode_stored_draft(&record)),
         durable: false,
-    }]
+    }];
+    // A shared chat shows who is typing (Ghostex Collab).
+    effects.extend(crate::extras::collab::typing(state, text, context));
+    effects
 }
 
 fn save_draft(state: &mut ChatState, action: &UserAction) -> Vec<Effect> {
@@ -744,31 +759,32 @@ fn attachments_finished(state: &mut ChatState, action: &UserAction) -> Vec<Effec
 }
 
 fn insert_attachments(action: &UserAction) -> Vec<Effect> {
-    let mut text = text_param(action).to_string();
-    let mut caret = usize_param(action, "start");
-    let mut end = usize_param(action, "end");
-    for path in action
+    let paths: Vec<&str> = action
         .param("paths")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
         .filter_map(Value::as_str)
-    {
-        let reference = native_path_reference(path, &text);
-        let edit = insert_reference(&text, &reference, caret, end);
-        text = edit.text;
-        caret = edit.caret;
-        end = caret;
-    }
+        .collect();
+    let edit = insert_path_references(
+        text_param(action),
+        &paths,
+        usize_param(action, "start"),
+        usize_param(action, "end"),
+    );
     vec![Effect::SetComposerText {
-        content: text,
-        caret: Some(caret),
+        content: edit.text,
+        caret: Some(edit.caret),
         from_history: false,
     }]
 }
 
 fn remove_queue(state: &mut ChatState, action: &UserAction) -> Vec<Effect> {
     let prompt_id = string_param(action, "promptId");
+    // Cancel on a message held for an offline computer.
+    if prompt_id.starts_with(crate::session::computer::HELD_PREFIX) {
+        return crate::session::computer::cancel(state, prompt_id);
+    }
     // The row already left (`settle_rows_gone_from_queue`): the card is all there is to remove.
     let row_left = !state
         .session

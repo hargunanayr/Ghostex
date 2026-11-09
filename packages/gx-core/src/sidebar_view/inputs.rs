@@ -265,6 +265,39 @@ impl SidebarUiState {
 /// The setting behind the Sort & Filter page's Group Working Sessions row and its Settings switch.
 pub const GROUP_WORKING_SESSIONS_SETTING_KEY: &str = "groupWorkingSessions";
 
+/// The setting behind Worktree sessions show in their project (CDXC:Worktrees 2026-11-06 in
+/// `worktree_fold.rs`).
+pub const WORKTREE_SESSIONS_IN_PROJECT_SETTING_KEY: &str = "worktreeSessionsInProject";
+
+/// The setting behind Merge copies of the same repository (CDXC:RemoteMachines 2026-11-09 in
+/// `merged.rs`).
+pub const MERGE_REPOSITORY_COPIES_SETTING_KEY: &str = "sidebarMergeRepositoryCopies";
+
+/// The setting behind Settings > Sidebar & Sessions > Advanced's Pinned order.
+pub const PINNED_SESSION_ORDER_SETTING_KEY: &str = "pinnedSessionOrder";
+
+/// How pinned sessions are ordered, in the Project sidebar's Pinned and among the Unified
+/// sidebar's pinned cards.
+///
+/// CDXC:Sidebar 2026-11-07 DECISION:
+/// User: "im not able to rearrange pinned sessions in the sidebar anymore. pls also add toggle to either allow rearranging them or make the pinned sessions in the sidebar sort by most recently updated one (under advanced)". Settings > Sidebar & Sessions > Advanced has Pinned order (`pinnedSessionOrder`): Manual, the default, keeps the order the user drags pinned sessions into (gxserver's `sidebarOrder`, one order for both sidebars); Most recently updated (`recent`) orders them by when each last came back to the user (`unified_sidebar::came_back_ms`, the Unified list's own clock), newest first, and a pinned session can no longer be dragged among the pinned ones. The phone follows the computer's choice.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PinnedSessionOrder {
+    #[default]
+    Manual,
+    Recent,
+}
+
+impl PinnedSessionOrder {
+    /// The saved value: `recent` is Most recently updated; anything else is Manual.
+    pub fn from_setting(value: Option<&str>) -> Self {
+        match value {
+            Some("recent") => Self::Recent,
+            _ => Self::Manual,
+        }
+    }
+}
+
 /// The settings the rows and the list depend on, with the defaults and clamps of
 /// `normalizeghostexSettings`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -288,7 +321,8 @@ pub struct SidebarSettings {
     pub show_tag_menu_when_parking: bool,
     /// The hover strip's actions are repeated at the top of the row's context menu.
     pub show_session_card_hover_buttons_in_context_menu: bool,
-    pub show_beta_features: bool,
+    /// Keep Awake is on (Settings > Extensions > Experimental): the ⋯ menu offers it.
+    pub keep_awake_enabled: bool,
     pub hide_keep_awake_titlebar_control: bool,
     /// The project header offers New Browser Tab.
     pub browser_view_tab_hidden: bool,
@@ -296,7 +330,7 @@ pub struct SidebarSettings {
     pub expand_collapsed_projects_on_jump: bool,
     /// Rows whose agent is working sit in each project's Working section (`groupWorkingSessions`).
     pub group_working_sessions: bool,
-    /// The Bots extension is on (`botsHidden` is false), so the sidebar offers its Bots mode.
+    /// The Bots extension (`botsHidden` false) is on, so the sidebar offers its Bots mode.
     pub bots_enabled: bool,
     /// The Bot automations extension is on (`botAutomationsHidden` is false). It needs Bots too.
     pub bot_automations_enabled: bool,
@@ -321,10 +355,23 @@ pub struct SidebarSettings {
     pub unified_project_order: Vec<String>,
     /// The Project sidebar leaves out projects with no sessions (`sidebarHideProjectsWithoutSessions`).
     pub hide_projects_without_sessions: bool,
+    /// The home project (Main Hub's group) shows at the top of every Space
+    /// (`chiefShowOnAllSpaces`); off, only at the top of its own Space.
+    pub chief_show_on_all_spaces: bool,
     /// Settings › Sidebar's Separate by machine (`sidebarSeparateByMachine`): machine tabs and one
     /// machine's list at a time, as before. Off by default: one list for every machine
     /// (`sidebar_view/merged.rs`).
     pub separate_by_machine: bool,
+    /// Settings › Sidebar's Merge copies of the same repository (`sidebarMergeRepositoryCopies`,
+    /// off by default in this fork): on, two folders on one computer that are copies of one
+    /// repository are one entry of the one list. Off, each is its own (`merged.rs`).
+    pub merge_repository_copies: bool,
+    /// Settings › Sidebar & Sessions › Advanced's Worktree sessions show in their project
+    /// (`worktreeSessionsInProject`, on by default): the Project sidebar lists a worktree
+    /// project's sessions under its parent project (`worktree_fold.rs`).
+    pub worktree_sessions_in_project: bool,
+    /// Settings › Sidebar & Sessions › Advanced's Pinned order (`pinnedSessionOrder`).
+    pub pinned_session_order: PinnedSessionOrder,
 }
 
 impl Default for SidebarSettings {
@@ -340,7 +387,7 @@ impl Default for SidebarSettings {
             session_card_hover_buttons: Value::Null,
             show_tag_menu_when_parking: true,
             show_session_card_hover_buttons_in_context_menu: true,
-            show_beta_features: false,
+            keep_awake_enabled: false,
             hide_keep_awake_titlebar_control: false,
             browser_view_tab_hidden: false,
             expand_collapsed_projects_on_jump: true,
@@ -356,7 +403,11 @@ impl Default for SidebarSettings {
             unified_group_by_project: false,
             unified_project_order: Vec::new(),
             hide_projects_without_sessions: false,
+            chief_show_on_all_spaces: false,
             separate_by_machine: false,
+            merge_repository_copies: false,
+            worktree_sessions_in_project: true,
+            pinned_session_order: PinnedSessionOrder::Manual,
         }
     }
 }
@@ -403,7 +454,7 @@ impl SidebarSettings {
                 "showSessionCardHoverButtonsInContextMenu",
                 defaults.show_session_card_hover_buttons_in_context_menu,
             ),
-            show_beta_features: boolean("showBetaFeatures", defaults.show_beta_features),
+            keep_awake_enabled: boolean("keepAwakeEnabled", defaults.keep_awake_enabled),
             hide_keep_awake_titlebar_control: boolean(
                 "hideKeepAwakeTitlebarControl",
                 defaults.hide_keep_awake_titlebar_control,
@@ -448,7 +499,24 @@ impl SidebarSettings {
                 "sidebarHideProjectsWithoutSessions",
                 defaults.hide_projects_without_sessions,
             ),
+            chief_show_on_all_spaces: boolean(
+                "chiefShowOnAllSpaces",
+                defaults.chief_show_on_all_spaces,
+            ),
             separate_by_machine: boolean("sidebarSeparateByMachine", defaults.separate_by_machine),
+            merge_repository_copies: boolean(
+                MERGE_REPOSITORY_COPIES_SETTING_KEY,
+                defaults.merge_repository_copies,
+            ),
+            worktree_sessions_in_project: boolean(
+                WORKTREE_SESSIONS_IN_PROJECT_SETTING_KEY,
+                defaults.worktree_sessions_in_project,
+            ),
+            pinned_session_order: PinnedSessionOrder::from_setting(
+                settings
+                    .get(PINNED_SESSION_ORDER_SETTING_KEY)
+                    .and_then(Value::as_str),
+            ),
             // An inverted key like every Official extension switch, hidden unless set to false.
             bots_enabled: !boolean("botsHidden", !defaults.bots_enabled),
             bot_automations_enabled: !boolean(

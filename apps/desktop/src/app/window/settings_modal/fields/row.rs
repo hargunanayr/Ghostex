@@ -1,9 +1,10 @@
 //! `SettingsSection`, `SettingRow`, `SettingsListItem` and the row's label actions (the modified
 //! asterisk, the advanced arrow, the info tooltip) from fields.tsx, with the grouped-list geometry
-//! of `.settings-list-*` in packages/core-ui/styles.css.
+//! of `.settings-list-*` in packages/core-ui/styles.css (deleted 2026-11-06).
 use super::super::super::native_modal_kit::*;
 use super::super::palette::SettingsPalette;
 use super::super::store::SettingsValues;
+use super::controls::RowControl;
 use super::{SettingsPage, icon};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
@@ -96,6 +97,12 @@ impl RowSpec {
     pub(crate) fn wide(mut self) -> Self {
         self.wide = true;
         self
+    }
+
+    /// `wide` when `stacked`: a row that puts its control under the label only when the page is
+    /// too narrow for both side by side.
+    pub(crate) fn stacked(self, stacked: bool) -> Self {
+        if stacked { self.wide() } else { self }
     }
 
     pub(crate) fn icon(mut self, icon: &'static str) -> Self {
@@ -268,7 +275,7 @@ fn modified_reset_button(
         .cursor_pointer()
         .text_color(hsla(color))
         .hover(move |this| this.text_color(hsla(hover)))
-        .on_bound_press(on_reset)
+        .on_bound_press(stopping_press(on_reset))
         .child(settings_icon(icon::ASTERISK, 10.0, color));
     // `<TooltipContent className='whitespace-pre-line text-center' sideOffset={6}>` (below).
     let button = placed_tooltip(
@@ -359,13 +366,21 @@ pub(crate) fn setting_row<V: SettingsPage>(
     id: impl Into<SharedString>,
     spec: RowSpec,
     on_reset: Option<PageAction<V>>,
-    control: AnyElement,
+    control: impl Into<RowControl>,
     cx: &mut Context<V>,
 ) -> AnyElement {
     let on_reset = on_reset
         .filter(|_| spec.modified)
         .map(|on_reset| bind_press_rc(cx, on_reset));
-    setting_row_bound(p, id.into(), spec, on_reset, control)
+    let control = control.into();
+    setting_row_bound(
+        p,
+        id.into(),
+        spec,
+        on_reset,
+        control.element,
+        control.toggle,
+    )
 }
 
 fn setting_row_bound(
@@ -374,6 +389,7 @@ fn setting_row_bound(
     spec: RowSpec,
     on_reset: Option<BoundPress>,
     control: AnyElement,
+    toggle: Option<BoundPress>,
 ) -> AnyElement {
     let group: SharedString = format!("settings-row-{id}").into();
     let tooltip = spec.tooltip_text();
@@ -492,7 +508,12 @@ fn setting_row_bound(
         .min_h(px(ROW_MIN_HEIGHT))
         .px(px(spec.inset_x.unwrap_or(ROW_PADDING_X)))
         .py(px(ROW_PADDING_Y))
-        .flex();
+        .flex()
+        // CDXC:SwitchRows 2026-11-06: a row whose control is a switch toggles from a click anywhere
+        // on it (see `SwitchControl`).
+        .when_some(toggle, |row, press| {
+            row.switch_row_press(switch_row_wash(p.foreground), false, press)
+        });
     if spec.wide {
         row.flex_col()
             .items_stretch()
@@ -582,41 +603,7 @@ pub(crate) fn settings_section(
         v_flex()
             .w_full()
             .gap(px(12.0))
-            .child(
-                h_flex()
-                    .w_full()
-                    .items_end()
-                    .justify_between()
-                    .gap(px(16.0))
-                    .px(px(2.0))
-                    .child(
-                        v_flex()
-                            .min_w_0()
-                            .gap(px(4.0))
-                            .child(
-                                div()
-                                    .text_size(px(16.0))
-                                    .line_height(px(20.8))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(hsla(p.foreground))
-                                    .child(title.into()),
-                            )
-                            .children(description.map(|description| {
-                                div()
-                                    .text_size(px(13.0))
-                                    .line_height(px(18.85))
-                                    .text_color(hsla(p.muted))
-                                    .child(description)
-                            })),
-                    )
-                    .children(actions.map(|actions| {
-                        h_flex()
-                            .flex_shrink_0()
-                            .items_center()
-                            .gap(px(8.0))
-                            .child(actions)
-                    })),
-            )
+            .child(settings_section_heading(p, title, description, actions))
             .child(
                 v_flex()
                     .w_full()
@@ -628,6 +615,53 @@ pub(crate) fn settings_section(
                     .children(rows),
             ),
     )
+}
+
+/// The heading of a `SettingsSection`: the 16px title, its optional 13px description and the
+/// right-side actions. Sections that are not a raised card of rows (the theme presets' sideways
+/// row) put their own content under it.
+pub(crate) fn settings_section_heading(
+    p: &SettingsPalette,
+    title: impl Into<SharedString>,
+    description: Option<SharedString>,
+    actions: Option<AnyElement>,
+) -> Div {
+    let title: SharedString = title.into();
+    let title_key = title.to_string();
+    h_flex()
+        .w_full()
+        .items_end()
+        .justify_between()
+        .gap(px(16.0))
+        .px(px(2.0))
+        .child(
+            v_flex()
+                .min_w_0()
+                .gap(px(4.0))
+                .child(
+                    div()
+                        .text_size(px(16.0))
+                        .line_height(px(20.8))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(hsla(p.foreground))
+                        .child(title),
+                )
+                .children(description.map(|description| {
+                    div()
+                        .text_size(px(13.0))
+                        .line_height(px(18.85))
+                        .text_color(hsla(p.muted))
+                        // A path in the text opens in Files (CDXC:PathLinks 2026-11-08).
+                        .child(linkified_text(&title_key, &description))
+                })),
+        )
+        .children(actions.map(|actions| {
+            h_flex()
+                .flex_shrink_0()
+                .items_center()
+                .gap(px(8.0))
+                .child(actions)
+        }))
 }
 
 /// The status dot of a `SettingsListItem`.

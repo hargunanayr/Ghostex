@@ -428,6 +428,19 @@ pub(super) fn snapshot_from_view(
             })
             .collect(),
         more_menu,
+        chief_enabled: crate::app::native_sidebar::chief::chief_on(),
+        chiefs: view
+            .chiefs
+            .iter()
+            .map(crate::app::native_sidebar::chief::native_chief)
+            .collect(),
+        home_headers: view
+            .home_headers
+            .iter()
+            .map(crate::app::native_sidebar::chief::native_home)
+            .collect(),
+        machines_with_home: view.machines_with_home.clone(),
+        gbots: view.gbots.clone(),
         // The two hotkey labels are the hotkey settings formatted for the current platform, which
         // the list re-reads whenever the settings file's content hash moves.
         search_shortcut: input.search_shortcut.clone(),
@@ -636,6 +649,13 @@ fn project_context(group: &GroupView) -> Option<Value> {
             Value::Bool(context.bot_gateway_running),
         );
     }
+    // A GBot's look, which Main Hub's GBots section draws its row from (native_sidebar/gbots_rows.rs).
+    if let Some(gbot) = &context.gbot {
+        object.insert(
+            "gbot".to_string(),
+            serde_json::to_value(gbot).unwrap_or(Value::Null),
+        );
+    }
     // The Work view and the sidebar's briefcase show while any project has Work mode on
     // (native_sidebar/work_chips.rs, app/work_view/).
     if context.work_mode {
@@ -826,6 +846,7 @@ fn build_session(
         "pendingQuestionCount".to_string(),
         Value::from(row.pending_question_count),
     );
+    details.insert("hasQuestion".to_string(), Value::Bool(row.has_question()));
     details.insert(
         "isMultiSelected".to_string(),
         Value::Bool(session.is_multi_selected),
@@ -901,6 +922,10 @@ fn build_session(
         "isGeneratingFirstPromptTitle".to_string(),
         Value::Bool(row.is_generating_first_prompt_title),
     );
+    // A GBot chat Chief of Staff opened: the row's "Chief" tag (native_sidebar/gbots_rows.rs).
+    if row.opened_by_chief {
+        details.insert("openedByChief".to_string(), Value::Bool(true));
+    }
     // The coordinator tree (gx-core `RowNesting`), drawn by native_sidebar/threads.rs.
     if row.is_coordinator {
         details.insert("isCoordinator".to_string(), Value::Bool(true));
@@ -964,6 +989,19 @@ fn build_session(
         "machineShortName",
         row.machine_short_name.clone(),
     );
+    // The worktree of a session its parent project lists (gx-core `sidebar_view/worktree_fold.rs`),
+    // drawn by native_sidebar/threads.rs.
+    if let Some(worktree) = &row.worktree {
+        details.insert(
+            "worktree".to_string(),
+            json!({
+                "groupId": worktree.group_id,
+                "name": worktree.name,
+                "branch": worktree.branch,
+                "label": worktree.label(),
+            }),
+        );
+    }
     // The box an agentbox session runs in, drawn by native_sidebar/agentbox.rs.
     if let Some(agentbox) = &row.agentbox {
         details.insert(
@@ -997,6 +1035,7 @@ fn build_session(
     }
     NativeSidebarSession {
         session_id: row.sidebar_session_id.clone(),
+        is_chief: row.is_chief,
         display_title: Some(row.display_title.clone()),
         alias: row.alias.clone(),
         activity: row.activity.clone(),

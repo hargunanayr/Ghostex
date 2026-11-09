@@ -23,6 +23,93 @@ void GhostexGpuiShowChildWindowAboveParent(NSWindow *child, NSWindow *parent);
 - (BOOL)canBecomeMainWindow { return NO; }
 @end
 
+// CDXC:Sidebar 2026-11-07 DECISION:
+// User approved PR #455 ("OK after your notes are addressed"), including this overlap, as the
+// hit-testing rule in AGENTS.md requires; GitHub #432 asked for the idea. With the sidebar hidden, the floating sidebar shows the main window's
+// own traffic lights in its top-left, where the window keeps them. The window's lights hide with
+// the sidebar (Rust asks through `GhostexGpuiSetWindowControlsHidden`); once the panel has slid
+// all the way in, the panel lends them back (`lent`) and leaves a hole the size of each light in
+// its shape, so the real buttons show through with AppKit's own colours, hover glyphs, the green
+// button's menu, Option-zoom and VoiceOver, and a click there reaches them: AppKit passes clicks
+// through the fully transparent pixels of a non-opaque window. Holes, not drawn copies of the
+// lights, are the one place the panel overlaps the window's own controls; copies of the buttons in the panel would draw grey, since the panel never becomes the main window.
+static const NSWindowButton GhostexGpuiRevealWindowButtons[] = {
+    NSWindowCloseButton, NSWindowMiniaturizeButton, NSWindowZoomButton};
+static const void *GhostexGpuiWindowLightsHiddenKey = &GhostexGpuiWindowLightsHiddenKey;
+static const void *GhostexGpuiWindowLightsLentKey = &GhostexGpuiWindowLightsLentKey;
+
+/// Hidden while Rust asks for it and no floating panel has lent the lights back.
+///
+/// Hiding or showing a standard button makes AppKit lay the title bar out again at its default
+/// spot, which loses the position GPUI gave the lights (`traffic_light_position`, 11 by 11.5 or one
+/// frame gutter more) until the window next resizes. So AppKit's layout runs at once and the frames
+/// the buttons and their container had a moment before are put back.
+static void GhostexGpuiApplyWindowLights(NSWindow *window) {
+  BOOL requested = [objc_getAssociatedObject(window, GhostexGpuiWindowLightsHiddenKey) boolValue];
+  BOOL lent = [objc_getAssociatedObject(window, GhostexGpuiWindowLightsLentKey) boolValue];
+  BOOL hidden = requested && !lent;
+  NSButton *buttons[3];
+  NSRect frames[3];
+  BOOL changes = NO;
+  for (size_t i = 0; i < 3; i++) {
+    buttons[i] = [window standardWindowButton:GhostexGpuiRevealWindowButtons[i]];
+    frames[i] = buttons[i].frame;
+    if (buttons[i] && buttons[i].hidden != hidden) changes = YES;
+  }
+  if (!changes) return;
+  NSView *container = buttons[0].superview.superview;
+  NSRect containerFrame = container.frame;
+  for (size_t i = 0; i < 3; i++) buttons[i].hidden = hidden;
+  [container.superview layoutSubtreeIfNeeded];
+  if (container && !NSEqualRects(container.frame, containerFrame)) container.frame = containerFrame;
+  for (size_t i = 0; i < 3; i++) {
+    if (!buttons[i]) continue;
+    if (!NSEqualRects(buttons[i].frame, frames[i])) buttons[i].frame = frames[i];
+    [buttons[i] updateTrackingAreas];
+  }
+  [container updateTrackingAreas];
+}
+
+static void GhostexGpuiSetWindowLightsLent(NSWindow *window, BOOL lent) {
+  objc_setAssociatedObject(window, GhostexGpuiWindowLightsLentKey, @(lent), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  GhostexGpuiApplyWindowLights(window);
+}
+
+static const void *GhostexGpuiRevealPanelNeverMainKey = &GhostexGpuiRevealPanelNeverMainKey;
+static IMP GhostexGpuiRevealPanelCanBecomeMainOriginal;
+
+static BOOL GhostexGpuiRevealPanelCanBecomeMain(NSWindow *window, SEL selector) {
+  if ([objc_getAssociatedObject(window, GhostexGpuiRevealPanelNeverMainKey) boolValue]) return NO;
+  return ((BOOL (*)(id, SEL))GhostexGpuiRevealPanelCanBecomeMainOriginal)(window, selector);
+}
+
+/// CDXC:Sidebar 2026-11-07 WHY:
+/// GPUI's window classes answer YES to `canBecomeMainWindow`, panels included, where a plain NSPanel
+/// answers NO. So a click into the floating sidebar made it the main window, the workspace window
+/// lost main, and the traffic lights the panel shows for it (GhostexGpuiSetWindowLightsLent) drew
+/// in their faint inactive style, through which the header's toggles under them showed (GitHub #432
+/// follow-up). The panel takes keys as before but never becomes main, as an NSPanel normally can't.
+/// Only this panel is marked: GPUI's other windows of the same class keep its answer. The method is
+/// replaced on GPUI's own class and the instance keeps its class; changing the class of a window
+/// AppKit observes with KVO made GPUI panic when it was freed (2026-11-06).
+static void GhostexGpuiRevealPanelNeverMain(NSWindow *panel) {
+  objc_setAssociatedObject(panel, GhostexGpuiRevealPanelNeverMainKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    Class owner = [panel class];
+    unsigned count = 0;
+    Method *methods = class_copyMethodList(owner, &count);
+    Method own = NULL;
+    for (unsigned i = 0; i < count; i++) {
+      if (method_getName(methods[i]) == @selector(canBecomeMainWindow)) own = methods[i];
+    }
+    free(methods);
+    // Only GPUI's own answer is replaced, never AppKit's NSPanel or NSWindow one.
+    if (own) GhostexGpuiRevealPanelCanBecomeMainOriginal = method_setImplementation(own, (IMP)GhostexGpuiRevealPanelCanBecomeMain);
+  });
+  if (panel.isMainWindow) [panel.parentWindow makeMainWindow];
+}
+
 @interface GhostexGpuiSidebarReveal : NSObject
 @property(nonatomic, weak) NSView *sidebar;
 @property(nonatomic, weak) NSView *root;
@@ -44,6 +131,18 @@ void GhostexGpuiShowChildWindowAboveParent(NSWindow *child, NSWindow *parent);
 @property(nonatomic, strong) NSTimer *animationTimer;
 /// The GPUI panel's own view, whose content size is held while the panel slides.
 @property(nonatomic, weak) NSView *hostView;
+/// The panel shows its main window's own traffic lights in its top-left (`wantWindowLights:`).
+@property(nonatomic) BOOL windowLightsWanted;
+/// The lights are lent back to the window and show through the panel's holes now.
+@property(nonatomic) BOOL windowLightsOpen;
+@property(nonatomic, weak) NSWindow *windowLightsOwner;
+/// The panel's corner radii (top-left, top-right, bottom-right, bottom-left) from
+/// `floating_panel_corner_radii` in app/floating_reveal/host_macos.rs; `cornersOwned` once set.
+@property(nonatomic) CGFloat topLeftRadius;
+@property(nonatomic) CGFloat topRightRadius;
+@property(nonatomic) CGFloat bottomRightRadius;
+@property(nonatomic) CGFloat bottomLeftRadius;
+@property(nonatomic) BOOL cornersOwned;
 - (void)layoutReveal;
 - (void)animateIn;
 - (void)animateTo:(double)target;
@@ -83,11 +182,130 @@ static double GhostexGpuiRevealEaseOut(double t) {
   }
 }
 
+- (void)wantWindowLights:(BOOL)wanted {
+  if (self.windowLightsWanted == wanted) return;
+  self.windowLightsWanted = wanted;
+  // A hole in a window's shape lets its shadow through too, which would shade the lights; the panel
+  // that shows them casts none.
+  self.panel.hasShadow = !wanted;
+  [self.panel invalidateShadow];
+  [self syncWindowLights];
+}
+
+/// The lights show only while the panel is all the way in: they belong to the main window and stay
+/// where they are, so during a slide they would sit over the header instead of the panel. Shown,
+/// the window draws them before the holes open; hidden, the holes close before they go, so neither
+/// order shows what the window draws under them.
+- (void)syncWindowLights {
+  NSWindow *owner = self.windowLightsOwner ?: self.panel.parentWindow;
+  BOOL open = self.attached && owner && self.windowLightsWanted && self.revealTarget == 1 &&
+              self.revealProgress >= 1;
+  if (open == self.windowLightsOpen) return;
+  self.windowLightsOpen = open;
+  if (open) {
+    self.windowLightsOwner = owner;
+    GhostexGpuiSetWindowLightsLent(owner, YES);
+    [owner displayIfNeeded];
+    [CATransaction flush];
+    [self layoutCornerMask];
+  } else {
+    [self layoutCornerMask];
+    [CATransaction flush];
+    if (owner) GhostexGpuiSetWindowLightsLent(owner, NO);
+    self.windowLightsOwner = nil;
+  }
+}
+
+/// CDXC:Sidebar 2026-11-07 WHY:
+/// The panel's corners take their own radii (`floating_panel_corner_radii` in
+/// app/floating_reveal/host_macos.rs): the window's where they sit on its rounded corners, square on
+/// the screen's in full screen, the work area card's inside the frame. The GPUI view, its glass and
+/// wallpaper views each round all four corners alike and a mask can only cut more, so GPUI draws
+/// them square (floating_reveal/window.rs) and the panel's content view is masked with all four.
+/// The panel's left edge stays where it is while it slides, so the mask follows its live bounds.
+- (void)layoutCornerMask {
+  NSView *content = self.panel.contentView;
+  if (!content) return;
+  BOOL masked = self.cornersOwned || self.windowLightsOpen;
+  if (!masked) {
+    if (content.layer.mask) content.layer.mask = nil;
+    return;
+  }
+  content.wantsLayer = YES;
+  CAShapeLayer *mask = [content.layer.mask isKindOfClass:CAShapeLayer.class] ? (CAShapeLayer *)content.layer.mask : nil;
+  NSRect bounds = content.bounds;
+  CGFloat limit = MIN(bounds.size.width, bounds.size.height) / 2;
+  CGFloat top = MIN(self.topLeftRadius, limit);
+  CGFloat topRight = MIN(self.topRightRadius, limit);
+  CGFloat bottomRight = MIN(self.bottomRightRadius, limit);
+  CGFloat bottom = MIN(self.bottomLeftRadius, limit);
+  // In the view's coordinates, which the layer's sublayers share: the top is the low y when flipped.
+  CGFloat minX = NSMinX(bounds), maxX = NSMaxX(bounds);
+  CGFloat topY = content.flipped ? NSMinY(bounds) : NSMaxY(bounds);
+  CGFloat bottomY = content.flipped ? NSMaxY(bounds) : NSMinY(bounds);
+  CGMutablePathRef path = CGPathCreateMutable();
+  CGPathMoveToPoint(path, NULL, minX, (topY + bottomY) / 2);
+  CGPathAddArcToPoint(path, NULL, minX, topY, maxX, topY, top);
+  CGPathAddArcToPoint(path, NULL, maxX, topY, maxX, bottomY, topRight);
+  CGPathAddArcToPoint(path, NULL, maxX, bottomY, minX, bottomY, bottomRight);
+  CGPathAddArcToPoint(path, NULL, minX, bottomY, minX, topY, bottom);
+  CGPathCloseSubpath(path);
+  // A hole over each of the window's lights, half a point wider than its 14pt frame, so the light
+  // keeps its whole anti-aliased rim over the window's own background, as it does docked. What the
+  // window draws under the lights is only the header's background: its toggles there draw nothing
+  // while the lights are lent (`window_lights_over_header` in app/floating_reveal/model.rs). A hole
+  // inside the frame covered the rim and made each light look smaller beside the window's own, and
+  // one exactly on it still dimmed the rim's outer device pixel (compared at 2x with the docked
+  // lights, 2026-11-07).
+  NSWindow *owner = self.windowLightsOwner;
+  if (self.windowLightsOpen && owner) {
+    for (size_t i = 0; i < 3; i++) {
+      NSButton *button = [owner standardWindowButton:GhostexGpuiRevealWindowButtons[i]];
+      if (!button || button.hidden) continue;
+      NSRect rect = [owner convertRectToScreen:[button convertRect:button.bounds toView:nil]];
+      rect = [content convertRect:[self.panel convertRectFromScreen:rect] fromView:nil];
+      CGPathAddEllipseInRect(path, NULL, NSRectToCGRect(NSInsetRect(rect, -0.5, -0.5)));
+    }
+  }
+  [CATransaction begin];
+  [CATransaction setDisableActions:YES];
+  BOOL fresh = mask == nil;
+  if (fresh) mask = [CAShapeLayer layer];
+  mask.frame = content.layer.bounds;
+  mask.fillRule = kCAFillRuleEvenOdd;
+  mask.path = path;
+  if (fresh) content.layer.mask = mask;
+  [CATransaction commit];
+  CGPathRelease(path);
+  if (fresh) [self.panel invalidateShadow];
+}
+
+- (void)setCornerRadii:(const double *)radii {
+  if (!radii) return;
+  if (self.cornersOwned && self.topLeftRadius == radii[0] && self.topRightRadius == radii[1] &&
+      self.bottomRightRadius == radii[2] && self.bottomLeftRadius == radii[3]) {
+    return;
+  }
+  if (!self.cornersOwned) {
+    // The mask shapes every corner now; the GPUI view's own rounding would cut the smaller ones.
+    self.hostView.layer.cornerRadius = 0;
+    self.cornersOwned = YES;
+  }
+  self.topLeftRadius = radii[0];
+  self.topRightRadius = radii[1];
+  self.bottomRightRadius = radii[2];
+  self.bottomLeftRadius = radii[3];
+  [self layoutCornerMask];
+  [self.panel invalidateShadow];
+}
+
 - (void)layoutReveal {
   NSRect frame = self.targetFrame;
   CGFloat fullWidth = frame.size.width;
   frame.size.width = MAX(1, fullWidth * self.revealProgress);
   if (!NSEqualRects(self.panel.frame, frame)) [self.panel setFrame:frame display:NO];
+  [self syncWindowLights];
+  [self layoutCornerMask];
   if (self.companion) return;
   // Keep Chromium's viewport full-sized while the child window clips the
   // entering page. Resizing the page itself would reflow every session row.
@@ -114,6 +332,8 @@ static double GhostexGpuiRevealEaseOut(double t) {
   self.animationTimer = nil;
   self.revealTarget = target;
   self.revealStartProgress = self.revealProgress;
+  // Leaving, the window takes its lights back before the panel starts to move.
+  [self syncWindowLights];
   // The GPUI panel's duration comes from `floating_reveal_slide_duration` in
   // app/floating_reveal/model.rs, already 0 under Off or Reduce Motion, so it is not re-checked here.
   BOOL instant = self.slideDuration <= 0 ||
@@ -164,6 +384,8 @@ static double GhostexGpuiRevealEaseOut(double t) {
   [self.animationTimer invalidate];
   self.animationTimer = nil;
   [self setContentSizeHeld:NO];
+  self.windowLightsWanted = NO;
+  [self syncWindowLights];
   if (!self.attached) return;
   NSWindow *parent = self.panel.parentWindow;
   BOOL wasKey = self.panel.keyWindow;
@@ -203,7 +425,9 @@ void GhostexGpuiSidebarRevealDispose(void *sidebarPtr) {
 // terminals, and chat pages all need their normal window-local layout and input.
 static bool GhostexGpuiNativeRevealUpdate(void *rootPtr, void *popupPtr, bool enabled,
                                          double width, double titlebarHeight, double leftInset,
-                                         bool requested, bool sticky, double slideSeconds) {
+                                         double bottomInset,
+                                         bool requested, bool sticky, double slideSeconds,
+                                         bool windowControls, const double *radii) {
   NSView *root = (__bridge NSView *)rootPtr;
   NSView *popup = (__bridge NSView *)popupPtr;
   NSWindow *parent = root.window;
@@ -221,8 +445,10 @@ static bool GhostexGpuiNativeRevealUpdate(void *rootPtr, void *popupPtr, bool en
     return false;
   }
   NSRect body = root.bounds;
-  body.size.height = MAX(0, body.size.height - titlebarHeight);
-  if (root.flipped) body.origin.y += titlebarHeight;
+  // `titlebarHeight` is the panel's top: the header's bottom, the window's top, or the work area
+  // frame's gutter, which the panel then keeps at the bottom too (`bottomInset`).
+  body.size.height = MAX(0, body.size.height - titlebarHeight - MAX(0, bottomInset));
+  body.origin.y += root.flipped ? titlebarHeight : MAX(0, bottomInset);
   body = [parent convertRectToScreen:[root convertRect:body toView:nil]];
   // A docked sidebar keeps the window's left edge, so the panel starts where the workarea does.
   CGFloat inset = MIN(MAX(0, leftInset), body.size.width);
@@ -244,6 +470,9 @@ static bool GhostexGpuiNativeRevealUpdate(void *rootPtr, void *popupPtr, bool en
     state.targetFrame = frame;
     state.slideDuration = slideSeconds;
     objc_setAssociatedObject(popup, GhostexGpuiSidebarRevealKey, state, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    GhostexGpuiRevealPanelNeverMain(state.panel);
+    [state wantWindowLights:windowControls];
+    [state setCornerRadii:radii];
     if (sticky) {
       state.revealTarget = 1;
       state.revealProgress = 1;
@@ -256,6 +485,8 @@ static bool GhostexGpuiNativeRevealUpdate(void *rootPtr, void *popupPtr, bool en
     state.targetFrame = frame;
     // A settings change reaches the next slide; one already running keeps its clock.
     if (!state.animationTimer) state.slideDuration = slideSeconds;
+    [state wantWindowLights:windowControls];
+    [state setCornerRadii:radii];
     [state layoutReveal];
   }
   NSPoint pointer = NSEvent.mouseLocation;
@@ -292,11 +523,24 @@ static bool GhostexGpuiNativeRevealUpdate(void *rootPtr, void *popupPtr, bool en
 }
 
 bool GhostexGpuiCompanionRevealUpdate(void *root, void *popup, bool enabled, double width, double titlebarHeight) {
-  return GhostexGpuiNativeRevealUpdate(root, popup, enabled, width, titlebarHeight, 0, false, false, 0.22);
+  return GhostexGpuiNativeRevealUpdate(root, popup, enabled, width, titlebarHeight, 0, false, false, 0, 0.22, false, NULL);
 }
 
-bool GhostexGpuiNativeSidebarRevealUpdate(void *root, void *popup, bool enabled, double width, double titlebarHeight, double leftInset, bool requested, bool sticky, double slideSeconds) {
-  return GhostexGpuiNativeRevealUpdate(root, popup, enabled, width, titlebarHeight, leftInset, requested, sticky, slideSeconds);
+bool GhostexGpuiNativeSidebarRevealUpdate(void *root, void *popup, bool enabled, double width, double titlebarHeight, double leftInset, double bottomInset, bool requested, bool sticky, double slideSeconds, bool windowControls, const double *radii) {
+  return GhostexGpuiNativeRevealUpdate(root, popup, enabled, width, titlebarHeight, leftInset, bottomInset, requested, sticky, slideSeconds, windowControls, radii);
+}
+
+// Hides or shows the main window's own traffic lights as Rust asks: hidden while the sidebar is
+// hidden. An open floating sidebar lends them back (GhostexGpuiSetWindowLightsLent). Rust calls it
+// on every render of the window, so it only writes on a change.
+void GhostexGpuiSetWindowControlsHidden(void *rootPtr, bool hidden) {
+  NSWindow *window = ((__bridge NSView *)rootPtr).window;
+  if (!window) return;
+  NSNumber *requested = objc_getAssociatedObject(window, GhostexGpuiWindowLightsHiddenKey);
+  if (!requested || requested.boolValue != hidden) {
+    objc_setAssociatedObject(window, GhostexGpuiWindowLightsHiddenKey, @(hidden), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  }
+  GhostexGpuiApplyWindowLights(window);
 }
 
 // True while the panel slides out, so Rust can take down the chat windows that sit over it.

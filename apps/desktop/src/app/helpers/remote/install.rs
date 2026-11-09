@@ -20,6 +20,8 @@ use crate::*;
 pub(crate) struct GpuiRemoteGxserverInstallProbe {
     pub(crate) installed: bool,
     pub(crate) version: Option<String>,
+    /// Ghostex installed that gxserver package (not a Ghostex app's own), so Reinstall can replace it.
+    pub(crate) managed: bool,
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
@@ -46,6 +48,12 @@ pub(crate) fn gpui_probe_remote_gxserver_install(
     PowerShell or WSL runtime before reporting gxserver as missing.
     */
     if config.ssh_host.trim().is_empty() {
+        return GpuiRemoteGxserverInstallProbe::default();
+    }
+    // A machine that only signs in through the user's own SSH connection (GitHub #496) is not
+    // probed while that connection is closed: this probe's login could never succeed, and every
+    // attempt is one more refused one on the host.
+    if config.reuse_ssh_connection && gpui_remote_ssh_reuse_connection_refusal(&config).is_some() {
         return GpuiRemoteGxserverInstallProbe::default();
     }
     let posix_result = gpui_run_remote_ssh(
@@ -102,6 +110,9 @@ pub(crate) fn gpui_remote_gxserver_install_probe_from_result(
         return Some(GpuiRemoteGxserverInstallProbe {
             installed: true,
             version: gpui_extract_remote_installed_gxserver_version(result.stdout.as_str()),
+            managed: result
+                .stdout
+                .contains("__GHOSTEX_REMOTE_GXSERVER_MANAGED__"),
         });
     }
     (result.exit_code == GPUI_REMOTE_GXSERVER_NOT_INSTALLED_EXIT_CODE)
@@ -168,6 +179,15 @@ pub(crate) fn gpui_remote_managed_gxserver_package_update(
         installed_identity.stdout.as_str(),
         expected_identity.as_deref(),
     )
+    .or_else(|| {
+        // Reinstall replaces only a package Ghostex installed there: one that names its build.
+        (config.reinstall_package
+            && gpui_extract_remote_managed_gxserver_build_identity(
+                installed_identity.stdout.as_str(),
+            )
+            .is_some())
+        .then_some(GpuiRemoteManagedPackageUpdate::Requested)
+    })
 }
 
 /// The build identity of the package this app itself carries for `target`, in the order the install picks it.

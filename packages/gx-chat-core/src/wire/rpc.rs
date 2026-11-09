@@ -63,6 +63,13 @@ pub enum ChatRpcMethod {
     /// Moves a row of a coordinator's board to Removed, or restores it
     /// (server/src/coordinators/board.rs).
     CoordinatorBoard,
+    /// Autopilot's choices (`/api/autopilot`, server/src/server/autopilot_http.rs): the pill.
+    Autopilot,
+    /// Ghostex Collab's owner calls (`/api/collab`, forwarded by server/src/collab_shim/http.rs to the Collab component): the answer
+    /// to a guest's message.
+    Collab,
+    /// A shared chat's chat box is being typed into (`/api/collabTyping`).
+    CollabTyping,
     /// Forks the session into a side chat that starts with a question (server/src/side_chats/).
     StartSideChat,
     /// Sends what a side chat said to its main session.
@@ -82,6 +89,12 @@ pub enum ChatRpcMethod {
     ReadSessionDetails,
     /// Ends one of the session's background commands (the Session details panel's stop button).
     StopSessionBackgroundTask,
+    /// Hold a message on THIS computer's gxserver for a session whose computer is offline
+    /// (`session/computer.rs`). The host sends these three to its own gxserver, never the
+    /// session's.
+    HoldSessionChatSend,
+    ListHeldSessionChatSends,
+    CancelHeldSessionChatSend,
     /// A method this build does not know; kept verbatim.
     Other(String),
 }
@@ -125,6 +138,9 @@ impl ChatRpcMethod {
             Self::ReadCoordinatorThreads => "readCoordinatorThreads",
             Self::OpenCoordinatorThread => "openCoordinatorThread",
             Self::CoordinatorBoard => "coordinatorBoard",
+            Self::Autopilot => "autopilot",
+            Self::Collab => "collab",
+            Self::CollabTyping => "collabTyping",
             Self::StartSideChat => "startSideChat",
             Self::BringBackSideChat => "bringBackSideChat",
             Self::DeleteSideChat => "deleteSideChat",
@@ -134,6 +150,9 @@ impl ChatRpcMethod {
             Self::ReadSessionFilesLinks => "readSessionFilesLinks",
             Self::ReadSessionDetails => "readSessionDetails",
             Self::StopSessionBackgroundTask => "stopSessionBackgroundTask",
+            Self::HoldSessionChatSend => "holdSessionChatSend",
+            Self::ListHeldSessionChatSends => "listHeldSessionChatSends",
+            Self::CancelHeldSessionChatSend => "cancelHeldSessionChatSend",
             Self::Other(name) => name.as_str(),
         }
     }
@@ -176,6 +195,9 @@ impl ChatRpcMethod {
             "readCoordinatorThreads" => Self::ReadCoordinatorThreads,
             "openCoordinatorThread" => Self::OpenCoordinatorThread,
             "coordinatorBoard" => Self::CoordinatorBoard,
+            "autopilot" => Self::Autopilot,
+            "collab" => Self::Collab,
+            "collabTyping" => Self::CollabTyping,
             "startSideChat" => Self::StartSideChat,
             "bringBackSideChat" => Self::BringBackSideChat,
             "deleteSideChat" => Self::DeleteSideChat,
@@ -185,6 +207,9 @@ impl ChatRpcMethod {
             "readSessionFilesLinks" => Self::ReadSessionFilesLinks,
             "readSessionDetails" => Self::ReadSessionDetails,
             "stopSessionBackgroundTask" => Self::StopSessionBackgroundTask,
+            "holdSessionChatSend" => Self::HoldSessionChatSend,
+            "listHeldSessionChatSends" => Self::ListHeldSessionChatSends,
+            "cancelHeldSessionChatSend" => Self::CancelHeldSessionChatSend,
             other => Self::Other(other.to_string()),
         }
     }

@@ -6,13 +6,30 @@ use crate::{
 };
 use std::fs;
 
-pub(super) fn test_app_state(paths: GxserverPaths) -> Arc<AppState> {
+pub(crate) fn test_app_state(paths: GxserverPaths) -> Arc<AppState> {
     test_app_state_for(paths, "S7k")
 }
 
 /// A test daemon with its own server id, for tests that run two computers in one process.
-pub(super) fn test_app_state_for(paths: GxserverPaths, server_id: &str) -> Arc<AppState> {
-    test_app_state_on(paths, server_id, None)
+pub(crate) fn test_app_state_for(paths: GxserverPaths, server_id: &str) -> Arc<AppState> {
+    let state = test_app_state_on(paths, server_id, None);
+    approve_test_computers(&state);
+    state
+}
+
+/// The computers the two-computer route tests connect. Connecting a computer asks the owner once
+/// (GitHub #495, server/src/server/security_gates.rs); these tests run as the user's desktop after
+/// that approval, so their registrations and grants pass like a renewal does.
+pub(super) const TEST_COMPUTER_IDS: &[&str] = &[
+    "S5d", "S5m", "S5p", "S5r", "S5t", "S5w", "S6d", "S6l", "S6m", "S6p", "S6t", "S6w", "S7o",
+    "S8x", "S9r", "S9w",
+];
+
+pub(super) fn approve_test_computers(state: &AppState) {
+    let now = crate::security::now_ms();
+    for id in TEST_COMPUTER_IDS {
+        state.security.approve_computer(id, now);
+    }
 }
 
 /// A test state whose own routes (the loopback the voice agent and automations call) are on
@@ -21,6 +38,30 @@ pub(super) fn test_app_state_on(
     paths: GxserverPaths,
     server_id: &str,
     port: Option<u16>,
+) -> Arc<AppState> {
+    // Test daemons never reach Expo: their sender points at a closed loopback port.
+    let push = crate::push::PushRuntime::start_with(
+        paths.clone(),
+        Arc::new(GxserverLogger::new(paths.clone())),
+        Arc::new(crate::push::runtime::SystemClock),
+        crate::push::expo::ExpoClient::for_test_origin("http://127.0.0.1:9".to_string()),
+    );
+    test_app_state_on_with_push(paths, server_id, port, Arc::new(push))
+}
+
+/// `test_app_state` with the given push sender (one aimed at a test's fake Expo).
+pub(crate) fn test_app_state_with_push(
+    paths: GxserverPaths,
+    push: Arc<crate::push::PushRuntime>,
+) -> Arc<AppState> {
+    test_app_state_on_with_push(paths, "S7k", None, push)
+}
+
+fn test_app_state_on_with_push(
+    paths: GxserverPaths,
+    server_id: &str,
+    port: Option<u16>,
+    push: Arc<crate::push::PushRuntime>,
 ) -> Arc<AppState> {
     let storage = initialize_gxserver_storage(&paths).expect("storage");
     let mut config = create_default_gxserver_config().expect("config");
@@ -65,6 +106,7 @@ pub(super) fn test_app_state_on(
         accounts: Arc::new(crate::accounts::runtime::AccountRuntime::default()),
         auth_token: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
         device_api_tokens: crate::auth::DeviceApiTokens::default(),
+        security: crate::security::SecurityState::new("S1"),
         cef_devtools: Default::default(),
         automation_runtime,
         delayed_send_runtime,
@@ -78,6 +120,7 @@ pub(super) fn test_app_state_on(
         migration: create_gxserver_migration_status(&storage),
         paths,
         presentation_event_sequence,
+        push,
         remote_pairing_runtime: crate::remote_access::RemotePairingRuntime::new(),
         repository_clone_jobs: RepositoryCloneJobManager::default(),
         session_chat_followers: Arc::new(Mutex::new(HashMap::new())),

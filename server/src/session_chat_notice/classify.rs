@@ -105,7 +105,8 @@ fn notice_from_picker(
         SessionChatTerminalPickerKind::PermissionPrompt
         | SessionChatTerminalPickerKind::AntigravityPermission
         | SessionChatTerminalPickerKind::CopilotPermission
-        | SessionChatTerminalPickerKind::GrokPermission => {
+        | SessionChatTerminalPickerKind::GrokPermission
+        | SessionChatTerminalPickerKind::OmpPermission => {
             (SESSION_CHAT_NOTICE_PERMISSION_PROMPT, "Allow this?")
         }
     };
@@ -338,6 +339,11 @@ pub fn classify_session_chat_terminal_notice(
     Claude Code is the only CLI that paints it.
     */
     if agent == SessionChatOptionAgent::Claude {
+        // An unattended prompt's countdown is cut out first (CDXC:SessionChat 2026-11-08 in
+        // session_chat_claude_permission.rs), so a prompt stays one prompt while it ticks.
+        let (screen_text, auto_block_in) =
+            crate::session_chat_claude_permission::split_claude_auto_block(screen_text);
+        let screen_text = screen_text.as_ref();
         if let Some(picker) =
             crate::session_chat_resume_prompt::detect_session_chat_terminal_picker(screen_text)
         {
@@ -349,7 +355,11 @@ pub fn classify_session_chat_terminal_notice(
                     )
                 })
                 .flatten();
-            return Some(notice_from_picker(&screen, picker).with_permission_request(permission));
+            return Some(
+                notice_from_picker(&screen, picker)
+                    .with_permission_request(permission)
+                    .with_auto_block_in(auto_block_in),
+            );
         }
         if let Some(dialog) = crate::session_chat_claude_dialog::detect_claude_dialog(screen_text) {
             // CDXC:AgentProviders 2026-09-22 WHY:
@@ -521,6 +531,11 @@ pub fn classify_session_chat_terminal_notice(
         }
     }
     if agent == SessionChatOptionAgent::Omp {
+        if let Some((picker, command)) =
+            crate::session_chat_omp_blocking::detect_omp_permission_picker_with_command(screen_text)
+        {
+            return Some(notice_from_picker(&screen, picker).with_approval_command(command));
+        }
         if let Some(blocking) =
             crate::session_chat_omp_blocking::detect_omp_blocking_screen(screen_text)
         {

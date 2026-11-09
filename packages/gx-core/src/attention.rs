@@ -64,6 +64,42 @@ impl AgentActivityReport {
     }
 }
 
+/// Which attentions play the agent finished sound and show a system notification
+/// (`attentionAlertsFor`). The Notifications bell keeps every row either way.
+///
+/// CDXC:Notifications 2026-11-07 DECISION:
+/// User, approving PR #457's Alert me for: Needs you only: "yes, phone too". Needs you only alerts
+/// for an attention that waits on the user: a question, permission or approval prompt or connector
+/// card (`kind` `needsInput`), or a finished turn whose handover has a Blocked or Needs you section
+/// (`handoverNeedsYou`). A coordinator's thread hands its report to its coordinator, so only its
+/// own `needsInput` alerts. An attention an older daemon publishes without a kind alerts as before;
+/// a session that already left attention when its alert would play does not, since nothing waits.
+/// CDXC:Notifications 2026-11-08 SEE-ALSO: the rule itself is now `alert_rule::should_alert`
+/// (alert_rule.rs), which makes a thread's and a coordinator's plain finished turn quiet under All
+/// too; this setting only narrows what that rule lets through.
+/// SEE-ALSO: apps/mobile/app/src/notifications/attentionAlerts.ts (the phone's copy of this rule).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AttentionAlerts {
+    #[default]
+    All,
+    NeedsYou,
+}
+
+impl AttentionAlerts {
+    /// The setting's value; anything but `needsYou` is All, the default.
+    pub fn from_setting(value: Option<&str>) -> Self {
+        match value {
+            Some("needsYou") => Self::NeedsYou,
+            _ => Self::All,
+        }
+    }
+
+    /// Whether `session`'s attention alerts under this choice (`alert_rule::attention_alerts`).
+    pub fn alerts(self, session: &PresentationSession) -> bool {
+        crate::alert_rule::attention_alerts(session, self)
+    }
+}
+
 /// Per-session attention bookkeeping. Lives in the [`crate::Core`].
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct AttentionTracker {
@@ -77,9 +113,12 @@ pub(crate) struct AttentionTracker {
     sound_event_keys: HashSet<String>,
     sound_event_order: VecDeque<String>,
     sound_suppressed_until: HashMap<SessionKey, u64>,
-    /// Sessions last seen stuck (`stuckSince`), so the not-moving alert plays once per stuck
-    /// stretch.
+    /// Sessions last seen stuck with nobody healing them (`alert_rule::stuck_alerts`), so the
+    /// not-moving alert plays once per stuck stretch, when Autopilot leaves it for the user if it
+    /// was healing it.
     stuck: HashSet<SessionKey>,
+    /// Sessions last seen blocked (`blockedSince`), so the blocked alert plays once per stretch.
+    blocked: HashSet<SessionKey>,
 }
 
 /// `getGpuiPresentationAttentionEventId`: the event id, else the entered-at time for an older
@@ -191,7 +230,10 @@ impl AttentionTracker {
         // CDXC:Coordinators 2026-11-05 DECISION: a session that becomes stuck plays the
         // not-moving sound and shows a banner, on the same live deltas the completion sound
         // plays on (server/src/coordinators/stall.rs).
-        let stuck = session.stuck_since.is_some();
+        // CDXC:Notifications 2026-11-08: only while nobody heals it (`stuckHandledBy`), so a
+        // session Autopilot is interrupting or reloading alerts when Autopilot leaves it for the
+        // user, not before (alert_rule.rs).
+        let stuck = crate::alert_rule::stuck_alerts(session);
         if stuck && self.stuck.insert(key.clone()) {
             if let Some(effects) = sound.as_mut() {
                 effects.push(Effect::SessionStuckRaised {
@@ -200,6 +242,23 @@ impl AttentionTracker {
             }
         } else if !stuck {
             self.stuck.remove(key);
+        }
+        // CDXC:Notifications 2026-11-08: blocked (out of usage, an error recovery could not get
+        // past) is a red dot that always alerts, on the same live deltas.
+        let blocked = crate::alert_rule::blocked_alerts(session);
+        if blocked && self.blocked.insert(key.clone()) {
+            if let Some(effects) = sound.as_mut() {
+                effects.push(Effect::SessionBlockedRaised {
+                    session: key.clone(),
+                    reason: session
+                        .blocked_reason
+                        .clone()
+                        .filter(|reason| !reason.trim().is_empty())
+                        .unwrap_or_else(|| "Blocked: it needs you to carry on.".to_string()),
+                });
+            }
+        } else if !blocked {
+            self.blocked.remove(key);
         }
         let previous = self.activity.insert(key.clone(), session.activity.clone());
         if session.activity != SessionActivity::Attention {
@@ -253,6 +312,7 @@ impl AttentionTracker {
     fn forget(&mut self, key: &SessionKey) {
         self.activity.remove(key);
         self.stuck.remove(key);
+        self.blocked.remove(key);
         self.clear_tracking(key);
     }
 
@@ -423,5 +483,92 @@ fn clear_locally(
     if changes.ignored.is_none() {
         tracker.activity.insert(key.clone(), SessionActivity::Idle);
         output.changes.merge(changes);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{json, Value};
+
+    use super::AttentionAlerts;
+
+    /// One local session in the given activity, a thread of `parent` when there is one, else a
+    /// coordinator.
+    fn session(session_id: &str, activity: &str, parent: Option<&str>) -> Value {
+        let mut session = json!({
+            "sessionId": session_id,
+            "projectId": "P1",
+            "groupId": "P1:active",
+            "kind": "agent",
+            "surface": "workspace",
+            "zmxName": format!("S90-P1-{session_id}"),
+            "sortKey": format!("000000000000:0:1:{session_id}"),
+            "visibleInSidebarByDefault": true,
+            "alias": session_id,
+            "activity": activity,
+            "lifecycleState": "running",
+            "createdAt": "2026-10-24T01:00:00.000Z",
+            "updatedAt": "2026-10-24T01:00:00.000Z",
+            "coordinatorRole": if parent.is_none() { "coordinator" } else { "thread" },
+        });
+        if let Some(parent) = parent {
+            session["coordinatorProjectId"] = json!("P1");
+            session["coordinatorSessionId"] = json!(parent);
+        }
+        session
+    }
+
+    /// `session` in attention with the given attention object.
+    fn attention_row(
+        parent: Option<&str>,
+        attention: Value,
+    ) -> ghostex_gx_protocol::PresentationSession {
+        let mut row = session(
+            if parent.is_some() { "thread" } else { "lead" },
+            "attention",
+            parent,
+        );
+        row["attention"] = attention;
+        // A plain session, not the coordinator the shared fixture makes of a row without a parent.
+        if parent.is_none() {
+            row.as_object_mut().unwrap().remove("coordinatorRole");
+        }
+        serde_json::from_value(row).expect("the row parses")
+    }
+
+    #[test]
+    fn needs_you_only_alerts_for_what_waits_on_the_user() {
+        let needs_you = AttentionAlerts::from_setting(Some("needsYou"));
+        assert_eq!(needs_you, AttentionAlerts::NeedsYou);
+        let finished = json!({ "acknowledged": false, "eventId": "e1", "kind": "finished" });
+        let asks = json!({ "acknowledged": false, "eventId": "e1", "kind": "needsInput" });
+        let blocked = json!({ "acknowledged": false, "eventId": "e1", "kind": "finished", "handoverNeedsYou": true });
+        let older = json!({ "acknowledged": false, "eventId": "e1" });
+        // A question, approval or connector card, or a daemon too old to say: alert.
+        assert!(needs_you.alerts(&attention_row(None, asks.clone())));
+        assert!(needs_you.alerts(&attention_row(None, older)));
+        // A coordinator ending with Blocked or Needs you: alert.
+        assert!(needs_you.alerts(&attention_row(None, blocked.clone())));
+        // A finished turn with nothing for the user: quiet.
+        assert!(!needs_you.alerts(&attention_row(None, finished.clone())));
+        // A thread's handover is its report to its coordinator, whatever it marks: quiet. Its
+        // own question or permission prompt still waits on the user.
+        assert!(!needs_you.alerts(&attention_row(Some("lead"), blocked.clone())));
+        assert!(!needs_you.alerts(&attention_row(Some("lead"), finished.clone())));
+        assert!(needs_you.alerts(&attention_row(Some("lead"), asks)));
+    }
+
+    #[test]
+    fn all_alerts_for_every_attention_and_is_the_default() {
+        for value in [None, Some("all"), Some("something else")] {
+            assert_eq!(AttentionAlerts::from_setting(value), AttentionAlerts::All);
+        }
+        let finished = json!({ "acknowledged": false, "eventId": "e1", "kind": "finished" });
+        let asks = json!({ "acknowledged": false, "eventId": "e1", "kind": "needsInput" });
+        assert!(AttentionAlerts::All.alerts(&attention_row(None, finished.clone())));
+        // CDXC:Notifications 2026-11-08: a thread's finished turn is quiet under All too, while
+        // its question still alerts.
+        assert!(!AttentionAlerts::All.alerts(&attention_row(Some("lead"), finished)));
+        assert!(AttentionAlerts::All.alerts(&attention_row(Some("lead"), asks)));
     }
 }

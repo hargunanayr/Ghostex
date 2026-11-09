@@ -110,6 +110,21 @@ pub struct PanelsState {
     /// The row a board pill in the chat asked the board to show (`board:B4`), and how many times
     /// one was clicked, so the renderers open the board and scroll to it once per click.
     pub board_focus: Option<(String, u64)>,
+    /// "Don't show again" was clicked on the coordinator tips here: the pill goes before gxserver
+    /// confirms (`extras::coordinator_intro`), and comes back if it refuses.
+    pub intro_hidden: bool,
+    /// That call to gxserver while it is in flight.
+    pub intro_hide_request: Option<u64>,
+    /// The Autopilot pill's save in flight, and what it showed before it flipped
+    /// (`extras::autopilot`).
+    pub autopilot_request: Option<(u64, Option<serde_json::Value>)>,
+    /// The owner's answers to guest messages in flight, by RPC id, with the message's id
+    /// (`extras::collab`).
+    pub collab_requests: Vec<(u64, String)>,
+    /// The last typing signal this chat box sent, whether it said typing, and its call.
+    pub collab_typing_at: f64,
+    pub collab_typing_on: bool,
+    pub collab_typing_request: Option<u64>,
 }
 
 impl Default for PanelsState {
@@ -133,6 +148,13 @@ impl Default for PanelsState {
             board_answers: Default::default(),
             board_answer_requests: Default::default(),
             board_focus: None,
+            intro_hidden: false,
+            intro_hide_request: None,
+            autopilot_request: None,
+            collab_requests: Vec::new(),
+            collab_typing_at: 0.0,
+            collab_typing_on: false,
+            collab_typing_request: None,
         }
     }
 }

@@ -77,6 +77,10 @@ export interface GxserverPresentationAttentionState {
   workingStartedAt?: string;
   /** The Notifications row written for this attention event, while it exists (`capabilities.attentionNotificationId`). */
   notificationId?: string;
+  /** A finished turn whose handover has a 🛑 Blocked or ❓ Needs you section. Present only when true; absent on an older daemon. */
+  handoverNeedsYou?: boolean;
+  /** gxserver's verdict on whether this attention alerts (packages/gx-core/src/alert_rule.rs); absent on an older daemon. */
+  alerts?: boolean;
 }
 
 export interface GxserverPresentationSessionActions {
@@ -147,6 +151,25 @@ export interface GxserverPresentationProject {
   botGatewayRunning?: boolean;
   /** How many runs that bot's cron jobs delivered since local midnight; absent for every other project. */
   botRunsToday?: number;
+  /** The GBot whose folder this project is (server/src/gbots/presentation.rs); absent otherwise and while GBots are off. */
+  gbotsBot?: {
+    id: string;
+    name: string;
+    title: string;
+    icon: string;
+    color: string;
+    colorHex: string;
+    agentId: string;
+    departmentId?: string;
+    /** Its department's name, icon and place, for Main Hub's department sub-headings; absent with no department. */
+    departmentName?: string;
+    departmentIcon?: string;
+    departmentOrder?: number;
+    isLead?: true;
+    paused?: true;
+  };
+  /** The project is a GBot's folder (published whether GBots are on or off); clients never list it as a project. */
+  gbotsProject?: true;
   /** Issues Workflow (formerly Work mode) is on for this project: a Linear key applies, `gh` is signed in, or its workspace has a ticket command (server/src/work_mode/project.rs); present only when true. */
   workMode?: true;
   /** Issues Workflow is on and a Linear key applies to this project; present only when true. */
@@ -266,6 +289,8 @@ A missing flag means "this machine has no git/PR data to give", and V2 renders
 its cards exactly as it does for a session with no `gitStatus` at all.
 */
 export interface GxserverPresentationCapabilities {
+  /** The daemon publishes `awaitingAnswer` on its sessions; absent means it cannot say whether a question card waits. */
+  awaitingAnswer?: boolean;
   sessionGitStatus?: boolean;
   sessionSettlement: boolean;
   sessionSnooze: boolean;
@@ -466,6 +491,16 @@ export interface GxserverPresentationSession {
   pendingQuestionCount?: number;
   /** Stuck on a permission prompt or approval card only the user can grant (the red dot); absent when not. */
   awaitingApproval?: boolean;
+  /** Since when a session has shown no progress (the not-moving red dot); absent when not stuck. */
+  stuckSince?: string;
+  /** `autopilot` while Autopilot heals the stuck session, so its red dot does not alert yet. */
+  stuckHandledBy?: string;
+  /** Since when the session is blocked (out of usage on every account, an error recovery could not get past): the red dot. */
+  blockedSince?: string;
+  /** Why it is blocked, in a few plain words; present with `blockedSince`. */
+  blockedReason?: string;
+  /** A running session holds a question card only the user can answer, also while the agent works; absent when not. Independent of pendingQuestionCount. */
+  awaitingAnswer?: boolean;
   agentIcon?: string;
   agentId?: string;
   agentName?: string;
@@ -483,6 +518,8 @@ export interface GxserverPresentationSession {
   forkBranchCount?: number;
   forkFamilySessionIds?: GxserverSessionId[];
   /** `coordinator` or `thread`; absent for every other session (gxserver `coordinators/presentation.rs`). */
+  /** A chat of a GBot: its bot and who opened it (`user`, `chief`, …); absent otherwise and while GBots are off. */
+  gbotsChat?: { botId: string; openedBy: string };
   coordinatorRole?: 'coordinator' | 'thread';
   coordinatorProjectId?: GxserverProjectId;
   coordinatorSessionId?: GxserverSessionId;

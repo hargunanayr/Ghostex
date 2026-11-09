@@ -1,6 +1,8 @@
 //! An orchestrator's Memory and Goal & Instructions preview. States (`GHOSTEX_NATIVE_MODAL_DEMO_STATE`):
 //! default (Memory with more notes than the window holds, so the list scrolls), `few` (three
-//! notes), `goal` (Goal & Instructions).
+//! notes), `goal` (Goal & Instructions), `overrides` (Playbook overrides), `overrides-old` (with
+//! an edited full playbook saved before overrides still in use), `overrides-view` (Playbook
+//! overrides with its View playbook page open).
 use super::coordinator_details_modal::*;
 use gpui::{App, AppContext as _};
 use std::rc::Rc;
@@ -35,27 +37,47 @@ pub(super) fn open(demo: &super::DemoEnv, cx: &mut App) {
                 eprintln!("save memory: {} notes", notes.len());
                 reply.finish(Ok(()), cx);
             }
+            CoordinatorDetailsModalCommand::SaveOverrides { overrides, reply } => {
+                eprintln!("save overrides: {overrides:?}");
+                reply.finish(Ok(()), cx);
+            }
             CoordinatorDetailsModalCommand::Cancel => eprintln!("cancel"),
         }
         cx.quit();
     });
     let config = CoordinatorDetailsModalConfig {
-        mode: if demo.state == "goal" {
-            CoordinatorDetailsMode::Goal
-        } else {
-            CoordinatorDetailsMode::Memory
+        mode: match demo.state.as_str() {
+            "goal" => CoordinatorDetailsMode::Goal,
+            state if state.starts_with("overrides") => CoordinatorDetailsMode::Overrides,
+            _ => CoordinatorDetailsMode::Memory,
         },
         title: "Main Coordinator".to_string(),
         goal: "Ship the Session details panel.".to_string(),
         instructions: "Keep threads small and report back with marked handovers.".to_string(),
         notes,
+        overrides: "Never push without asking.\nIgnore the board rules.".to_string(),
+        old_copies_note: (demo.state == "overrides-old").then(|| {
+            super::new_coordinator_modal::old_copies_note_elsewhere(&["all projects".to_string()])
+                .unwrap_or_default()
+        }),
+        guide: demo
+            .state
+            .starts_with("overrides")
+            .then(|| Ok(super::new_coordinator_demo::demo_guide())),
         palette: demo.palette,
     };
+    let open_view = demo.state == "overrides-view";
     let _ = super::open_modal_window(
         COORDINATOR_DETAILS_MODAL_WIDTH,
         COORDINATOR_DETAILS_MODAL_INITIAL_HEIGHT,
         move |window, cx| {
-            cx.new(|cx| GpuiCoordinatorDetailsModalWindow::new(config, host, window, cx))
+            cx.new(|cx| {
+                let mut modal = GpuiCoordinatorDetailsModalWindow::new(config, host, window, cx);
+                if open_view {
+                    modal.set_viewing(true, window, cx);
+                }
+                modal
+            })
         },
         cx,
     );

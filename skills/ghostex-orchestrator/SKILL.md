@@ -21,9 +21,11 @@ talk to, and the threads have nobody to report to.
 
 Before your first reply, and again after your context is compacted, run
 `ghostex coordinator guide`. It prints this playbook as the installed Ghostex
-has it (or as the user edited it for this project), followed by the reply
-format the user chose for coordinators in Settings (marked sections, or plain
-answers). Follow that reply format in every handover. Where the guide differs
+has it, followed by the reply format the user chose for coordinators in
+Settings (marked sections, or plain answers), and last the user's own
+overrides, if they wrote any. Follow that reply format in every handover. The
+user's overrides take precedence over everything else in this playbook: where
+they disagree, do what the overrides say. Where the guide differs
 from this file, the guide wins, and a rule this file has that the guide leaves
 out no longer applies. When `ghostex coordinator status`, or a line Ghostex
 adds under a message, says your playbook changed, run the guide again right
@@ -56,7 +58,7 @@ compacted, and whenever you are unsure what is running.
 
 ```
 ghostex coordinator start-thread --title "<its task, 3 to 6 words>" --task "<brief>" [--worktree]
-    [--agent <agent id>] [--model <model>] [--effort <level>]
+    [--agent <agent id>] [--model <model>] [--effort <level>] [--computer <name>]
 ```
 
 - Name a thread after its task in 3 to 6 words ("Accounts page redesign", "Sidebar drag and
@@ -71,8 +73,11 @@ ghostex coordinator start-thread --title "<its task, 3 to 6 words>" --task "<bri
   achieve, which files or areas matter, what it must not touch, how to prove the work is done
   (tests, a build, a screenshot), and what its report should contain. Put long material in a file
   and point to the file. Use `--body-file <path>` instead of `--task` for multi-line briefs.
-- Ghostex adds the goal, the standing instructions, your memory notes and the reporting rules to
-  every brief. Do not repeat them.
+- Ghostex adds the goal, the standing instructions and the reporting rules to every brief. Do not
+  repeat them. Your memory notes are your own and Ghostex does not send them: add only the notes
+  and preferences that matter for this task, worded for the thread ("never rebuild the app", not
+  "only the orchestrator rebuilds"), after the task. Rules for the whole project live in its
+  AGENTS.md, which the thread reads itself; point to it instead of copying them.
 - Always link every thread to each GitHub issue, PR, Linear ticket or other tracked item its task
   is about, right after `start-thread` and without being asked:
   `ghostex link add <ABC-123|url|#123|owner/repo#123> --session <thread-ref>` (add `--issue` for a
@@ -86,6 +91,19 @@ ghostex coordinator start-thread --title "<its task, 3 to 6 words>" --task "<bri
 - When the work lives in another folder or repository, still start the thread in your own project
   (no `--project-id`) and put that folder's absolute path in the brief, so the thread shows under
   you in the sidebar.
+- When the user names another computer ("run this on Windows"), or the work needs that
+  computer's own system, files, apps or hardware, start the thread there with
+  `--computer <name>` (`ghostex computers` lists the connected ones). The thread opens in that
+  computer's project with your project's name; when its project there has another name, add
+  `--project-id <id>` with its `projectId` from `ghostex sessions --computer <name> --json`. It runs that
+  computer's agents and models, so pick `--agent` and `--model` from what that computer has. It
+  sits under you like any thread: its ref names the computer, so `agents send`,
+  `read-session-chat`, `resolve`, `reopen` and `unlink` take it unchanged, and its reports
+  arrive with the computer's name after its title. Its approval cards are answered in the thread
+  itself, not from your chat, so send the user there. While that computer is not connected, its
+  reports wait and `status` says so: tell the user the thread is waiting on that computer, and do
+  not treat it as stuck or start the same work here. Both computers need Ghostex 10.44 or later;
+  when `start-thread` refuses `--computer`, tell the user which one to update.
 - When the user asks for a separate session they chat to directly (not a thread), create it with
   `ghostex agents create <agent-id> --title "<name>" --standalone`: it is not linked, so it sits in
   the sidebar on its own and reports to nobody. `ghostex coordinator unlink <thread-ref>` turns an
@@ -166,7 +184,7 @@ markers, ending on what it does next, like "Now opening the fold.") and one whos
 (put to sleep, or its agent stopped or restarted, mid-turn); their nudge says "your last turn
 stopped before your task was done: carry on". A thread put to sleep while it was still working
 reports `Ghostex thread report: it stopped before its turn ended…` instead of "finished its turn".
-Auto Sleep leaves all of these awake, and the board shows them under Moving with what they owe
+Auto Sleep leaves all of these awake, and the board shows them under In progress with what they owe
 ("Waiting on its background job", "Stopped mid-task", "Slept mid-task") and its age; "parked" on
 the board is only ever your own `board move <thread> parked`. Until then, end your turn so the
 user can talk to you.
@@ -248,7 +266,20 @@ moving). Still never let a parked thread wait on its own:
 ## Keeping the board current
 
 The Board pill above your chat box lists your lines of work by who has the ball: Backlog, To do,
-Needs you, Blocked, Moving, Done today, and last Removed. `ghostex coordinator board` prints it.
+Needs you, Blocked, On hold, In progress, Done today, and last Removed. `ghostex coordinator board`
+prints it. The user's own words on two of them: "blocked means requires immediate attention by the
+user to unblock it, it doesn't mean waiting on something. waiting on something can be a new one
+called On hold" (2026-11-06). So:
+- **Blocked** is only what needs the user now to unblock it: a stuck thread only they can heal, an
+  expired token, a failed release step only they can fix. A thread still not moving after Ghostex's
+  nudge lands there by itself.
+- **On hold** is work waiting on something outside: a sign-up, a release, another thread, a vendor,
+  a CI run that isn't ours. Nothing there needs the user, so it has no pill.
+- **In progress** is work being done now (the group was called Moving until the user said "rename to
+  in progress please", 2026-11-07). Write it `in-progress` in `board move <ref> in-progress` and
+  `board add --group in-progress`; `moving` still works.
+- A finished thread's failing checks or requested changes are To do (yours to hand back to it),
+  not Blocked.
 Threads, their PRs' checks and review, and the user's open questions place themselves, so never
 add a thread as an item. In the same turn something comes up, place by hand what the board cannot
 know:
@@ -256,8 +287,10 @@ know:
   (`--release <name>`), something only the user can do (`--group needs-you`), approved work
   waiting its turn (`--group next`), a suggestion (`--group backlog`). `--link` names the URL or file
   it is about.
-- `board move <thread ref> blocked --note "<why>"` (or `needs-you`) when a thread's state cannot
-  tell where it stands: stuck on an expired token, waiting on a test only the user can do.
+- `board move <thread ref> blocked --note "<why>"` (or `on-hold`, `needs-you`) when a thread's state
+  cannot tell where it stands: Blocked on an expired token only the user can renew, On hold for a
+  vendor's or a bot's sign-up, Needs you for a test only the user can do. `board add "<title>"
+  --group on-hold --note "<what it waits on>"` for an item that waits on something outside.
   `board move <thread ref> auto` hands it back to its own state.
 - `board done B<n>` the moment an item is finished (the release shipped, the user signed in);
   after a release, mark every item held for it done. Close threads with `resolve` as before.
@@ -277,16 +310,16 @@ know:
 - A user message may name a card: `[title](board:B<n>)` is item B<n> (see `board`), and a
   thread's card names its session ref, as a + mention does.
 - Work you do yourself in this chat (a release, a merge, a review or a fix you run here) is not a
-  thread, so the board cannot see it: `board add "<title>" --group moving --note "<what you're on>"`
+  thread, so the board cannot see it: `board add "<title>" --group in-progress --note "<what you're on>"`
   as you start it, and `board done B<n>` when it's finished. On 2026-11-06 the board showed nothing
-  Moving while the coordinator was cutting a release, and the user asked why.
+  In progress while the coordinator was cutting a release, and the user asked why.
 - A follow-up you hold back for later (a message you'll send a thread after a release, work the
   user asked for that waits its turn) goes under To do (`--group next`) the moment you decide to
   wait, and leaves the board when you send it.
 - Before every handover, run `ghostex coordinator board` and make it match what you are about to
   tell the user: each line of work under Kicked off, In progress, Held for release, Blocked or
   Needs you is on the board in the same group (a thread places itself; anything else is an item),
-  and nothing finished or dropped is still under Moving, To do or Needs you.
+  and nothing finished or dropped is still under In progress, To do or Needs you.
 
 Keep the board light: drop an item that no longer matters instead of parking it. Your replies
 keep their status sections for now.
@@ -351,9 +384,9 @@ The user talks only to you and never has to open a thread to find a question, a 
 page. Anything from a thread that needs the user's eyes or decision, you bring into your own
 chat:
 - A thread's questions: ask them yourself, then send the answers to the thread.
-- A thread's page (mockups, a visual comparison, a question form): publish it again from your own
-  session with `ghostex show <file>` and paste the card in your reply, so the answers come back to
-  you; then pass them to the thread. Never tell the user to go and look at a thread's page.
+- A thread's Ghostex page (mockups, a visual comparison, questions with pictures): publish it
+  again from your own session with `ghostex show <file>` and paste the card in your reply, so the
+  answers come back to you; then pass them to the thread. Never tell the user to go and look at a thread's page.
 - Before you publish any page, yours or a thread's, look at it yourself first:
   `ghostex visual check <page.html> --out <file.png>` (and `--width 390` for the phone), then
   open the PNG and judge it as the user will. A mockup of Ghostex must look like Ghostex itself,
@@ -371,7 +404,9 @@ chat:
   "never touch billing", "tests need `make test-local`"), propose the exact one-line wording and
   ask before saving it. Once they confirm, save it with `ghostex coordinator remember "<one line>"`,
   or add it to the standing instructions when they ask for that. Remove a note with
-  `ghostex coordinator forget <number>`. Notes reach every new thread.
+  `ghostex coordinator forget <number>`. Notes are your memory, not the threads': when you brief a
+  thread, pass on the ones its task needs (see "Starting a thread"). A rule every thread in this
+  project must follow belongs in the project's AGENTS.md; offer to add it there.
 - The goal and the standing instructions belong to the user. Change them only when asked
   (`ghostex coordinator set-goal`, `ghostex coordinator set-instructions`).
 
@@ -409,9 +444,13 @@ a check or test only they can do, a sign-in, a permission prompt, a decision, a 
 until they try something. Say exactly what to do. "In progress" is only for work that carries on
 without them, so the user can trust that nothing listed there needs them.
 
-Asking the user:
-- Ask plain questions (a pick between options, a yes/no, a short text answer) as a form inside
-  the chat: a ` ```questions ` block in your reply, with every open question in one form, short
+Asking the user (call these by their names when you talk to the user: a Ghostex form, short gx
+form, is a ` ```questions ` block or one-click answers; a Ghostex page, gx page, is an HTML page
+published with `ghostex show`; Ghostex visuals, gx visuals, are charts and tables in a
+` ```visual ` block. "Inline questions", "inline HTML" and "inline graphs" are older words for
+the same three):
+- Ask plain questions (a pick between options, a yes/no, a short text answer) as a Ghostex form
+  inside the chat: a ` ```questions ` block in your reply, with every open question in one form, short
   choices, a one-line detail where it helps, and the option you recommend marked `recommended`.
   Never ask them as plain text the user has to type an answer to, and never with your built-in
   question tool, which asks one question at a time. The block is one JSON object whose
@@ -447,7 +486,7 @@ Asking the user:
   URL, such as `[#407](https://github.com/owner/repo/pull/407)`, or a file path link), so the user
   can check it before answering. A bare `#407` is not enough.
 - When the question is about something to look at (UI mockups, layouts, a visual comparison), ask
-  it in a page instead (`ghostex show`, the ghostex-visuals skill), with each question right under
+  it in a Ghostex page instead (`ghostex show`, the ghostex-visuals skill), with each question right under
   the mockups it asks about.
 - Number every question with a tag (Q1, Q2, …) and keep counting up across the whole
   conversation: a later form, a page or a question asked again continues from the highest number
@@ -459,10 +498,10 @@ Asking the user:
 - The chat counts unanswered questions in a "Previous question" pill and turns each tag you write
   (Q40) into a link to the form or page that asked it, so refer to questions by tag. When a
   question no longer matters, withdraw it so it stops counting: put `"withdraw": ["Q40"]` in your
-  next ```questions block (alone, or beside new questions). Asking every tag of an earlier form
+  next ` ```questions ` block (alone, or beside new questions). Asking every tag of an earlier form
   again in a later form or page replaces it. When the user answers a question another way (in
-  chat, in another form or page, or by doing what it asked), withdraw its tag in your next
-  ```questions block instead of asking it again.
+  chat, in another form or page, or by doing what it asked), withdraw its tag in your
+  next ` ```questions ` block instead of asking it again.
 - Withdraw in the same reply that settles it. Whenever an answer settles other open tags (a "go
   with your picks" that covers an earlier form, a later question that makes an earlier one moot, a
   decision that answers a thread's question, a page you are replacing with a redone one), list

@@ -5,6 +5,8 @@
 //! which rows the card holds and when it folds are decided in
 //! `packages/gx-chat-core/src/transcript/tool_card.rs` (the user's decision is there); this file
 //! only lays the card out and moves it.
+//!
+//! CDXC:SessionChat 2026-11-08 DECISION: User, of a folded "Used 1 tool" card above a "Message to <thread>" card: "make these 2 please have same height, they don't right now", then "keep the 'Message to …' card's height and make the tool cards match it". The tool card's header is the one-line cards' header height and its border their one scaled pixel, so folded it is 44px tall like every one-line card (the 2026-10-18 DECISION in cards.rs); its look is otherwise unchanged.
 
 use super::file_change_card::card_colors;
 use super::transcript::text;
@@ -23,7 +25,7 @@ use std::time::Duration;
 /// How long a row takes to grow in, and the header's text to settle into its next value.
 const ENTER: Duration = Duration::from_millis(320);
 /// One sweep of the running row's shimmer.
-const SHIMMER: Duration = Duration::from_millis(1400);
+pub(super) const SHIMMER: Duration = Duration::from_millis(1400);
 /// One turn of the spinner.
 const SPIN: Duration = Duration::from_millis(800);
 /// The header's icon circles and how far each overlaps the one before it.
@@ -34,6 +36,10 @@ const STACK_OVERLAP: f32 = 7.0;
 const STACK_RING: f32 = 2.0;
 /// A row's icon slot.
 const ROW_ICON: f32 = 18.0;
+/// Tool call lines: the line's height, and where the rail its rows hang from sits.
+const LINE_HEIGHT: f32 = 34.0;
+const LINE_RAIL_INSET: f32 = 18.0;
+const LINE_RAIL_GAP: f32 = 8.0;
 
 /// The bundled icon for each glyph the core classifies a tool into (`tool_rows::tool_glyph`).
 fn glyph_icon(glyph: &str) -> &'static str {
@@ -85,9 +91,49 @@ fn tool_icon(icon: &Value, size: f32, round: bool, p: &ChatAppearance) -> gpui::
     }
 }
 
+/// `base` moved `amount` of the way to `toward`, opaque.
+fn mix(base: Hsla, toward: Hsla, amount: f32) -> Hsla {
+    let (from, to) = (base.to_rgb(), toward.to_rgb());
+    gpui::Rgba {
+        r: from.r + (to.r - from.r) * amount,
+        g: from.g + (to.g - from.g) * amount,
+        b: from.b + (to.b - from.b) * amount,
+        a: 1.0,
+    }
+    .into()
+}
+
+/// The header stack's circle fill, its ring colour and the ring's width.
+///
+/// CDXC:SessionChat 2026-11-06 FIX:
+/// Brewed Bytes (Discord #support-and-bugs, "Blacked icons for the tool calls in the new Tool call cards"): "I tried changing the theme a few times but it seems the tool call icons are still blacked. The phone side is okay." On window glass the card's surface is a translucent wash (4% black in a light theme, 6% white in a dark one, `ChatAppearance::on_window_glass`), and making it opaque for the circles turned them solid black in light themes and solid white under white icons in dark ones. On glass the circles now take an opaque frosted tone of the theme's own background (near-white in light, a lifted grey in dark, never black or near-black on glass per AGENTS.md) with a hairline ring; without glass they keep the phone's stack: the card tone stepped darker (light) or lighter (dark), cut out of the card by a ring of its colour.
+fn stack_colors(surface: Hsla, p: &ChatAppearance) -> (Hsla, Hsla, f32) {
+    if p.window_glass {
+        let disc = if p.light {
+            mix(p.background, gpui::white(), 0.7)
+        } else {
+            mix(p.background, gpui::white(), 0.2)
+        };
+        let ring = p.foreground.opacity(if p.light { 0.12 } else { 0.1 });
+        return (disc, ring, 1.0);
+    }
+    let disc = Hsla {
+        l: (surface.l + if p.light { -0.1 } else { 0.13 }).clamp(0.0, 1.0),
+        a: 1.0,
+        ..surface
+    };
+    (disc, Hsla { a: 1.0, ..surface }, STACK_RING)
+}
+
 /// `text` in `font` with a band of light sweeping across it from left to right, `phase` running
 /// 0 to 1.
-fn shimmer_text(text: &str, font: &str, phase: f32, dim: Hsla, bright: Hsla) -> StyledText {
+pub(super) fn shimmer_text(
+    text: &str,
+    font: &str,
+    phase: f32,
+    dim: Hsla,
+    bright: Hsla,
+) -> StyledText {
     let count = text.chars().count().max(1) as f32;
     // The band is about a quarter of the text wide and starts and ends off it.
     let band = (count * 0.25).max(4.0);
@@ -132,13 +178,49 @@ impl NativeChatView {
         let key = format!("tool-card:{id}");
         let live = message["toolCardLive"] == true;
         let running = card["running"] == true;
-        // Open while its calls run and until the agent writes again, folded after (the core's
-        // `live_card_id`); a call waiting on an approval keeps it open (`toolsOpen`).
-        let open = self.is_expanded(&key, running || live || message["toolsOpen"] == true);
+        // One line until the reader opens it; a call waiting on an approval opens it (`waiting`).
+        // While calls run the header carries the newest one's words (the core's `liveLabel`).
+        // Tool call lines open in Detailed view and stay shut in Simple (Q1964).
+        let line = p.tool_lines;
+        let open = self.is_expanded(&key, card["waiting"] == true || (line && p.work_open));
         let motion = self.disclosure_frame(&key, open, cx);
         let animate = (running || live) && !cx.reduce_motion();
         let (surface, border, hairline, _, _, _) = card_colors(p);
         let entries = card["entries"].as_array().cloned().unwrap_or_default();
+
+        // Settings > Extensions > Experimental > Tool call lines: the card's header without its
+        // box, and its calls as rows on the rail under it.
+        if line {
+            let mut column = div()
+                .w_full()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .child(self.tool_card_header(&key, &card, open, animate, true, p, cx));
+            if open || motion.is_some() {
+                let rows: Vec<AnyElement> = entries
+                    .iter()
+                    .enumerate()
+                    .map(|(position, entry)| {
+                        self.tool_card_row(&id, &key, position, entry, message, animate, p, cx)
+                    })
+                    .collect();
+                let body = div()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(1.0 * s))
+                    .mt(px(2.0 * s))
+                    .ml(px(LINE_RAIL_INSET * s))
+                    .pl(px(LINE_RAIL_GAP * s))
+                    .border_l_1()
+                    .border_color(border)
+                    .children(rows)
+                    .into_any_element();
+                column = column.child(self.disclosure_body_motion(&key, motion, 0.0, body));
+            }
+            return Some(column.into_any_element());
+        }
 
         let mut column = div()
             .w_full()
@@ -146,11 +228,13 @@ impl NativeChatView {
             .flex()
             .flex_col()
             .rounded(px(12.0 * s))
-            .border_1()
+            // One scaled pixel, as the one-line cards' shell has, so the folded card is exactly as
+            // tall as they are (`SINGLE_LINE_CARD.header_height`).
+            .border(px(s))
             .border_color(border)
             .bg(surface)
             .overflow_hidden()
-            .child(self.tool_card_header(&key, &card, open, animate, p, cx));
+            .child(self.tool_card_header(&key, &card, open, animate, false, p, cx));
         if open || motion.is_some() {
             let rows: Vec<AnyElement> = entries
                 .iter()
@@ -175,34 +259,39 @@ impl NativeChatView {
         Some(column.into_any_element())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn tool_card_header(
         &self,
         key: &str,
         card: &Value,
         open: bool,
         animate: bool,
+        line: bool,
         p: &ChatAppearance,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let s = p.scale;
-        let title = text(card, "title");
+        let live_label = text(card, "liveLabel");
+        let live_more = text(card, "liveMore");
+        let title = if !live_label.is_empty() {
+            live_label.clone()
+        } else if line {
+            text(card, "lineTitle")
+        } else {
+            text(card, "title")
+        };
         let failed = text(card, "failedLabel");
         let time = text(card, "time");
         let more = card["moreIcons"].as_u64().unwrap_or(0);
-        let (surface, _, _, hover, _, _) = card_colors(p);
+        let (card_surface, _, _, hover, _, _) = card_colors(p);
+        // A line has no box: its circles are cut out of the chat's own background.
+        let surface = if line { p.background } else { card_surface };
         let icons = card["icons"].as_array().cloned().unwrap_or_default();
         let mut stack = div().flex().items_center().flex_shrink_0();
-        // Each tool is a round tile overlapping the one before it, cut out of the card by a ring
-        // of the card's own colour (the demo's stack). The fill is opaque, a clear step lighter
-        // than the card (darker in a light theme), so the circles read as circles.
-        let disc = Hsla {
-            l: (surface.l + if p.light { -0.1 } else { 0.13 }).clamp(0.0, 1.0),
-            a: 1.0,
-            ..surface
-        };
+        let (disc, ring_color, ring_width) = stack_colors(surface, p);
         let ring = |tile: gpui::Div, index: usize| {
-            tile.border(px(STACK_RING * s))
-                .border_color(Hsla { a: 1.0, ..surface })
+            tile.border(px(ring_width * s))
+                .border_color(ring_color)
                 .when(index > 0, |tile| tile.ml(px(-STACK_OVERLAP * s)))
         };
         let mut tiles: Vec<gpui::Div> = icons
@@ -254,31 +343,77 @@ impl NativeChatView {
                 tile.into_any_element()
             });
         }
-        let title_element = div()
-            .min_w_0()
-            .truncate()
-            .text_size(px(13.5 * s))
-            .text_color(p.muted)
-            .child(title.clone());
-        // The header's words settle into their next value ("Using 3 tools" into "Using 4 tools",
-        // "Used 6 tools") while the card is live: the old text gives way to the new one fading up.
-        let title_element = if animate {
-            title_element
-                .with_animation(
-                    SharedString::from(format!("{key}:title:{title}")),
-                    Animation::new(ENTER).with_easing(gpui::ease_out_quint()),
-                    |title, delta| title.opacity(0.2 + 0.8 * delta),
+        // The running call's words sweep with the row's shimmer; otherwise the header's words
+        // settle into their next value ("Using 3 tools" into "Used 3 tools") while the card is
+        // live, the old text giving way to the new one fading up.
+        let title_element = if !live_label.is_empty() && animate {
+            let (dim, bright) = (p.muted.opacity(0.8), p.foreground);
+            let (shimmer_label, font) = (live_label.clone(), p.font.clone());
+            div()
+                .min_w_0()
+                .truncate()
+                .text_size(px(13.5 * s))
+                .with_throttled_animation(
+                    SharedString::from(format!("{key}:live")),
+                    SHIMMER,
+                    move |title, phase| {
+                        title.child(shimmer_text(&shimmer_label, &font, phase, dim, bright))
+                    },
                 )
                 .into_any_element()
         } else {
-            title_element.into_any_element()
+            let plain = div()
+                .min_w_0()
+                .truncate()
+                .text_size(px(13.5 * s))
+                .text_color(p.muted)
+                .child(title.clone());
+            if animate {
+                plain
+                    .with_animation(
+                        SharedString::from(format!("{key}:title:{title}")),
+                        Animation::new(ENTER).with_easing(gpui::ease_out_quint()),
+                        |title, delta| title.opacity(0.2 + 0.8 * delta),
+                    )
+                    .into_any_element()
+            } else {
+                plain.into_any_element()
+            }
         };
+        // A spinner beside the live line while a call runs, as its row has.
+        let spinner: Option<AnyElement> = (!live_label.is_empty()).then(|| {
+            let glyph = gpui::svg()
+                .path("titlebar/loader2.svg")
+                .size(px(13.0 * s))
+                .flex_shrink_0()
+                .text_color(p.muted);
+            if animate {
+                glyph
+                    .with_throttled_animation(
+                        SharedString::from(format!("{key}:spin")),
+                        SPIN,
+                        |glyph, progress| {
+                            glyph.with_transformation(gpui::Transformation::rotate(
+                                gpui::percentage(progress),
+                            ))
+                        },
+                    )
+                    .into_any_element()
+            } else {
+                glyph.into_any_element()
+            }
+        });
         let toggle_key = key.to_string();
-        let aria = [title.as_str(), failed.as_str(), time.as_str()]
-            .into_iter()
-            .filter(|part| !part.is_empty())
-            .collect::<Vec<_>>()
-            .join(", ");
+        let aria = [
+            title.as_str(),
+            live_more.as_str(),
+            failed.as_str(),
+            time.as_str(),
+        ]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(", ");
         div()
             .id(SharedString::from(format!("{key}:header")))
             .role(gpui::Role::Button)
@@ -287,8 +422,15 @@ impl NativeChatView {
             .flex()
             .items_center()
             .gap(px(8.0 * s))
-            .px(px(10.0 * s))
-            .min_h(px(38.0 * s))
+            .px(px(if line { 8.0 } else { 10.0 } * s))
+            // The one-line cards' header height ("Message to …", "Worked for 12s"), so a tool card
+            // folded beside one of them is the same height; a line is a tool row's height.
+            .h(px(if line {
+                LINE_HEIGHT * s
+            } else {
+                super::cards::SINGLE_LINE_CARD.header_height(s)
+            }))
+            .when(line, |this| this.rounded(px(8.0 * s)))
             .min_w_0()
             .chat_cursor_pointer()
             .hover(move |style| style.bg(hover))
@@ -325,6 +467,17 @@ impl NativeChatView {
                         .child(time),
                 )
             })
+            // The card's other calls beside the live line ("+2 more").
+            .when(!live_more.is_empty(), |this| {
+                this.child(
+                    div()
+                        .flex_shrink_0()
+                        .text_size(px(12.0 * s))
+                        .text_color(p.muted)
+                        .child(live_more.clone()),
+                )
+            })
+            .children(spinner)
             .child(
                 gpui::svg()
                     .path(if open {

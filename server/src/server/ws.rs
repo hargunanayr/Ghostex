@@ -37,12 +37,30 @@ pub(crate) async fn handle_events(
     Plain HTTP requests to the WebSocket-only event path must keep the TypeScript JSON `notFound` envelope. Do not expose Axum WebSocket extractor rejection bodies because clients rely on gxserver's product/protocol/requestId error shape.
     */
     let query_token = query_value(&uri, "authToken");
-    let authorized =
-        is_authorized_client_headers(&headers, &state.auth_token, &state.device_api_tokens)
-            || query_token.as_deref().is_some_and(|token| {
-                is_authorized_client_token(token, &state.auth_token, &state.device_api_tokens)
-            });
-    if !authorized {
+    let authorized = is_authorized_client_headers(
+        &headers,
+        &state.auth_token,
+        &state.device_api_tokens,
+        &state.security.session_tokens,
+    ) || query_token.as_deref().is_some_and(|token| {
+        is_authorized_client_token(
+            token,
+            &state.auth_token,
+            &state.device_api_tokens,
+            &state.security.session_tokens,
+        )
+    });
+    // A Ghostex Collab share token opens one chat's stream and nothing else
+    // (server/src/collab_shim/registry.rs); the Collab component is the only holder.
+    let share_scope = (!authorized)
+        .then(|| {
+            query_token
+                .as_deref()
+                .and_then(crate::collab_shim::registry::authorize_token)
+        })
+        .flatten()
+        .map(|share| (share.project_id, share.session_id));
+    if !authorized && share_scope.is_none() {
         return json_response(
             StatusCode::UNAUTHORIZED,
             rpc_error(
@@ -59,8 +77,53 @@ pub(crate) async fn handle_events(
             protocol_mismatch_error(protocol_version, Some(request_id)),
         );
     }
-    let chat_only = query_value(&uri, "stream").as_deref() == Some("sessionChat");
-    ws.on_upgrade(move |socket| handle_event_socket(socket, state, chat_only))
+    let mode = EventStreamMode::from_query(query_value(&uri, "stream").as_deref());
+    if share_scope.is_some() && mode != EventStreamMode::SessionChat {
+        return json_response(
+            StatusCode::FORBIDDEN,
+            rpc_error(
+                "forbidden",
+                "A guest can only follow the chat that was shared.",
+                Some(request_id),
+            ),
+        );
+    }
+    ws.on_upgrade(move |socket| handle_event_socket_scoped(socket, state, mode, share_scope))
+}
+
+/// What one `/api/events` socket carries, picked by its `stream` query value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum EventStreamMode {
+    /// The whole hub plus the subscription commands (sidebar, presentation, renderers).
+    Full,
+    /// Subscribed session chat frames and the model catalog (CDXC:StateSync 2026-09-13 below).
+    SessionChat,
+    /// Notification feed changes and the daemon's start and stop, nothing else.
+    Notifications,
+}
+
+impl EventStreamMode {
+    pub(crate) fn from_query(stream: Option<&str>) -> Self {
+        match stream {
+            Some(ghostex_gx_protocol::GXSERVER_EVENTS_STREAM_SESSION_CHAT) => Self::SessionChat,
+            Some(ghostex_gx_protocol::GXSERVER_EVENTS_STREAM_NOTIFICATIONS) => Self::Notifications,
+            _ => Self::Full,
+        }
+    }
+}
+
+/// CDXC:Notifications 2026-10-31 WHY:
+/// The phone keeps one socket open per paired computer only to learn when to reread the notification feed; on the full hub it would receive every presentation delta and catalog frame over its SSH forward. A notification socket gets the handshake, `notificationFeedChanged` and the daemon's start and stop, and its client commands are ignored, so a subscription cannot start a presentation snapshot or a chat follower on it. It shares the bounded client queue and overflow disconnect of every event socket.
+/// SEE-ALSO: `GXSERVER_EVENTS_STREAM_NOTIFICATIONS` in packages/gx-protocol/src/lib.rs, `ENDPOINT_CAPABILITIES` in server/src/cli.rs.
+fn notification_event_matches(event: &Value) -> bool {
+    matches!(
+        event.get("type").and_then(Value::as_str),
+        Some(
+            crate::notification_feed::NOTIFICATION_FEED_CHANGED_EVENT_TYPE
+                | "serverStarted"
+                | "serverStopping"
+        )
+    )
 }
 
 pub(crate) async fn handle_terminal(
@@ -91,6 +154,7 @@ pub(crate) async fn handle_terminal(
     let terminal_state = TerminalWsState {
         auth_token: state.auth_token.clone(),
         device_api_tokens: state.device_api_tokens.clone(),
+        owner_sessions: state.security.session_tokens.clone(),
         base_url: format!(
             "http://{}:{}",
             state.config.listeners.local.host, state.config.listeners.local.port
@@ -101,11 +165,26 @@ pub(crate) async fn handle_terminal(
     ws.on_upgrade(move |socket| handle_terminal_socket(socket, uri, terminal_state))
 }
 
-pub(crate) async fn handle_event_socket(socket: WebSocket, state: Arc<AppState>, chat_only: bool) {
+pub(crate) async fn handle_event_socket(
+    socket: WebSocket,
+    state: Arc<AppState>,
+    mode: EventStreamMode,
+) {
+    handle_event_socket_scoped(socket, state, mode, None).await
+}
+
+/// `only` keeps the socket to one chat: a Ghostex Collab guest's stream.
+pub(crate) async fn handle_event_socket_scoped(
+    socket: WebSocket,
+    state: Arc<AppState>,
+    mode: EventStreamMode,
+    only: Option<(String, String)>,
+) {
     let (mut socket_sender, mut socket_receiver) = socket.split();
     let (outbound_tx, mut outbound_rx) = state.event_hub.client_channel();
     let mut broadcast_rx = state.event_hub.subscribe();
-    let chat_filter = chat_only.then(|| Arc::new(RwLock::new(HashSet::new())));
+    let chat_filter =
+        (mode == EventStreamMode::SessionChat).then(|| Arc::new(RwLock::new(HashSet::new())));
     if outbound_tx
         .try_send(json!({
             "protocolVersion": GXSERVER_PROTOCOL_VERSION,
@@ -118,9 +197,11 @@ pub(crate) async fn handle_event_socket(socket: WebSocket, state: Arc<AppState>,
     }
     // The connecting client gets the effective lineup from boot, not only
     // after the first poll succeeds (agent_model_catalog.rs).
-    if let Some(event) = crate::agent_model_catalog::connect_event(&state.metadata.server_id) {
-        if outbound_tx.try_send(event).is_err() {
-            return;
+    if mode != EventStreamMode::Notifications {
+        if let Some(event) = crate::agent_model_catalog::connect_event(&state.metadata.server_id) {
+            if outbound_tx.try_send(event).is_err() {
+                return;
+            }
         }
     }
     /*
@@ -141,6 +222,10 @@ pub(crate) async fn handle_event_socket(socket: WebSocket, state: Arc<AppState>,
                         if !chat_event_matches(filter, &event) {
                             continue;
                         }
+                    }
+                    if mode == EventStreamMode::Notifications && !notification_event_matches(&event)
+                    {
+                        continue;
                     }
                     if broadcast_outbound_tx.try_send(event).is_err() {
                         break;
@@ -179,6 +264,22 @@ pub(crate) async fn handle_event_socket(socket: WebSocket, state: Arc<AppState>,
         let Ok(message) = message else {
             break;
         };
+        if mode == EventStreamMode::Notifications {
+            continue;
+        }
+        if let Some(only) = &only {
+            let Some(parsed) = parse_event_client_message(message.clone()) else {
+                continue;
+            };
+            let kind = parsed.get("type").and_then(Value::as_str);
+            let allowed = matches!(
+                kind,
+                Some("subscribeSessionChat" | "unsubscribeSessionChat")
+            ) && event_message_session_ids(&parsed).as_ref() == Some(only);
+            if !allowed {
+                continue;
+            }
+        }
         if !handle_event_client_message(
             &state,
             &outbound_tx,

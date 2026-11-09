@@ -69,16 +69,20 @@ impl GhostexGpuiApp {
         corner, so it draws the sidebar toggles at the Search row's `SIDEBAR_TOGGLE_LEADING_X`.
         Windows and Linux have no lights to clear; their caption buttons are trailing children of
         this same header. The reveal's edge zone overlays the workarea and takes no layout, so the
-        inset is measured from the window edge.
+        inset is measured from the window edge. Since 2026-11-06 the macOS lights hide with the
+        sidebar, and in full screen macOS draws them only in the title bar that slides down, so in
+        both the toggles move left to the x they have on Windows and Linux
+        (`window_controls_reserved`, `sidebar_toggle_leading_x`).
         */
         let leading_inset = if self.sidebar_collapsed {
             // Inside the work area frame's card the header starts one gutter plus the card's 1pt
             // border in from the window's edge, so the inset drops by both and the toggles land at
-            // the same window x as the docked sidebar's (`sidebar_toggle_leading_x`).
+            // the window x `sidebar_toggle_leading_x` gives.
+            let toggle_x = sidebar_toggle_leading_x(self.window_controls_reserved());
             if work_area_frame_active() {
-                sidebar_toggle_leading_x() - WORK_AREA_FRAME_MARGIN - WORK_AREA_FRAME_BORDER
+                toggle_x - WORK_AREA_FRAME_MARGIN - WORK_AREA_FRAME_BORDER
             } else {
-                SIDEBAR_TOGGLE_LEADING_X
+                toggle_x
             }
         } else {
             WORKAREA_HEADER_EDGE_PADDING
@@ -94,10 +98,14 @@ impl GhostexGpuiApp {
             // The docked Search row puts the button's top at 5pt, while this 36pt row centres the
             // 27pt button at 4.5pt; the half point keeps it from jumping when the sidebar collapses.
             .when(self.sidebar_collapsed, |this| {
+                // The window's traffic lights show here through the floating sidebar, so the
+                // toggles under them draw nothing meanwhile (`window_lights_over_header`).
+                let under_lights = self.window_lights_over_header();
                 this.child(
                     div()
                         .relative()
                         .top(px(0.5))
+                        .when(under_lights, |button| button.invisible())
                         .child(self.render_sidebar_collapse_button(None, cx)),
                 )
                 // The Agents Panel toggle follows the sidebar toggle wherever that one is
@@ -108,6 +116,7 @@ impl GhostexGpuiApp {
                         .relative()
                         .ml(px(4.0))
                         .top(px(0.5))
+                        .when(under_lights, |button| button.invisible())
                         .child(self.render_workarea_header_agents_toggle(None, cx)),
                 )
                 // The Board button follows them the same way (native_session_board/host.rs).

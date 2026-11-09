@@ -202,13 +202,26 @@ fn badge_lines(account: &Value) -> Vec<String> {
         .unwrap_or(&[]);
     let pct = |w: &Value| w["usedPercent"].as_f64().map(|v| format!("{:.0}", v));
     if usage_only_provider(text(account, "provider")) {
-        // Gemini's 5h and 7d on one line like Codex; Cursor's and Copilot's one Mo window.
-        let usage = windows.iter().filter_map(|w| pct(w)).collect::<Vec<_>>();
-        return if usage.is_empty() {
-            Vec::new()
-        } else {
-            vec![format!("{}%", usage.join("/"))]
-        };
+        // CDXC:AgentProviders 2026-11-07 DECISION:
+        // User, with a screenshot of the sidebar's usage meters (Claude and Codex stacked "74%" over "0%", Gemini packed as "0/0%"): "pls make the gemini one 2 lines like the others". A usage-only provider draws one stacked "N%" line per window, in the order gxserver lists them (Gemini's 5h then 7d); Cursor's and Copilot's single Mo window stays one line. The tile has no tooltip (2026-09-21), so the window labels stay in the usage popup.
+        // CDXC:AgentProviders 2026-11-08 DECISION:
+        // Gemini now also lists Antigravity's Claude/GPT group as model-scoped 5h and 7d windows (server/src/accounts/usage_only/gemini.rs). The tile keeps one line per main window, and each line shows the most used window of that length across every group, so the limit agy hits first is the one on the tile; the settings pane and the chat's accounts panel list each group.
+        return windows
+            .iter()
+            .filter(|w| w["model"].is_null())
+            .filter_map(|main| {
+                let seconds = main["limitWindowSeconds"].as_i64();
+                windows
+                    .iter()
+                    .filter(|w| {
+                        std::ptr::eq(*w, main)
+                            || (seconds.is_some() && w["limitWindowSeconds"].as_i64() == seconds)
+                    })
+                    .filter_map(|w| w["usedPercent"].as_f64())
+                    .reduce(f64::max)
+                    .map(|v| format!("{v:.0}%"))
+            })
+            .collect();
     }
     if text(account, "provider") == "codex" {
         let main: Vec<_> = windows.iter().filter(|w| w["model"].is_null()).collect();

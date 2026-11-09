@@ -3,6 +3,8 @@ mod agent_hooks_required_modal_lifecycle;
 pub(crate) mod chat_host;
 /// The page has no full-window Claude; opening a session has nothing to turn off.
 pub(crate) mod claude_web;
+/// Ghostex Collab's guest mode: one shared chat, nothing else.
+pub(crate) mod collab_guest;
 /// The desktop's constants, of which the page reads a subset.
 #[allow(dead_code)]
 pub(crate) mod consts;
@@ -12,6 +14,8 @@ mod delete_worktree_modal_lifecycle;
 pub(crate) mod element;
 mod feedback_modal_lifecycle;
 pub(crate) mod floating_reveal;
+mod gbot_settings_modal_lifecycle;
+mod gbot_team_modal_lifecycle;
 pub(crate) mod gx_chat;
 pub(crate) mod gx_store;
 pub(crate) mod helpers;
@@ -20,6 +24,7 @@ pub(crate) mod model;
 pub(crate) mod native_changes;
 pub(crate) mod native_chat;
 pub(crate) mod native_sidebar;
+pub(crate) mod notice_modal_host;
 /// The window panels' tween alone (the page has none of the desktop's panels), which the chat's
 /// docked Session details column slides on.
 #[allow(dead_code)]
@@ -38,20 +43,21 @@ pub(crate) mod native_app_modal_lifecycle {
 pub(crate) mod project_views {
     include!(concat!(env!("OUT_DIR"), "/project_views.rs"));
 }
-mod coordinator_details_modal_lifecycle;
 mod add_session_link_modal_lifecycle;
+mod coordinator_details_modal_lifecycle;
 mod create_linear_ticket_modal_lifecycle;
+mod export_transcript_modal_lifecycle;
 mod new_coordinator_modal_lifecycle;
+mod new_gbot_modal_lifecycle;
 pub(crate) mod quick_access;
 mod quick_access_modal_lifecycle;
 /// Read aloud's speaker: the page's `speechSynthesis` (the desktop's `app/read_aloud/` twin).
 pub(crate) mod read_aloud;
 pub(crate) mod remote_conn;
 mod rename_session_modal_lifecycle;
-mod export_transcript_modal_lifecycle;
-pub(crate) mod session_handoff_modal_lifecycle;
 mod rename_worktree_modal_lifecycle;
 pub(crate) mod render;
+pub(crate) mod session_handoff_modal_lifecycle;
 mod session_note_modal_lifecycle;
 /// Whether Session notes is on for the computer serving the page (the desktop's `app/session_notes.rs` twin).
 pub(crate) mod session_notes;

@@ -16,7 +16,7 @@
 
 use std::time::Duration;
 
-use ghostex_gx_core::{Effect, Event, Intent, SessionKey};
+use ghostex_gx_core::{AttentionAlerts, Effect, Event, Intent, SessionKey};
 
 use super::report::report_agent_activity;
 use crate::GhostexGpuiApp;
@@ -102,7 +102,7 @@ impl GhostexGpuiApp {
             Effect::SessionAttentionRaised { session } => {
                 // Every window's store raises it; one sound plays, from the lead window
                 // (app/workspace_windows/).
-                if !self.is_lead_window() {
+                if !self.is_lead_window() || !self.gx_store_attention_alerts(&session) {
                     return;
                 }
                 let Some(sound) = completion_sound() else {
@@ -110,41 +110,78 @@ impl GhostexGpuiApp {
                 };
                 self.play_session_completion(sound, Some(session.to_sidebar_session_id()), cx);
             }
-            // A session that became stuck: the not-moving sound and one banner, from the lead
-            // window (server/src/coordinators/stall.rs).
-            Effect::SessionStuckRaised { session } => {
-                if !self.is_lead_window() {
-                    return;
-                }
-                crate::app::helpers::gpui_play_not_moving_sound();
-                let title = self
-                    .gx_store
-                    .core
-                    .presentation()
-                    .session(&session)
-                    .map(|row| {
-                        row.display_title
-                            .clone()
-                            .filter(|title| !title.trim().is_empty())
-                            .unwrap_or_else(|| row.title.clone())
-                    })
-                    .filter(|title| !title.trim().is_empty())
-                    .unwrap_or_else(|| "Agent session".to_string());
-                self.deliver_gpui_session_attention_notifications(
-                    vec![
-                        crate::app::helpers::GpuiSessionAttentionNotificationCandidate {
-                            body: "Not moving: no progress for a while. It may be stuck."
-                                .to_string(),
-                            icon_data_url: None,
-                            session_id: session.to_sidebar_session_id(),
-                            title,
-                        },
-                    ],
-                    cx,
-                );
+            // A session that became stuck with nobody healing it: the not-moving sound and one
+            // banner, from the lead window (server/src/coordinators/stall.rs; gx-core decides
+            // whether it alerts, alert_rule.rs).
+            Effect::SessionStuckRaised { session } => self.gx_store_red_dot_alert(
+                &session,
+                "Not moving: no progress for a while. It may be stuck.".to_string(),
+                cx,
+            ),
+            // A session that became blocked (out of usage, an error recovery could not get past):
+            // the same sound and a banner saying why.
+            Effect::SessionBlockedRaised { session, reason } => {
+                self.gx_store_red_dot_alert(&session, reason, cx)
             }
             _ => {}
         }
+    }
+
+    /// The red dot's alert: the not-moving sound and one banner, from the lead window.
+    fn gx_store_red_dot_alert(
+        &mut self,
+        session: &SessionKey,
+        body: String,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if !self.is_lead_window() {
+            return;
+        }
+        crate::app::helpers::gpui_play_not_moving_sound();
+        let title = self
+            .gx_store
+            .core
+            .presentation()
+            .session(session)
+            .map(|row| {
+                row.display_title
+                    .clone()
+                    .filter(|title| !title.trim().is_empty())
+                    .unwrap_or_else(|| row.title.clone())
+            })
+            .filter(|title| !title.trim().is_empty())
+            .unwrap_or_else(|| "Agent session".to_string());
+        self.deliver_gpui_session_attention_notifications(
+            vec![
+                crate::app::helpers::GpuiSessionAttentionNotificationCandidate {
+                    body,
+                    icon_data_url: None,
+                    session_id: session.to_sidebar_session_id(),
+                    title,
+                },
+            ],
+            cx,
+        );
+    }
+}
+
+impl GhostexGpuiApp {
+    /// Whether the session's attention plays the finished sound and shows a system notification
+    /// under Alert me for (`attentionAlertsFor`, gx-core `AttentionAlerts`). A session the store no
+    /// longer holds alerts as before.
+    pub(crate) fn gx_store_attention_alerts(&self, session: &SessionKey) -> bool {
+        let settings = crate::shared_settings::shared_sidebar_settings_snapshot();
+        let alerts = AttentionAlerts::from_setting(
+            settings
+                .object()
+                .get("attentionAlertsFor")
+                .and_then(serde_json::Value::as_str),
+        );
+        self.gx_store
+            .core
+            .presentation()
+            .session(session)
+            .is_none_or(|row| alerts.alerts(&row))
     }
 }
 

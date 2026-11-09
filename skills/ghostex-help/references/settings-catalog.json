@@ -128,7 +128,7 @@
     {
       "key": "chatToolCallCards",
       "title": "Tool call cards (preview)",
-      "subtitle": "Show each run of tool calls as one card: it counts the calls, says what each one is doing and then did, with its result and time, explains a failure, and folds to one line once the agent writes again. Off keeps the current look.",
+      "subtitle": "Show each run of tool calls as one line that says which call is running now; click it to see every call with its result, time and the reason for any failure. Off keeps the current look.",
       "tab": "chat",
       "tabTitle": "Chat",
       "section": "chat",
@@ -204,7 +204,7 @@
     {
       "key": "chatAnswersWaitForIdle",
       "title": "Wait for turn end before sending form answers",
-      "subtitle": "Send answers from question forms and chat pages only after the agent finishes its turn. Off sends them like a normal chat message, which the agent can read after its current tool call finishes.",
+      "subtitle": "Send answers from Ghostex forms and Ghostex pages only after the agent finishes its turn. Off sends them like a normal chat message, which the agent can read after its current tool call finishes.",
       "tab": "chat",
       "tabTitle": "Chat",
       "section": "chat",
@@ -216,8 +216,8 @@
     },
     {
       "key": "chatPageOpenTarget",
-      "title": "Open chat pages in",
-      "subtitle": "Where a page an agent shows in chat (a mockup, a question form, a comparison) opens when you click its card: a popup over the chat, the Files view, or your default web browser. Answers you send from the page reach the agent the same way in all three. The phone always opens pages in its own viewer.",
+      "title": "Open Ghostex pages in",
+      "subtitle": "Where a Ghostex page (gx page) an agent shows in chat, such as a mockup or a comparison, opens when you click its card: a popup over the chat, the Files view, or your default web browser. Answers you send from the page reach the agent the same way in all three. The phone always opens pages in its own viewer.",
       "tab": "chat",
       "tabTitle": "Chat",
       "section": "chat",
@@ -265,7 +265,7 @@
     {
       "key": "agentGhostexNote",
       "title": "Tell agents about Ghostex",
-      "subtitle": "Agent sessions Ghostex starts get a short note that they run in Ghostex: it can show pages, questions and charts in the chat, install Ghostex skills, and `ghostex agent-guide` explains the rest. Agents use it only when you ask for one of those things. Applies to sessions started or resumed after you change it.",
+      "subtitle": "Agent sessions Ghostex starts get a short note that they run in Ghostex: it can show Ghostex pages, forms and visuals in the chat, install Ghostex skills, and `ghostex agent-guide` explains the rest. Agents use it only when you ask for one of those things. Applies to sessions started or resumed after you change it.",
       "tab": "chat",
       "tabTitle": "Chat",
       "section": "chat",
@@ -289,8 +289,8 @@
     },
     {
       "key": "orchestratorPlaybook",
-      "title": "Coordinator playbook",
-      "subtitle": "How every coordinator works: the playbook it follows. Edit it for all projects here, or for one project and its worktrees in Settings > Projects. Coordinators, existing ones too, follow the edited playbook from their next guide read, and a switch turns an edited playbook off without losing it.",
+      "title": "Playbook overrides",
+      "subtitle": "Your own instructions for every coordinator, such as \"Never push without asking\". Coordinators read them after Ghostex's playbook and follow them over it, and Ghostex's playbook keeps getting its updates. Existing coordinators follow them from their next message.",
       "tab": "chat",
       "tabTitle": "Chat",
       "section": "chat",
@@ -543,8 +543,8 @@
     },
     {
       "key": "unifiedWorkingSection",
-      "title": "Working section",
-      "subtitle": "Fold sessions whose agent is working or still running something in the background into a Working section at the bottom of the list. They return to the top of the list when they need you. Shown while the Unified sidebar is selected.",
+      "title": "Moving section",
+      "subtitle": "Fold sessions whose agent is working or still running something in the background into a Moving section at the bottom of the list. They return to the top of the list when they need you. Shown while the Unified sidebar is selected.",
       "tab": "sidebar",
       "tabTitle": "Sidebar & Sessions",
       "section": "sidebar",
@@ -556,7 +556,7 @@
     {
       "key": "unifiedGroupByProject",
       "title": "Group by project",
-      "subtitle": "Put every machine's sessions of one repository under one header, with its Working, Snoozed and Parked sections inside it. Drag the headers to arrange them. Drafts stay above the groups. Also in the sidebar's Sort & Filter menu. Shown while the Unified sidebar is selected.",
+      "subtitle": "Put every machine's sessions of one repository under one header, with its Moving, Snoozed and Parked sections inside it. Drag the headers to arrange them. Drafts stay above the groups. Also in the sidebar's Sort & Filter menu. Shown while the Unified sidebar is selected.",
       "tab": "sidebar",
       "tabTitle": "Sidebar & Sessions",
       "section": "sidebar",
@@ -928,6 +928,42 @@
       "sectionTitle": "Sidebar",
       "type": "boolean",
       "default": false,
+      "agentWritable": true
+    },
+    {
+      "key": "worktreeSessionsInProject",
+      "title": "Worktree sessions show in their project",
+      "subtitle": "List a session started in a worktree under its repository's project, with the worktree's branch on its row, instead of giving the worktree a project of its own. The session still works in the worktree's folder. Turn off to show each worktree as its own project under its repository. Shown while the Project sidebar is selected.",
+      "tab": "sidebar",
+      "tabTitle": "Sidebar & Sessions",
+      "section": "sidebar",
+      "sectionTitle": "Sidebar",
+      "type": "boolean",
+      "default": true,
+      "advanced": true,
+      "agentWritable": true
+    },
+    {
+      "key": "pinnedSessionOrder",
+      "title": "Pinned order",
+      "subtitle": "Keep pinned sessions in the order you drag them into, or put the pinned session that came back to you last (started, sent a message, or finished a turn) first. With Most recently updated, pinned sessions can't be dragged to rearrange them. Applies to both sidebars and the phone. Also in the sidebar's Sort & Filter menu.",
+      "tab": "sidebar",
+      "tabTitle": "Sidebar & Sessions",
+      "section": "sidebar",
+      "sectionTitle": "Sidebar",
+      "type": "enum",
+      "default": "manual",
+      "options": [
+        {
+          "label": "Manual (drag to rearrange)",
+          "value": "manual"
+        },
+        {
+          "label": "Most recently updated",
+          "value": "recent"
+        }
+      ],
+      "advanced": true,
       "agentWritable": true
     },
     {
@@ -1511,7 +1547,7 @@
     {
       "key": "workspaceBackgroundColor",
       "title": "Terminal background color",
-      "subtitle": "Custom terminal background, painted behind terminal text in dark mode.",
+      "subtitle": "Custom terminal background, painted behind terminal text in dark and light mode.",
       "tab": "terminal",
       "tabTitle": "Terminal",
       "section": "terminal",
@@ -1798,19 +1834,6 @@
       "agentWritable": true
     },
     {
-      "key": "terminalShadersEnabled",
-      "title": "Custom shaders (experimental)",
-      "subtitle": "Apply the shaders from Ghostex's terminal config in order. macOS with Metal only; tested on Apple Silicon. Intel Mac rendering is not yet validated. Windows and Linux are unsupported. Turn off to restore ordinary rendering in the same sessions.",
-      "tab": "terminal",
-      "tabTitle": "Terminal",
-      "section": "terminal",
-      "sectionTitle": "Terminal",
-      "type": "boolean",
-      "default": false,
-      "advanced": true,
-      "agentWritable": true
-    },
-    {
       "key": "windowsTerminalBackend",
       "title": "Windows Environment",
       "subtitle": "Windows only. PowerShell (default) runs native Windows projects and agents. WSL runs Linux projects. Changing environments prompts you to restart Ghostex.",
@@ -1935,7 +1958,7 @@
       "type": "boolean",
       "default": true,
       "advanced": true,
-      "agentWritable": true
+      "agentWritable": false
     },
     {
       "key": "terminalPastePreviewableImages",
@@ -2197,6 +2220,28 @@
       "sectionTitle": "Sounds",
       "type": "boolean",
       "default": true,
+      "agentWritable": true
+    },
+    {
+      "key": "attentionAlertsFor",
+      "title": "Alert me for",
+      "subtitle": "A coordinator's threads finishing, and a coordinator that only finished, stay quiet under both choices, and a red dot (an approval, a stuck or blocked session) always alerts. All plays the finished sound and shows the system notification whenever any other agent finishes; Needs you only does that only when it asks you something, waits for approval, or ends with Blocked or Needs you. The bell keeps every row either way.",
+      "tab": "notifications",
+      "tabTitle": "Notifications",
+      "section": "sounds",
+      "sectionTitle": "Sounds",
+      "type": "enum",
+      "default": "all",
+      "options": [
+        {
+          "label": "All",
+          "value": "all"
+        },
+        {
+          "label": "Needs you only",
+          "value": "needsYou"
+        }
+      ],
       "agentWritable": true
     },
     {
@@ -2662,6 +2707,18 @@
           "value": "code"
         }
       ],
+      "agentWritable": true
+    },
+    {
+      "key": "changesHideTestFiles",
+      "title": "Hide test files in Changes",
+      "subtitle": "Leave test files (such as foo_test.go, button.test.ts, FooTests.swift and anything in a tests folder) out of the Changes view, so you can review an agent's change without its tests. A line at the top says how many are hidden, with a click to show them. The flask button in the Changes toolbar switches this too.",
+      "tab": "tools",
+      "tabTitle": "Files & Links",
+      "section": "fileOpening",
+      "sectionTitle": "File opening",
+      "type": "boolean",
+      "default": false,
       "agentWritable": true
     },
     {
@@ -3659,7 +3716,7 @@
     {
       "key": "themeSidebarContrast",
       "title": "Sidebar colourfulness",
-      "subtitle": "How much of the theme colour shows in the sidebar, from Subtle (deeper, nearly neutral) through Vivid (lighter, more colourful) to Full, where dark mode shows the colour you picked itself. Colourfulness sets the sidebar and work area together, and how deep a custom colour is.",
+      "subtitle": "How much of the theme colour shows in the sidebar, from Subtle (deeper, nearly neutral) through Vivid (lighter, more colourful) to Full, which shows the colour you picked itself. Colourfulness sets the sidebar and work area together, and how deep a custom colour is.",
       "tab": "theme",
       "tabTitle": "Interface",
       "group": "appearance",
@@ -3841,7 +3898,7 @@
     {
       "key": "sessionChatMutedThinking",
       "title": "Show thinking in grey",
-      "subtitle": "Show the agent's thinking in grey and its replies in the full text colour, so the two are easy to tell apart.",
+      "subtitle": "Show the agent's thinking in grey, so it reads apart from the agent's replies.",
       "tab": "theme",
       "tabTitle": "Interface",
       "group": "appearance",
@@ -4540,6 +4597,86 @@
         {
           "label": "Galizur",
           "value": "Galizur"
+        },
+        {
+          "label": "Ghostex Alucard",
+          "value": "Ghostex Alucard"
+        },
+        {
+          "label": "Ghostex Catppuccin Frappé",
+          "value": "Ghostex Catppuccin Frappe"
+        },
+        {
+          "label": "Ghostex Catppuccin Latte",
+          "value": "Ghostex Catppuccin Latte"
+        },
+        {
+          "label": "Ghostex Catppuccin Macchiato",
+          "value": "Ghostex Catppuccin Macchiato"
+        },
+        {
+          "label": "Ghostex Catppuccin Mocha",
+          "value": "Ghostex Catppuccin Mocha"
+        },
+        {
+          "label": "Ghostex Dracula",
+          "value": "Ghostex Dracula"
+        },
+        {
+          "label": "Ghostex Everforest Dark",
+          "value": "Ghostex Everforest Dark"
+        },
+        {
+          "label": "Ghostex Everforest Light",
+          "value": "Ghostex Everforest Light"
+        },
+        {
+          "label": "Ghostex Gruvbox Material Dark",
+          "value": "Ghostex Gruvbox Material Dark"
+        },
+        {
+          "label": "Ghostex Gruvbox Material Light",
+          "value": "Ghostex Gruvbox Material Light"
+        },
+        {
+          "label": "Ghostex Kanagawa Dragon",
+          "value": "Ghostex Kanagawa Dragon"
+        },
+        {
+          "label": "Ghostex Kanagawa Lotus",
+          "value": "Ghostex Kanagawa Lotus"
+        },
+        {
+          "label": "Ghostex Kanagawa Wave",
+          "value": "Ghostex Kanagawa Wave"
+        },
+        {
+          "label": "Ghostex Nord",
+          "value": "Ghostex Nord"
+        },
+        {
+          "label": "Ghostex Solarized Dark",
+          "value": "Ghostex Solarized Dark"
+        },
+        {
+          "label": "Ghostex Solarized Light",
+          "value": "Ghostex Solarized Light"
+        },
+        {
+          "label": "Ghostex Tokyo Night Day",
+          "value": "Ghostex Tokyo Night Day"
+        },
+        {
+          "label": "Ghostex Tokyo Night Moon",
+          "value": "Ghostex Tokyo Night Moon"
+        },
+        {
+          "label": "Ghostex Tokyo Night Night",
+          "value": "Ghostex Tokyo Night Night"
+        },
+        {
+          "label": "Ghostex Tokyo Night Storm",
+          "value": "Ghostex Tokyo Night Storm"
         },
         {
           "label": "Ghostty Default Style Dark",
@@ -6506,6 +6643,86 @@
           "value": "Galizur"
         },
         {
+          "label": "Ghostex Alucard",
+          "value": "Ghostex Alucard"
+        },
+        {
+          "label": "Ghostex Catppuccin Frappé",
+          "value": "Ghostex Catppuccin Frappe"
+        },
+        {
+          "label": "Ghostex Catppuccin Latte",
+          "value": "Ghostex Catppuccin Latte"
+        },
+        {
+          "label": "Ghostex Catppuccin Macchiato",
+          "value": "Ghostex Catppuccin Macchiato"
+        },
+        {
+          "label": "Ghostex Catppuccin Mocha",
+          "value": "Ghostex Catppuccin Mocha"
+        },
+        {
+          "label": "Ghostex Dracula",
+          "value": "Ghostex Dracula"
+        },
+        {
+          "label": "Ghostex Everforest Dark",
+          "value": "Ghostex Everforest Dark"
+        },
+        {
+          "label": "Ghostex Everforest Light",
+          "value": "Ghostex Everforest Light"
+        },
+        {
+          "label": "Ghostex Gruvbox Material Dark",
+          "value": "Ghostex Gruvbox Material Dark"
+        },
+        {
+          "label": "Ghostex Gruvbox Material Light",
+          "value": "Ghostex Gruvbox Material Light"
+        },
+        {
+          "label": "Ghostex Kanagawa Dragon",
+          "value": "Ghostex Kanagawa Dragon"
+        },
+        {
+          "label": "Ghostex Kanagawa Lotus",
+          "value": "Ghostex Kanagawa Lotus"
+        },
+        {
+          "label": "Ghostex Kanagawa Wave",
+          "value": "Ghostex Kanagawa Wave"
+        },
+        {
+          "label": "Ghostex Nord",
+          "value": "Ghostex Nord"
+        },
+        {
+          "label": "Ghostex Solarized Dark",
+          "value": "Ghostex Solarized Dark"
+        },
+        {
+          "label": "Ghostex Solarized Light",
+          "value": "Ghostex Solarized Light"
+        },
+        {
+          "label": "Ghostex Tokyo Night Day",
+          "value": "Ghostex Tokyo Night Day"
+        },
+        {
+          "label": "Ghostex Tokyo Night Moon",
+          "value": "Ghostex Tokyo Night Moon"
+        },
+        {
+          "label": "Ghostex Tokyo Night Night",
+          "value": "Ghostex Tokyo Night Night"
+        },
+        {
+          "label": "Ghostex Tokyo Night Storm",
+          "value": "Ghostex Tokyo Night Storm"
+        },
+        {
           "label": "Ghostty Default Style Dark",
           "value": "Ghostty Default Style Dark"
         },
@@ -8299,9 +8516,74 @@
       "section": "theming",
       "sectionTitle": "Interface",
       "type": "boolean",
-      "default": false,
+      "default": true,
+      "advanced": true,
       "agentWritable": true,
       "availability": "Only on macOS."
+    },
+    {
+      "key": "showWindowButtonsWhenSidebarCollapsed",
+      "title": "Show the window buttons when the sidebar is collapsed",
+      "subtitle": "Keep the red, yellow and green window buttons in the window's top left while the sidebar is collapsed. Off hides them until you open the floating sidebar, which carries them in its top row. Full screen keeps its own title bar either way.",
+      "tab": "theme",
+      "tabTitle": "Interface",
+      "group": "appearance",
+      "groupTitle": "Interface",
+      "section": "theming",
+      "sectionTitle": "Interface",
+      "type": "boolean",
+      "default": true,
+      "advanced": true,
+      "agentWritable": true,
+      "availability": "Only on macOS."
+    },
+    {
+      "key": "linuxDisplayScale",
+      "title": "Display scale",
+      "subtitle": "Linux only. How big the whole app is drawn: the header, menus, dialogs and web pages too. Automatic follows your desktop's display scale; pick a fixed one if Ghostex gets it wrong. Interface scale applies on top. Takes effect when Ghostex restarts. Default: Automatic.",
+      "tab": "theme",
+      "tabTitle": "Interface",
+      "group": "appearance",
+      "groupTitle": "Interface",
+      "section": "theming",
+      "sectionTitle": "Interface",
+      "type": "enum",
+      "default": "auto",
+      "options": [
+        {
+          "label": "Automatic",
+          "value": "auto"
+        },
+        {
+          "label": "100%",
+          "value": "100"
+        },
+        {
+          "label": "125%",
+          "value": "125"
+        },
+        {
+          "label": "150%",
+          "value": "150"
+        },
+        {
+          "label": "175%",
+          "value": "175"
+        },
+        {
+          "label": "200%",
+          "value": "200"
+        },
+        {
+          "label": "250%",
+          "value": "250"
+        },
+        {
+          "label": "300%",
+          "value": "300"
+        }
+      ],
+      "agentWritable": true
     },
     {
       "key": "workspacePaneGap",
@@ -8555,32 +8837,6 @@
       "sectionTitle": "About",
       "type": "ui",
       "agentWritable": false
-    },
-    {
-      "key": "showBetaFeatures",
-      "title": "Enable Experimental Features",
-      "subtitle": "Show experimental surfaces: OS Integration settings, Browser color scheme, Keep Awake, Connectors, and Read aloud.",
-      "tab": "about",
-      "tabTitle": "About",
-      "section": "beta",
-      "sectionTitle": "Experimental",
-      "type": "boolean",
-      "default": false,
-      "advanced": true,
-      "agentWritable": true
-    },
-    {
-      "key": "fasterRendering",
-      "title": "Faster rendering",
-      "subtitle": "Redraw only the parts of a window that changed, which uses less CPU while agents stream and you scroll. Experimental: turn it off if part of a window stops updating.",
-      "tab": "about",
-      "tabTitle": "About",
-      "section": "beta",
-      "sectionTitle": "Experimental",
-      "type": "boolean",
-      "default": false,
-      "advanced": true,
-      "agentWritable": true
     },
     {
       "key": "analyticsEnabled",
@@ -8965,7 +9221,7 @@
     {
       "key": "globalActions",
       "title": "Global Actions",
-      "subtitle": "Global actions apply to every project, are stored by the Ghostex daemon, and appear in the tab strip above your tabs.",
+      "subtitle": "Global actions apply to every project, are stored by the Ghostex daemon, and appear under Global in every project's Start menu.",
       "tab": "actions",
       "tabTitle": "Actions",
       "section": "actions",
@@ -9053,6 +9309,182 @@
       "sectionTitle": "Accounts",
       "type": "boolean",
       "default": false,
+      "agentWritable": false
+    },
+    {
+      "key": "autopilotEnabled",
+      "title": "Autopilot",
+      "subtitle": "Keep sessions going while you are away: carry on a session that stopped while its background job finished or mid-task, interrupt one stuck on a hung command, reload one that stays frozen, move one at a usage limit to an account with room, restart one whose terminal ended. Stays on until you turn it off. Also from a coordinator's chat (its Autopilot pill) and ghostex autopilot on|off.",
+      "tab": "autopilot",
+      "tabTitle": "Autopilot",
+      "section": "switch",
+      "sectionTitle": "Autopilot",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "autopilotScope",
+      "title": "Which sessions",
+      "subtitle": "Every session, only the projects you pick (and their worktrees), or only sessions you pick one by one. A session's Autopilot pill in its chat takes it out or puts it back; a project's right-click menu, Advanced > Autopilot, does the same for the project and its worktrees.",
+      "tab": "autopilot",
+      "tabTitle": "Autopilot",
+      "section": "switch",
+      "sectionTitle": "Autopilot",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "autopilotTier",
+      "title": "What it may do on its own",
+      "subtitle": "Heal (carry on, interrupt, reload, switch account), Heal and decide (also answer with the recommended choice), or Everything (also approve any prompt that is not a hard limit).",
+      "tab": "autopilot",
+      "tabTitle": "Autopilot",
+      "section": "allowed",
+      "sectionTitle": "What it may do",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "autopilotHardLimits",
+      "title": "Hard limits it may cross",
+      "subtitle": "Each off until you turn it on: push a branch, finish a release you asked for, push main, merge pull requests, delete outside the project, post publicly. Sign-ins, 2FA, identity checks and payments are never done.",
+      "tab": "autopilot",
+      "tabTitle": "Autopilot",
+      "section": "allowed",
+      "sectionTitle": "What it may do",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "autopilotAnswerQuestions",
+      "title": "Answer questions for me",
+      "subtitle": "After waiting 5, 10 or 15 minutes for you, pick each question's recommended choice. Off by default.",
+      "tab": "autopilot",
+      "tabTitle": "Autopilot",
+      "section": "allowed",
+      "sectionTitle": "What it may do",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "autopilotApprovals",
+      "title": "Answer approval cards",
+      "subtitle": "Answer approval cards (permission prompts, Connectors cards, folder trust) within what it may do. Off by default: only your click answers them.",
+      "tab": "autopilot",
+      "tabTitle": "Autopilot",
+      "section": "allowed",
+      "sectionTitle": "What it may do",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "autopilotSupervisor",
+      "title": "Supervisor model",
+      "subtitle": "The agent that wakes for judgment calls: Claude Opus 5.5 at medium, or Codex GPT 6.1 Sol at high. It starts on an account with room.",
+      "tab": "autopilot",
+      "tabTitle": "Autopilot",
+      "section": "supervisor",
+      "sectionTitle": "Supervisor",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "autopilotSweep",
+      "title": "Look at every session every",
+      "subtitle": "How often Autopilot sweeps every session it covers, from 1 to 10 minutes (2 by default). A session whose turn ends is looked at right away.",
+      "tab": "autopilot",
+      "tabTitle": "Autopilot",
+      "section": "supervisor",
+      "sectionTitle": "Supervisor",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "autopilotLog",
+      "title": "Summary and log",
+      "subtitle": "Every decision Autopilot made, newest first: the session, what it saw, what it did, and what happened. Kept 30 days. Also ghostex autopilot log.",
+      "tab": "autopilot",
+      "tabTitle": "Autopilot",
+      "section": "activity",
+      "sectionTitle": "What it did",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "collabEnabled",
+      "title": "Ghostex Collab",
+      "subtitle": "Collab is installed on this computer (Settings > Extensions installs it, with Touch ID or your system's equivalent; this page shows only once it is). Share is in each chat's header, and each share asks for your approval. Uninstall ends every share at once and removes Collab from this computer; it never asks.",
+      "tab": "collab",
+      "tabTitle": "Collab",
+      "section": "switch",
+      "sectionTitle": "Ghostex Collab",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "collabOwnerName",
+      "title": "Your name",
+      "subtitle": "The name guests see for you (\"Shared by …\", \"Waiting for …\"). Empty uses this computer's user name.",
+      "tab": "collab",
+      "tabTitle": "Collab",
+      "section": "switch",
+      "sectionTitle": "Ghostex Collab",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "collabMode",
+      "title": "Guest messages",
+      "subtitle": "What a guest's message does: Ask me (you approve each one with Send, Edit or Decline), Send (straight to the agent, labelled with their name) or View only. Ask me by default; change it for one chat in its Share popover.",
+      "tab": "collab",
+      "tabTitle": "Collab",
+      "section": "newShares",
+      "sectionTitle": "New shares start with",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "collabExpiry",
+      "title": "Link ends after",
+      "subtitle": "1 hour (the default), 4 hours, 24 hours, or Until I stop it (the link stays live until you stop sharing). Stop sharing, or deleting the chat, ends a link at once. The Share popover's chip changes it too.",
+      "tab": "collab",
+      "tabTitle": "Collab",
+      "section": "newShares",
+      "sectionTitle": "New shares start with",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "collabRequireCode",
+      "title": "Ask for a code",
+      "subtitle": "Guests also type the six-digit code shown in the Share popover, so a link alone is not enough. On by default.",
+      "tab": "collab",
+      "tabTitle": "Collab",
+      "section": "newShares",
+      "sectionTitle": "New shares start with",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "collabShares",
+      "title": "Shared chats",
+      "subtitle": "Every chat shared right now, how many are watching it and when its link ends, with Stop sharing for each and Stop all.",
+      "tab": "collab",
+      "tabTitle": "Collab",
+      "section": "shared",
+      "sectionTitle": "Shared now",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "collabLog",
+      "title": "Guest messages log",
+      "subtitle": "Every message guests sent to a shared chat and what happened to it (went straight to the agent, waited for you, sent, edited or declined), and who joined, left or was removed, newest first.",
+      "tab": "collab",
+      "tabTitle": "Collab",
+      "section": "log",
+      "sectionTitle": "Guest messages log",
+      "type": "ui",
       "agentWritable": false
     },
     {
@@ -9313,7 +9745,7 @@
       "sectionTitle": "Defaults",
       "type": "boolean",
       "default": true,
-      "agentWritable": true
+      "agentWritable": false
     },
     {
       "key": "agentAcceptAllEnabled",
@@ -9325,7 +9757,7 @@
       "sectionTitle": "Config",
       "type": "boolean",
       "default": false,
-      "agentWritable": true
+      "agentWritable": false
     },
     {
       "key": "defaultPromptAgentId",
@@ -9395,7 +9827,7 @@
       "sectionTitle": "Config",
       "type": "string",
       "default": "",
-      "agentWritable": true
+      "agentWritable": false
     },
     {
       "key": "agentResumeHooks",
@@ -9517,6 +9949,80 @@
       "type": "boolean",
       "default": false,
       "agentWritable": true
+    },
+    {
+      "key": "chiefShowOnAllSpaces",
+      "title": "Show Main Hub on all Spaces",
+      "subtitle": "Show Main Hub and your home folder's sessions at the top of every Space. Off, they stay at the top of the Space you moved them to.",
+      "tab": "agents",
+      "tabTitle": "Agents",
+      "section": "homeFolder",
+      "sectionTitle": "Home folder",
+      "type": "boolean",
+      "default": false,
+      "agentWritable": true
+    },
+    {
+      "key": "chiefConfirmNewChat",
+      "title": "Ask before New Chat",
+      "subtitle": "Ask before New Chat or Change Agent starts a new chat with Chief of Staff. Your earlier chats stay in Main Hub either way.",
+      "tab": "agents",
+      "tabTitle": "Agents",
+      "section": "homeFolder",
+      "sectionTitle": "Home folder",
+      "type": "boolean",
+      "default": true,
+      "agentWritable": true
+    },
+    {
+      "key": "gbotsChiefAddsOnItsOwn",
+      "title": "Chief of Staff may add GBots on its own",
+      "subtitle": "With GBots on, Chief of Staff adds a GBot when a job needs one and tells you in a card you can undo. Off, it asks you before adding each one. Only you can change this, not an agent.",
+      "tab": "agents",
+      "tabTitle": "Agents",
+      "section": "homeFolder",
+      "sectionTitle": "Home folder",
+      "type": "boolean",
+      "default": true,
+      "agentWritable": false
+    },
+    {
+      "key": "homeSecretFolders",
+      "title": "Folders agents can't read in your home folder",
+      "subtitle": "Agents Ghostex starts in your home folder are kept out of these folders and files. Claude Code's file tools and every Codex command are held to the list; Claude's shell commands and other agents are not.",
+      "tab": "agents",
+      "tabTitle": "Agents",
+      "section": "homeFolder",
+      "sectionTitle": "Home folder",
+      "type": "json",
+      "default": [
+        "~/.ssh",
+        "~/.aws",
+        "~/.gnupg",
+        "~/.config/gh",
+        "~/.netrc",
+        "~/.git-credentials",
+        "~/.password-store",
+        "~/.config/gcloud",
+        "~/.azure",
+        "~/.codex/auth.json",
+        "~/.claude/.credentials.json",
+        "~/Library/Keychains",
+        "~/Library/Cookies",
+        "~/Library/Safari",
+        "~/Library/Application Support/Google/Chrome",
+        "~/Library/Application Support/Firefox",
+        "~/Library/Application Support/BraveSoftware",
+        "~/Library/Application Support/Arc",
+        "~/.mozilla",
+        "~/.config/google-chrome",
+        "~/.config/chromium",
+        "~/.local/share/keyrings",
+        "~/AppData/Local/Google/Chrome/User Data",
+        "~/AppData/Roaming/Mozilla/Firefox",
+        "~/AppData/Roaming/Microsoft/Credentials"
+      ],
+      "agentWritable": false
     },
     {
       "key": "ghostexCapture",
@@ -9852,7 +10358,7 @@
       "sectionTitle": "Stopping and deleting",
       "type": "boolean",
       "default": false,
-      "agentWritable": true
+      "agentWritable": false
     },
     {
       "key": "cloudBoxesBoxes",
@@ -10587,6 +11093,17 @@
       "agentWritable": false
     },
     {
+      "key": "gbots",
+      "title": "GBots",
+      "subtitle": "Your own team of bots under Chief of Staff in Main Hub, each with its own instructions and memory, running on your Claude Code or Codex. Needs Main Hub.",
+      "tab": "extensions",
+      "tabTitle": "Extensions",
+      "section": "official",
+      "sectionTitle": "Built-in",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
       "key": "docs",
       "title": "Files",
       "subtitle": "Browse your project’s notes, plans, and reference files together in one focused reading space.",
@@ -10809,6 +11326,18 @@
       "agentWritable": true
     },
     {
+      "key": "gbotsEnabled",
+      "title": "GBots",
+      "subtitle": "Turn GBots on or off: your own team of bots under Chief of Staff in Main Hub, running on your Claude Code or Codex. Needs Main Hub. Off by default.",
+      "tab": "extensions",
+      "tabTitle": "Extensions",
+      "section": "official",
+      "sectionTitle": "Built-in",
+      "type": "boolean",
+      "default": false,
+      "agentWritable": true
+    },
+    {
       "key": "botAutomationsHidden",
       "title": "Hide Bot automations",
       "subtitle": "Stop offering Bot automations, the Automations row in the Bots sidebar that opens a feed of every Hermes cron run. Hidden by default; needs Bots.",
@@ -10818,7 +11347,7 @@
       "sectionTitle": "Built-in",
       "type": "boolean",
       "default": true,
-      "agentWritable": true
+      "agentWritable": false
     },
     {
       "key": "actionsHidden",
@@ -10878,12 +11407,12 @@
       "sectionTitle": "Built-in",
       "type": "boolean",
       "default": true,
-      "agentWritable": true
+      "agentWritable": false
     },
     {
       "key": "readAloudHidden",
       "title": "Turn off Read aloud",
-      "subtitle": "Turn off Read aloud everywhere: Read aloud on replies, Auto-read in the chat's ⋯ menu, the Read aloud rows on Settings > Chat and the Read aloud hotkeys, on this computer and in the phone app and browser connected to it. Off by default, and shown only while Enable Experimental Features is on; your Voice and Speed are kept.",
+      "subtitle": "Turn off Read aloud everywhere: Read aloud on replies, Auto-read in the chat's ⋯ menu, the Read aloud rows on Settings > Chat and the Read aloud hotkeys, on this computer and in the phone app and browser connected to it. Experimental, off by default; your Voice and Speed are kept.",
       "tab": "extensions",
       "tabTitle": "Extensions",
       "section": "official",
@@ -10931,26 +11460,76 @@
     {
       "key": "connectorsHidden",
       "title": "Turn off Connectors",
-      "subtitle": "Turn off Connectors everywhere: the Connectors page in Settings, the apps your agents get and the ghostex connectors commands. On by default, and shown only while Enable Experimental Features is on; your sign-ins and connected apps are kept.",
+      "subtitle": "Turn off Connectors everywhere: the Connectors page in Settings, the apps your agents get and the ghostex connectors commands. Experimental, off by default; your sign-ins and connected apps are kept.",
       "tab": "extensions",
       "tabTitle": "Extensions",
       "section": "official",
       "sectionTitle": "Built-in",
+      "type": "boolean",
+      "default": true,
+      "agentWritable": false
+    },
+    {
+      "key": "osIntegrationHidden",
+      "title": "Turn off OS Integration",
+      "subtitle": "Leave the OS Integration page out of Settings. Experimental, off by default.",
+      "tab": "extensions",
+      "tabTitle": "Extensions",
+      "section": "official",
+      "sectionTitle": "Built-in",
+      "type": "boolean",
+      "default": true,
+      "agentWritable": true
+    },
+    {
+      "key": "keepAwakeEnabled",
+      "title": "Keep Awake",
+      "subtitle": "Turn Keep Awake on or off: Keep Awake in the ⋯ menu, its button at the top of the window and the Power settings. macOS only. Experimental, off by default.",
+      "tab": "extensions",
+      "tabTitle": "Extensions",
+      "section": "official",
+      "sectionTitle": "Experimental",
+      "type": "boolean",
+      "default": false,
+      "agentWritable": true,
+      "availability": "Only on macOS."
+    },
+    {
+      "key": "allAutomationsEnabled",
+      "title": "All Automations",
+      "subtitle": "Turn All Automations on or off: automations that belong to no project, in Automate's All Automations board, which shows that it is coming soon while this is off. Experimental, off by default.",
+      "tab": "extensions",
+      "tabTitle": "Extensions",
+      "section": "official",
+      "sectionTitle": "Experimental",
       "type": "boolean",
       "default": false,
       "agentWritable": true
     },
     {
-      "key": "osIntegrationHidden",
-      "title": "Turn off OS Integration",
-      "subtitle": "Leave the OS Integration page out of Settings. On by default, and shown only while Enable Experimental Features is on.",
+      "key": "fasterRendering",
+      "title": "Faster rendering",
+      "subtitle": "Redraw only the parts of a window that changed, so Ghostex uses less CPU while agents stream and you scroll; it applies at once. Turn it off if part of a window stops updating. Experimental, off by default.",
       "tab": "extensions",
       "tabTitle": "Extensions",
       "section": "official",
-      "sectionTitle": "Built-in",
+      "sectionTitle": "Experimental",
       "type": "boolean",
       "default": false,
       "agentWritable": true
+    },
+    {
+      "key": "terminalShadersEnabled",
+      "title": "Terminal shaders",
+      "subtitle": "Apply the shaders from Ghostex's terminal config in order. macOS with Metal only; tested on Apple Silicon. Turn off to restore ordinary rendering in the same sessions. Experimental, off by default.",
+      "tab": "extensions",
+      "tabTitle": "Extensions",
+      "section": "official",
+      "sectionTitle": "Experimental",
+      "type": "boolean",
+      "default": false,
+      "agentWritable": true,
+      "availability": "Only on macOS."
     },
     {
       "key": "debuggingHidden",
@@ -10975,6 +11554,18 @@
       "type": "boolean",
       "default": false,
       "agentWritable": true
+    },
+    {
+      "key": "mainHubHidden",
+      "title": "Turn off Main Hub (beta)",
+      "subtitle": "Main Hub is a beta extension, off by default: your home folder's project becomes the home for chats that don't belong to a project, with Chief of Staff, an agent that can see and steer your other agents, pinned at the top, here and in the phone app. Off, the home folder is an ordinary project and Chief of Staff's agent stops; its chat and memory are kept for when you turn it back on. Only you can change this, not an agent.",
+      "tab": "extensions",
+      "tabTitle": "Extensions",
+      "section": "official",
+      "sectionTitle": "Built-in",
+      "type": "boolean",
+      "default": true,
+      "agentWritable": false
     },
     {
       "key": "store",
@@ -11301,7 +11892,7 @@
       "sectionTitle": "Default editor",
       "type": "string",
       "default": "",
-      "agentWritable": true
+      "agentWritable": false
     },
     {
       "key": "setDefaultEditor",
@@ -11414,7 +12005,7 @@
       "sectionTitle": "Global Defaults",
       "type": "string",
       "default": "",
-      "agentWritable": true
+      "agentWritable": false
     },
     {
       "key": "globalTicketKey",
@@ -11552,20 +12143,54 @@
       "agentWritable": false
     },
     {
-      "key": "easyConnectEnabled",
-      "title": "Easy Connect",
-      "subtitle": "Connect a phone or a remote machine. Install the Tailcat CLI helper with one click.",
+      "key": "computerName",
+      "title": "Name",
+      "subtitle": "This computer's name, set by the system; your phone and other computers show it.",
       "tab": "remote",
       "tabTitle": "Remote",
-      "section": "easyConnect",
-      "sectionTitle": "Easy Connect",
+      "section": "currentMachine",
+      "sectionTitle": "Current machine",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "computerShortName",
+      "title": "Short name",
+      "subtitle": "This computer's 2-character name on the sidebar's computer pills; empty uses one made from its name.",
+      "tab": "remote",
+      "tabTitle": "Remote",
+      "section": "currentMachine",
+      "sectionTitle": "Current machine",
       "type": "ui",
       "agentWritable": false
     },
     {
       "key": "sshAccess",
       "title": "SSH access",
-      "subtitle": "Easy Connect carries SSH to this computer; Ghostex can turn it on with one admin prompt.",
+      "subtitle": "Lets your phone and other computers sign in to this one; Easy Connect and Tailscale need it. Ghostex can turn it on with one admin prompt.",
+      "tab": "remote",
+      "tabTitle": "Remote",
+      "section": "currentMachine",
+      "sectionTitle": "Current machine",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "localMachineShortName",
+      "title": "Short name",
+      "subtitle": "Up to 2 characters on the sidebar's computer pills; empty uses one made from the computer's name.",
+      "tab": "remote",
+      "tabTitle": "Remote",
+      "section": "currentMachine",
+      "sectionTitle": "Current machine",
+      "type": "string",
+      "default": "",
+      "agentWritable": false
+    },
+    {
+      "key": "easyConnectEnabled",
+      "title": "Easy Connect",
+      "subtitle": "Connect a phone or a remote machine. Install the Tailcat CLI helper with one click.",
       "tab": "remote",
       "tabTitle": "Remote",
       "section": "easyConnect",
@@ -11599,6 +12224,17 @@
       "key": "pairedDevicesOnly",
       "title": "Only paired devices can connect",
       "subtitle": "Easy Connect lets in only paired phones and the keys listed under Advanced; a new phone can still pair while the QR is showing.",
+      "tab": "remote",
+      "tabTitle": "Remote",
+      "section": "easyConnect",
+      "sectionTitle": "Easy Connect",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "easyConnectRelay",
+      "title": "Relay",
+      "subtitle": "Where phones meet this computer: Ghostex's relay first with Tailscale's public relays as fallback, public relays only, or a relay you run.",
       "tab": "remote",
       "tabTitle": "Remote",
       "section": "easyConnect",
@@ -11676,7 +12312,7 @@
     {
       "key": "shortName",
       "title": "Short names",
-      "subtitle": "Each computer's 2-character name on the sidebar's computer pills, this one's included.",
+      "subtitle": "Each remote machine's 2-character name on the sidebar's computer pills, set in its settings.",
       "tab": "remote",
       "tabTitle": "Remote",
       "section": "remoteMachines",
@@ -11729,6 +12365,17 @@
       "agentWritable": false
     },
     {
+      "key": "reuseSshConnection",
+      "title": "Reuse an existing SSH connection",
+      "subtitle": "Use the SSH connection you already signed in to, for computers that ask for a verification code each time.",
+      "tab": "remote",
+      "tabTitle": "Remote",
+      "section": "remoteMachines",
+      "sectionTitle": "Remote machines",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
       "key": "password",
       "title": "Password",
       "subtitle": "SSH passwords are stored in the system keychain.",
@@ -11748,18 +12395,6 @@
       "section": "remoteMachines",
       "sectionTitle": "Remote machines",
       "type": "ui",
-      "agentWritable": false
-    },
-    {
-      "key": "localMachineShortName",
-      "title": "This computer's short name",
-      "subtitle": "Up to 2 characters on the sidebar's computer pills; empty uses one made from the computer's name.",
-      "tab": "remote",
-      "tabTitle": "Remote",
-      "section": "remoteMachines",
-      "sectionTitle": "Remote machines",
-      "type": "string",
-      "default": "",
       "agentWritable": false
     },
     {
@@ -11865,6 +12500,42 @@
       "agentWritable": true
     },
     {
+      "key": "syncAgents",
+      "title": "Agents",
+      "subtitle": "Keep which agents are on in Settings > Agents, their names, commands and flags, and their order the same on your computers. An agent a computer doesn't have shows Not installed here, with Install and Install all missing; nothing installs until you click. Off by default.",
+      "tab": "sync",
+      "tabTitle": "Sync",
+      "section": "whatSyncs",
+      "sectionTitle": "What syncs",
+      "type": "boolean",
+      "default": false,
+      "agentWritable": true
+    },
+    {
+      "key": "syncSkills",
+      "title": "Skills",
+      "subtitle": "Keep your own skills in ~/.agents/skills and the Ghostex skills you installed the same on your computers. Skills over 512 KB stay on each computer, and a skill removed on one computer is put aside on the others, not deleted. Off by default.",
+      "tab": "sync",
+      "tabTitle": "Sync",
+      "section": "whatSyncs",
+      "sectionTitle": "What syncs",
+      "type": "boolean",
+      "default": false,
+      "agentWritable": true
+    },
+    {
+      "key": "syncAccounts",
+      "title": "Accounts",
+      "subtitle": "Keep your Claude and Codex account list the same on your computers: names, numbers, Use this account and the sidebar pins. Logins stay on each computer, because Claude and Codex sign one of two computers out when they share a login; an account that arrives shows Sign in on this computer. Off by default.",
+      "tab": "sync",
+      "tabTitle": "Sync",
+      "section": "whatSyncs",
+      "sectionTitle": "What syncs",
+      "type": "boolean",
+      "default": false,
+      "agentWritable": true
+    },
+    {
       "key": "syncSoundsAndNotifications",
       "title": "Sounds and notifications",
       "subtitle": "Keep completion and copy sounds, attention notifications and the finished-work border the same on your computers. Off by default.",
@@ -11891,7 +12562,7 @@
     {
       "key": "syncCoordinator",
       "title": "Coordinator",
-      "subtitle": "Keep coordinator settings and your edited playbooks (the one for all projects and each project's own, matched by repository) the same on your computers. Off by default.",
+      "subtitle": "Keep coordinator settings and your playbook overrides the same on your computers. Off by default.",
       "tab": "sync",
       "tabTitle": "Sync",
       "section": "whatSyncs",
@@ -11952,6 +12623,28 @@
       "tabTitle": "Secrets",
       "section": "requests",
       "sectionTitle": "Secrets agents ask for",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "securityLogCheck",
+      "title": "Security log check",
+      "subtitle": "Whether the security log is intact. Each entry is chained to the one before it, so an entry that was changed or removed after it was written shows here.",
+      "tab": "security",
+      "tabTitle": "Security",
+      "section": "log",
+      "sectionTitle": "Security log",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "securityLog",
+      "title": "Security log",
+      "subtitle": "Every sensitive action on this computer, newest first: pairing a phone, Easy Connect changes, sharing a chat in Collab, letting a connected computer's agents in, Autopilot answering an approval, and attempts to change settings only you can change. Each says who asked, when and how it ended. The important ones also show in the notification bell and on your paired phones: anything that opens this computer to other people or devices (turning on Collab, sharing a chat, pairing a phone, turning on or widening Easy Connect, letting a computer in), a new owner or approver key, a protection turned off, anything an agent, a phone, another computer or a Collab guest did, the same request refused three times, and an edited log. `ghostex security log` reads the same list.",
+      "tab": "security",
+      "tabTitle": "Security",
+      "section": "log",
+      "sectionTitle": "Security log",
       "type": "ui",
       "agentWritable": false
     },
@@ -12299,22 +12992,44 @@
     {
       "key": "dictateEngine",
       "title": "Engine",
-      "subtitle": "Which service turns your recording into text: a local model on this computer (no key, works offline), OpenAI or xAI. A new install picks your saved key (xAI, then OpenAI) and the local model when there is no key; after that it stays on what you pick. Each computer has its own engine, and the phone changes it per computer.",
-      "tab": "voiceAgent",
-      "tabTitle": "Voice",
+      "subtitle": "Which service turns your recording into text: Hex, a free dictation app that runs on this computer with no key and works offline (macOS on Apple silicon, Windows, Linux), or OpenAI or xAI with your API key. Hex is recommended; Set up Hex installs it and walks you through it. A new install picks your saved key (xAI, then OpenAI) and Hex when there is no key; after that it stays on what you pick. Each computer has its own engine, and the phone changes it per computer.",
+      "tab": "dictation",
+      "tabTitle": "Dictation",
       "section": "dictate",
-      "sectionTitle": "Dictate",
+      "sectionTitle": "Speech to text",
       "type": "ui",
       "agentWritable": false
     },
     {
-      "key": "dictateModels",
-      "title": "Local models",
-      "subtitle": "Models that run on this computer with no key and work offline: Parakeet TDT 0.6B v3 (fastest, English and 24 European languages), Whisper large-v3-turbo (99 languages) and Whisper base (small and quick). Download, cancel or remove each one; the one you pick transcribes. Stored in gxserver's data folder.",
-      "tab": "voiceAgent",
-      "tabTitle": "Voice",
+      "key": "dictateOpenaiKey",
+      "title": "OpenAI API key",
+      "subtitle": "Shown under the engine when it is OpenAI: paste your key from platform.openai.com. It is the same key the Voice Agent uses on GPT Realtime, kept encrypted on this computer.",
+      "tab": "dictation",
+      "tabTitle": "Dictation",
       "section": "dictate",
-      "sectionTitle": "Dictate",
+      "sectionTitle": "Speech to text",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "dictateXaiKey",
+      "title": "xAI API key",
+      "subtitle": "Shown under the engine when it is xAI: paste your key from console.x.ai. It is the same key the Voice Agent uses on Grok Voice, kept encrypted on this computer.",
+      "tab": "dictation",
+      "tabTitle": "Dictation",
+      "section": "dictate",
+      "sectionTitle": "Speech to text",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "dictateOldModels",
+      "title": "Old speech models",
+      "subtitle": "The models Ghostex's own speech engine downloaded before Hex replaced it. Ghostex no longer uses them; Delete frees the space.",
+      "tab": "dictation",
+      "tabTitle": "Dictation",
+      "section": "dictate",
+      "sectionTitle": "Speech to text",
       "type": "ui",
       "agentWritable": false
     },
@@ -12322,10 +13037,10 @@
       "key": "dictateLanguage",
       "title": "Language",
       "subtitle": "Auto works for most people. Pick one when short phrases come out in the wrong language.",
-      "tab": "voiceAgent",
-      "tabTitle": "Voice",
+      "tab": "dictation",
+      "tabTitle": "Dictation",
       "section": "dictate",
-      "sectionTitle": "Dictate",
+      "sectionTitle": "Speech to text",
       "type": "ui",
       "agentWritable": false
     },
@@ -12333,10 +13048,10 @@
       "key": "dictateHotkey",
       "title": "Hotkey",
       "subtitle": "Dictate into the chat box you are in. Change it in Hotkeys.",
-      "tab": "voiceAgent",
-      "tabTitle": "Voice",
+      "tab": "dictation",
+      "tabTitle": "Dictation",
       "section": "dictate",
-      "sectionTitle": "Dictate",
+      "sectionTitle": "Speech to text",
       "type": "ui",
       "agentWritable": false
     },
@@ -12344,10 +13059,10 @@
       "key": "dictateHotkeyMode",
       "title": "Hotkey mode",
       "subtitle": "Auto: tap to start and tap again to stop, or hold for 300 ms or more and it stops when you let go. Toggle: every press starts or stops. Hold: it records only while you hold the keys. Escape cancels.",
-      "tab": "voiceAgent",
-      "tabTitle": "Voice",
+      "tab": "dictation",
+      "tabTitle": "Dictation",
       "section": "dictate",
-      "sectionTitle": "Dictate",
+      "sectionTitle": "Speech to text",
       "type": "enum",
       "default": "auto",
       "options": [
@@ -12369,11 +13084,11 @@
     {
       "key": "dictateMicrophone",
       "title": "Microphone",
-      "subtitle": "The microphone this computer records Dictate from. System default follows the input device chosen in your sound settings.",
-      "tab": "voiceAgent",
-      "tabTitle": "Voice",
+      "subtitle": "The microphone this computer records dictation from. System default follows the input device chosen in your sound settings.",
+      "tab": "dictation",
+      "tabTitle": "Dictation",
       "section": "dictate",
-      "sectionTitle": "Dictate",
+      "sectionTitle": "Speech to text",
       "type": "string",
       "default": "",
       "agentWritable": true
@@ -12382,8 +13097,8 @@
       "key": "dictateDictionary",
       "title": "Dictionary",
       "subtitle": "Names and terms it should expect. An alias fixes a word it keeps mishearing (\"GX server\" becomes gxserver). Your project names are added on their own.",
-      "tab": "voiceAgent",
-      "tabTitle": "Voice",
+      "tab": "dictation",
+      "tabTitle": "Dictation",
       "section": "cleanup",
       "sectionTitle": "Clean-up",
       "type": "ui",
@@ -12393,8 +13108,8 @@
       "key": "dictateRemoveFillers",
       "title": "Remove filler words",
       "subtitle": "Drops \"um\", \"uh\" and other hesitation sounds.",
-      "tab": "voiceAgent",
-      "tabTitle": "Voice",
+      "tab": "dictation",
+      "tabTitle": "Dictation",
       "section": "cleanup",
       "sectionTitle": "Clean-up",
       "type": "ui",
@@ -12404,8 +13119,8 @@
       "key": "dictateInsertSpacing",
       "title": "Insert with spacing",
       "subtitle": "Adds a space before or after the text when the characters next to the caret need one.",
-      "tab": "voiceAgent",
-      "tabTitle": "Voice",
+      "tab": "dictation",
+      "tabTitle": "Dictation",
       "section": "cleanup",
       "sectionTitle": "Clean-up",
       "type": "boolean",
@@ -12416,21 +13131,32 @@
       "key": "dictatePolish",
       "title": "AI polish",
       "subtitle": "Claude Sonnet 5.5 fixes punctuation and keeps what you meant when you corrected yourself (\"no, I mean…\"), through Claude Code on the computer that transcribes. The chat box shows Polishing with a Skip button; if it fails, the text goes in unpolished.",
-      "tab": "voiceAgent",
-      "tabTitle": "Voice",
+      "tab": "dictation",
+      "tabTitle": "Dictation",
       "section": "cleanup",
       "sectionTitle": "Clean-up",
       "type": "ui",
       "agentWritable": false
     },
     {
+      "key": "voiceAgentDictationHistory",
+      "title": "Dictation history",
+      "subtitle": "Every recording you made with the dictation microphone, newest first, with its text and the engine that made it. Play, download or delete a recording, copy its text, recover one you cancelled, or transcribe one that failed (the text is copied to your clipboard too). Recordings stay on this computer until you delete them.",
+      "tab": "dictation",
+      "tabTitle": "Dictation",
+      "section": "dictations",
+      "sectionTitle": "Dictation history",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
       "key": "voiceAgentProvider",
       "title": "Voice provider",
-      "subtitle": "Which realtime voice model you talk to: xAI Grok Voice or OpenAI GPT Realtime. Both are billed by the provider while a conversation is open. It doesn't follow Dictate's engine: Dictate can stay local while calls use xAI or OpenAI.",
+      "subtitle": "Which realtime voice model you talk to: xAI Grok Voice or OpenAI GPT Realtime. Both are billed by the provider while a conversation is open. It doesn't follow Dictation's engine: dictation can stay on Hex while calls use xAI or OpenAI.",
       "tab": "voiceAgent",
-      "tabTitle": "Voice",
+      "tabTitle": "Voice Agent",
       "section": "provider",
-      "sectionTitle": "Voice agent",
+      "sectionTitle": "Provider and voice",
       "type": "enum",
       "default": "xai",
       "options": [
@@ -12446,13 +13172,35 @@
       "agentWritable": true
     },
     {
+      "key": "voiceAgentXaiKey",
+      "title": "xAI API key",
+      "subtitle": "Shown under the provider when it is xAI Grok Voice. Dictation uses the same key when its engine is xAI. Kept encrypted on this computer; your phone uses it through this computer and never stores it. With a 1Password account added in Settings > Secrets, paste an op://vault/item/field reference instead and the key is read from 1Password each time.",
+      "tab": "voiceAgent",
+      "tabTitle": "Voice Agent",
+      "section": "provider",
+      "sectionTitle": "Provider and voice",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
+      "key": "voiceAgentOpenaiKey",
+      "title": "OpenAI API key",
+      "subtitle": "Shown under the provider when it is OpenAI GPT Realtime. Dictation uses the same key when its engine is OpenAI. Kept encrypted on this computer and never shown again after you save it. With a 1Password account added in Settings > Secrets, paste an op://vault/item/field reference instead.",
+      "tab": "voiceAgent",
+      "tabTitle": "Voice Agent",
+      "section": "provider",
+      "sectionTitle": "Provider and voice",
+      "type": "ui",
+      "agentWritable": false
+    },
+    {
       "key": "voiceAgentXaiVoice",
       "title": "Grok voice",
       "subtitle": "The voice Grok Voice speaks with.",
       "tab": "voiceAgent",
-      "tabTitle": "Voice",
+      "tabTitle": "Voice Agent",
       "section": "provider",
-      "sectionTitle": "Voice agent",
+      "sectionTitle": "Provider and voice",
       "type": "enum",
       "default": "eve",
       "options": [
@@ -12576,9 +13324,9 @@
       "title": "OpenAI voice",
       "subtitle": "The voice GPT Realtime speaks with. Marin and Cedar sound the most natural.",
       "tab": "voiceAgent",
-      "tabTitle": "Voice",
+      "tabTitle": "Voice Agent",
       "section": "provider",
-      "sectionTitle": "Voice agent",
+      "sectionTitle": "Provider and voice",
       "type": "enum",
       "default": "marin",
       "options": [
@@ -12630,9 +13378,9 @@
       "title": "Speaking speed",
       "subtitle": "How fast the voice agent talks, from normal speed to twice as fast. The voice keeps its pitch, and the speed menu next to the voice in the voice panel changes it too, even mid-sentence.",
       "tab": "voiceAgent",
-      "tabTitle": "Voice",
+      "tabTitle": "Voice Agent",
       "section": "provider",
-      "sectionTitle": "Voice agent",
+      "sectionTitle": "Provider and voice",
       "type": "enum",
       "default": "1",
       "options": [
@@ -12668,9 +13416,9 @@
       "title": "Call mode",
       "subtitle": "Regular calls listen hands-free; on Grok they're billed for the whole time the call is connected, quiet and muted time included (about $0.08 a minute). Push-to-talk calls listen only while you hold the talk button next to Mute (or Space, or the Hold to Talk hotkey); on Grok you pay only for the audio you send and the agent's replies. In a muted Regular call, holding it unmutes you for as long as you hold. GPT Realtime bills only audio in both modes. A change applies to your next call; the gear in the voice panel changes it too.",
       "tab": "voiceAgent",
-      "tabTitle": "Voice",
+      "tabTitle": "Voice Agent",
       "section": "provider",
-      "sectionTitle": "Voice agent",
+      "sectionTitle": "Provider and voice",
       "type": "enum",
       "default": "regular",
       "options": [
@@ -12690,42 +13438,9 @@
       "title": "Last conversation",
       "subtitle": "A short summary of your last voice conversation, kept on this computer until the next conversation replaces it. Press Continue in the voice panel, or say \"pick up where we left off\", to carry on from it. Forget deletes it.",
       "tab": "voiceAgent",
-      "tabTitle": "Voice",
+      "tabTitle": "Voice Agent",
       "section": "memory",
       "sectionTitle": "Memory",
-      "type": "ui",
-      "agentWritable": false
-    },
-    {
-      "key": "voiceAgentXaiKey",
-      "title": "xAI API key",
-      "subtitle": "Used by the voice agent on Grok Voice, and by Dictate when its engine is xAI. Kept encrypted on this computer; your phone uses it through this computer and never stores it. With a 1Password account added in Settings > Secrets, paste an op://vault/item/field reference instead and the key is read from 1Password each time.",
-      "tab": "voiceAgent",
-      "tabTitle": "Voice",
-      "section": "keys",
-      "sectionTitle": "API keys",
-      "type": "ui",
-      "agentWritable": false
-    },
-    {
-      "key": "voiceAgentOpenaiKey",
-      "title": "OpenAI API key",
-      "subtitle": "Used by the voice agent on GPT Realtime, and by Dictate when its engine is OpenAI. Kept encrypted on this computer and never shown again after you save it. With a 1Password account added in Settings > Secrets, paste an op://vault/item/field reference instead.",
-      "tab": "voiceAgent",
-      "tabTitle": "Voice",
-      "section": "keys",
-      "sectionTitle": "API keys",
-      "type": "ui",
-      "agentWritable": false
-    },
-    {
-      "key": "voiceAgentDictationHistory",
-      "title": "Dictation history",
-      "subtitle": "Every recording you made with the Dictate microphone, newest first, with its text and the engine that made it. Play, download or delete a recording, copy its text, recover one you cancelled, or transcribe one that failed (the text is copied to your clipboard too). Recordings stay on this computer until you delete them.",
-      "tab": "voiceAgent",
-      "tabTitle": "Voice",
-      "section": "dictations",
-      "sectionTitle": "Dictation history",
       "type": "ui",
       "agentWritable": false
     },

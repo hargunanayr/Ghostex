@@ -5,7 +5,8 @@
 //! note, error, canUpdate, canAuto, auto, topBar, counts, inUse, major }`. `state` is one of
 //! `available`, `updating`, `failed`, `needsYou`, `checking`, `unknown` (Ghostex can't tell, such as
 //! Cursor's dated builds) and `upToDate`. `topBar` says the item lights the chat's top bar badge
-//! (Q1362); `counts` is `topBar` with something to do now, or a failure.
+//! (Q1362); `counts` is `topBar` with something to do now, or a failure. A failure the user
+//! dismissed reads as the state the item would have without it (`settledState`, internal).
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
@@ -28,12 +29,16 @@ const RECENT_USE: chrono::Duration = chrono::Duration::days(7);
 
 static LIST: std::sync::Mutex<Option<(Instant, Vec<Value>)>> = std::sync::Mutex::new(None);
 static COLLECTING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+/// Bumped by `invalidate`, so a list collected while an update finished is not kept.
+static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static EXTENSION_CATALOG: std::sync::Mutex<Option<(Instant, HashMap<String, String>)>> =
     std::sync::Mutex::new(None);
 
 /// The next list reads every source again (after an update finished).
 pub(super) fn invalidate() {
-    *LIST.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    let mut list = LIST.lock().unwrap_or_else(|e| e.into_inner());
+    GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    *list = None;
 }
 
 /// The list with what is running, how the last updates ended and the switches laid over it.
@@ -63,9 +68,19 @@ pub(super) async fn list(state: &AppState, fresh: bool) -> Vec<Value> {
             match again {
                 Some(items) => items,
                 None => {
+                    let generation = GENERATION.load(std::sync::atomic::Ordering::SeqCst);
                     let items = collect(state, fresh).await;
-                    *LIST.lock().unwrap_or_else(|e| e.into_inner()) =
-                        Some((Instant::now(), items.clone()));
+                    /*
+                    CDXC:Updates 2026-11-07 FIX:
+                    User: "open code isn't updating pls fix": the top bar's Updates list kept OpenCode at "Waiting…" with a spinner long after its update had ended.
+                    WHY: Update's own answer collected the list while OpenCode's agent job was still queued; the job ended (and invalidated the list) during that collect, and the collect then cached the "Waiting…" row for 10 minutes while saying nothing was running, so the desktop stopped asking. A list collected across an invalidate, or showing a row mid-update, is not cached: those rows change within seconds.
+                    */
+                    let mut list = LIST.lock().unwrap_or_else(|e| e.into_inner());
+                    let settled = !items.iter().any(|item| item["state"] == "updating");
+                    if settled && GENERATION.load(std::sync::atomic::Ordering::SeqCst) == generation
+                    {
+                        *list = Some((Instant::now(), items.clone()));
+                    }
                     items
                 }
             }
@@ -79,6 +94,16 @@ fn overlay(state: &AppState, mut item: Value) -> Value {
     if let Some(phase) = store::running_phase(&id) {
         item["state"] = json!("updating");
         item["progress"] = json!(phase);
+    } else if item["state"] == "failed"
+        && store::dismissed(&id, item["error"].as_str().unwrap_or_default())
+    {
+        // Dismissed in the top bar's Updates list or on the page: the item reads as it would
+        // without the failure until the next update of it runs.
+        item["state"] = item["settledState"].clone();
+        if !item["state"].is_string() {
+            item["state"] = json!("upToDate");
+        }
+        item["error"] = Value::Null;
     } else if let Some(outcome) = store::outcome(&id) {
         // A failure that was fixed elsewhere (another page, a terminal) no longer shows.
         if matches!(
@@ -87,7 +112,13 @@ fn overlay(state: &AppState, mut item: Value) -> Value {
         ) {
             item["state"] = json!(outcome.state);
             item["error"] = json!(outcome.message);
+        } else if item["state"] == "notInstalled" {
+            // A failed Install stays in Not installed, saying why, so it never counts as an update.
+            item["error"] = json!(outcome.message);
         }
+    }
+    if let Some(object) = item.as_object_mut() {
+        object.remove("settledState");
     }
     if id != "app" {
         item["auto"] = json!(store::auto_enabled(&state.paths, &id));
@@ -114,13 +145,115 @@ async fn collect(state: &AppState, fresh: bool) -> Vec<Value> {
         extension_items(state),
         app_item(state),
     );
+    let components = component_items();
     let mut items = Vec::new();
     items.push(app);
     items.extend(agents);
     items.extend(helpers);
     items.extend(tools);
     items.extend(extensions);
+    items.extend(components);
     items
+}
+
+/// The on-demand extension components gxserver installs itself, while one is installed here:
+/// Collab. An app update seals a newer component than the one on disk; Update installs
+/// it. (The desktop lists its own: the VS Code view's code-server and CEF, app/updates/items.rs.)
+///
+/// CDXC:Updates 2026-11-08 DECISION:
+/// User (#495, Q1733): every installed extension component with an update shows in the titlebar Updates dropdown and in Settings > Updates, with Update; GBots and Collab were missing. Uninstalled components don't show.
+pub(crate) fn component_items() -> Vec<Value> {
+    collab_item().into_iter().collect()
+}
+
+/// One component's row, from what is on disk and what this release sealed.
+#[allow(clippy::too_many_arguments)]
+fn component_item(
+    name: &str,
+    title: &str,
+    installed: Option<String>,
+    latest: Option<String>,
+    phase: &Value,
+    available: bool,
+    in_use: bool,
+) -> Value {
+    let mut item = item(
+        format!("{COMPONENT_ITEM_PREFIX}{name}"),
+        "component",
+        "extensions",
+        title.to_string(),
+        name,
+        "Extension".to_string(),
+        installed,
+        latest,
+    );
+    let (state, progress, error) = match phase["phase"].as_str() {
+        Some("downloading") => {
+            let done = phase["doneBytes"].as_f64().unwrap_or(0.0);
+            let total = phase["totalBytes"].as_f64().unwrap_or(0.0);
+            let progress = if total > 0.0 {
+                format!("Downloading\u{2026} {}%", ((done / total) * 100.0).floor())
+            } else {
+                "Downloading\u{2026}".to_string()
+            };
+            ("updating", Some(progress), None)
+        }
+        Some("installing") => ("updating", Some("Installing\u{2026}".to_string()), None),
+        Some("failed") if available => (
+            "failed",
+            None,
+            Some(
+                phase["error"]
+                    .as_str()
+                    .unwrap_or("The update failed.")
+                    .to_string(),
+            ),
+        ),
+        _ if available => ("available", None, None),
+        _ => ("upToDate", None, None),
+    };
+    item.insert("state".into(), json!(state));
+    item.insert(
+        "settledState".into(),
+        json!(if available { "available" } else { "upToDate" }),
+    );
+    if let Some(progress) = progress {
+        item.insert("progress".into(), json!(progress));
+    }
+    if let Some(error) = error {
+        item.insert("error".into(), json!(error));
+    }
+    if available && state == "available" {
+        item.insert(
+            "note".into(),
+            json!("This Ghostex brought a newer version. Update installs it."),
+        );
+    }
+    item.insert("canUpdate".into(), json!(true));
+    item.insert("topBar".into(), json!(true));
+    item.insert("inUse".into(), json!(in_use));
+    Value::Object(item)
+}
+
+/// The id prefix of [`component_items`]' rows (`component:` is the desktop's own).
+pub(super) const COMPONENT_ITEM_PREFIX: &str = "extensionComponent:";
+
+fn collab_item() -> Option<Value> {
+    use crate::collab_shim::install;
+    let installed = install::installed()?;
+    let component = install::item();
+    let update = install::update_available();
+    Some(component_item(
+        "collab",
+        install::TITLE,
+        Some(installed.version),
+        update
+            .clone()
+            .or_else(|| component["availableVersion"].as_str().map(str::to_string)),
+        &component,
+        update.is_some(),
+        component["running"] == true,
+    ))
 }
 
 /// Which agents this computer uses: switched on in Settings > Agents, used in the last week, or
@@ -253,14 +386,14 @@ pub(super) fn definition(agent: &str) -> Option<&'static Definition> {
 }
 
 /// The icon the desktop draws for a catalog agent (`agent-icons/`).
-fn agent_icon(agent: &str) -> &str {
+pub(super) fn agent_icon(agent: &str) -> &str {
     ICON_ALIASES
         .iter()
         .find(|(_, id)| *id == agent)
         .map_or(agent, |(icon, _)| icon)
 }
 
-fn method_label(method: &str) -> &str {
+pub(super) fn method_label(method: &str) -> &str {
     match method {
         "native" => "installer",
         "self" => "its own updater",
@@ -321,7 +454,9 @@ async fn agent_items(state: &AppState, usage: &Usage) -> Vec<Value> {
         .as_array()
         .into_iter()
         .flatten()
-        .filter_map(|agent| agent_item(agent, usage))
+        .filter_map(|agent| {
+            agent_item(agent, usage).or_else(|| super::missing::missing_agent_item(agent))
+        })
         .collect()
 }
 
@@ -366,11 +501,7 @@ fn agent_item(agent: &Value, usage: &Usage) -> Option<Value> {
         latest,
     );
     let failed = job["status"] == "failed" && job["operation"] == "update";
-    let state = if job_active(job) {
-        "updating"
-    } else if failed {
-        "failed"
-    } else if available {
+    let settled = if available {
         "available"
     } else if agent["updateChecking"] == true {
         "checking"
@@ -379,6 +510,13 @@ fn agent_item(agent: &Value, usage: &Usage) -> Option<Value> {
         "unknown"
     } else {
         "upToDate"
+    };
+    let state = if job_active(job) {
+        "updating"
+    } else if failed {
+        "failed"
+    } else {
+        settled
     };
     if job_active(job) {
         item.insert(
@@ -395,6 +533,7 @@ fn agent_item(agent: &Value, usage: &Usage) -> Option<Value> {
             "error".into(),
             json!(job["error"].as_str().unwrap_or("The update failed.")),
         );
+        item.insert("settledState".into(), json!(settled));
     }
     if let Some(summary) = agent["updateSummary"].as_str() {
         item.insert("summary".into(), json!(summary));
@@ -442,7 +581,9 @@ async fn helper_items(state: &AppState, usage: &Usage, fresh: bool) -> Vec<Value
         .as_array()
         .into_iter()
         .flatten()
-        .filter_map(|tool| helper_item(tool, usage))
+        .filter_map(|tool| {
+            helper_item(tool, usage).or_else(|| super::missing::missing_helper_item(tool))
+        })
         .collect()
 }
 
@@ -475,11 +616,7 @@ fn helper_item(tool: &Value, usage: &Usage) -> Option<Value> {
         .as_array()
         .is_some_and(|actions| actions.iter().any(|action| action == "update"));
     let failed = job["status"] == "failed" && job["action"] == "update";
-    let state = if job["status"] == "running" {
-        "updating"
-    } else if failed {
-        "failed"
-    } else if tool["pendingSwitch"].is_object() {
+    let settled = if tool["pendingSwitch"].is_object() {
         "checking"
     } else if tool["updateAvailable"] == true {
         "available"
@@ -488,11 +625,19 @@ fn helper_item(tool: &Value, usage: &Usage) -> Option<Value> {
     } else {
         "upToDate"
     };
+    let state = if job["status"] == "running" {
+        "updating"
+    } else if failed {
+        "failed"
+    } else {
+        settled
+    };
     if failed {
         item.insert(
             "error".into(),
             json!(job["error"].as_str().unwrap_or("The update failed.")),
         );
+        item.insert("settledState".into(), json!(settled));
     }
     let note = tool
         .pointer("/pendingSwitch/message")
@@ -518,29 +663,45 @@ async fn tool_items(state: &AppState, usage: &Usage, fresh: bool) -> Vec<Value> 
     let Ok(answer) = crate::managed_tools::endpoint::dispatch(&state.paths, &params).await else {
         return Vec::new();
     };
+    let hex_wanted = crate::voice_agent::dictate_uses_hex(&state.paths);
     answer["tools"]
         .as_array()
         .into_iter()
         .flatten()
-        .filter_map(|tool| tool_item(tool, usage))
+        .filter_map(|tool| {
+            tool_item(tool, usage, hex_wanted).or_else(|| {
+                let dictate_hex = hex_wanted && tool["id"] == "hex";
+                super::missing::missing_tool_item(tool, dictate_hex)
+            })
+        })
         .collect()
 }
 
-fn tool_item(tool: &Value, usage: &Usage) -> Option<Value> {
+/// `hex_wanted`: Dictate transcribes with Hex here, so Hex is listed (and lights the top bar)
+/// even before it is installed, with Install as its update.
+pub(super) fn tool_item(tool: &Value, usage: &Usage, hex_wanted: bool) -> Option<Value> {
     let id = tool["id"].as_str()?;
-    if tool["installed"] != true {
+    let hex = id == "hex";
+    if hex && tool["supported"] != true {
+        return None;
+    }
+    if tool["installed"] != true && !(hex && hex_wanted) {
         return None;
     }
     let can_update = tool["actions"]
         .as_array()
         .is_some_and(|actions| actions.iter().any(|action| action == "update"));
+    let can_install = tool["actions"]
+        .as_array()
+        .is_some_and(|actions| actions.iter().any(|action| action == "install"));
     let desktop_control = matches!(id, "trycua" | "spaceo");
-    // Only what Ghostex installed is Ghostex's to update; cua-driver and SpaceO always are.
-    if !desktop_control && !(can_update && tool["source"] == "ghostex") {
+    // Only what Ghostex installed is Ghostex's to update; cua-driver, SpaceO and Hex always are.
+    if !desktop_control && !hex && !(can_update && tool["source"] == "ghostex") {
         return None;
     }
     let detail = match id {
         "trycua" => "Tool · cua-driver".to_string(),
+        "hex" => "Dictation app".to_string(),
         _ => "Tool".to_string(),
     };
     let mut item = item(
@@ -554,25 +715,35 @@ fn tool_item(tool: &Value, usage: &Usage) -> Option<Value> {
         tool["latestVersion"].as_str().map(str::to_string),
     );
     let job = &tool["job"];
-    let failed = job["status"] == "failed" && job["operation"] == "update";
-    let state = if job_active(job) {
-        "updating"
-    } else if failed {
-        "failed"
-    } else if tool["updateAvailable"] == true {
+    let failed = job["status"] == "failed"
+        && (job["operation"] == "update" || (hex && job["operation"] == "install"));
+    let missing = tool["installed"] != true;
+    let settled = if tool["updateAvailable"] == true || (missing && can_install) {
         "available"
     } else if tool["checkError"].is_string() || tool["notAnswering"].is_string() {
         "unknown"
     } else {
         "upToDate"
     };
+    let state = if job_active(job) {
+        "updating"
+    } else if failed {
+        "failed"
+    } else {
+        settled
+    };
     if failed {
         item.insert(
             "error".into(),
             json!(job["error"].as_str().unwrap_or("The update failed.")),
         );
+        item.insert("settledState".into(), json!(settled));
     }
-    let note = if tool["needsPassword"] == true && state == "available" {
+    let note = if missing && state == "available" {
+        Some("Not installed. Dictate is set to use Hex.")
+    } else if hex && state == "available" {
+        tool["detail"].as_str()
+    } else if tool["needsPassword"] == true && state == "available" {
         Some("Asks for your password.")
     } else if state == "available" {
         tool["permissionNote"].as_str()
@@ -581,12 +752,19 @@ fn tool_item(tool: &Value, usage: &Usage) -> Option<Value> {
     };
     item.insert("note".into(), json!(note));
     item.insert("state".into(), json!(state));
-    item.insert("canUpdate".into(), json!(can_update && state != "updating"));
+    item.insert(
+        "canUpdate".into(),
+        json!((can_update || (missing && can_install)) && state != "updating"),
+    );
+    // Hex installs and updates only when the user clicks (CDXC:Dictate 2026-11-07 in managed_tools/hex.rs).
     item.insert(
         "canAuto".into(),
-        json!(can_update && tool["needsPassword"] != true),
+        json!(can_update && !hex && tool["needsPassword"] != true),
     );
-    item.insert("topBar".into(), json!(desktop_control));
+    item.insert(
+        "topBar".into(),
+        json!(desktop_control || (hex && hex_wanted)),
+    );
     item.insert("inUse".into(), json!(usage.any_working()));
     Some(Value::Object(item))
 }
@@ -677,12 +855,15 @@ async fn app_item(state: &AppState) -> Value {
     let phase = status["phase"].as_str().unwrap_or("idle");
     let available = status["updateAvailable"] == true;
     let progress = status["progress"].as_f64();
-    let state = match phase {
-        "downloading" | "installing" | "restarting" => "updating",
-        "failed" => "failed",
+    let settled = match phase {
         _ if available => "available",
         "appNotRunning" => "unknown",
         _ => "upToDate",
+    };
+    let state = match phase {
+        "downloading" | "installing" | "restarting" => "updating",
+        "failed" => "failed",
+        _ => settled,
     };
     if state == "updating" {
         item.insert(
@@ -701,11 +882,14 @@ async fn app_item(state: &AppState) -> Value {
             "error".into(),
             json!(text("message").unwrap_or_else(|| "The update failed.".to_string())),
         );
+        item.insert("settledState".into(), json!(settled));
     }
     let note = if available && !supported {
         text("unsupportedReason")
     } else if available {
-        Some("Updates last; Ghostex restarts once and your agents keep running.".to_string())
+        // Short enough for two lines of Settings > Updates' card (the remote tile audit, finding 9:
+        // the longer note ended "your agents keep runni…").
+        Some("Restarts Ghostex once; agents keep running.".to_string())
     } else {
         None
     };
@@ -720,4 +904,70 @@ async fn app_item(state: &AppState) -> Value {
     item.insert("topBar".into(), json!(true));
     item.insert("inUse".into(), json!(false));
     Value::Object(item)
+}
+
+#[cfg(test)]
+mod hex_tests {
+    use super::{tool_item, Usage};
+    use serde_json::json;
+
+    fn hex(installed: bool, actions: &[&str], extra: serde_json::Value) -> serde_json::Value {
+        let mut tool = json!({
+            "id": "hex", "label": "Hex", "supported": true, "installed": installed,
+            "actions": actions, "source": "system", "latestVersion": "3.3.0",
+        });
+        for (key, value) in extra.as_object().unwrap() {
+            tool[key] = value.clone();
+        }
+        tool
+    }
+
+    #[test]
+    fn a_missing_hex_is_listed_with_install_only_when_dictate_uses_it() {
+        let usage = Usage::default();
+        assert!(tool_item(&hex(false, &["install"], json!({})), &usage, false).is_none());
+        let item = tool_item(&hex(false, &["install"], json!({})), &usage, true).expect("listed");
+        assert_eq!(item["state"], "available");
+        assert_eq!(item["canUpdate"], true);
+        assert_eq!(item["canAuto"], false, "Hex installs only on a click");
+        assert_eq!(item["topBar"], true);
+        assert_eq!(item["latest"], "3.3.0");
+        assert_eq!(item["note"], "Not installed. Dictate is set to use Hex.");
+    }
+
+    #[test]
+    fn an_installed_hex_shows_its_version_and_a_newer_release() {
+        let usage = Usage::default();
+        let tool = hex(
+            true,
+            &["update"],
+            json!({"version": "3.2.0", "updateAvailable": true}),
+        );
+        let item = tool_item(&tool, &usage, false).expect("listed");
+        assert_eq!(item["installed"], "3.2.0");
+        assert_eq!(item["latest"], "3.3.0");
+        assert_eq!(item["state"], "available");
+        assert_eq!(item["canUpdate"], true);
+        assert_eq!(item["canAuto"], false);
+        assert_eq!(
+            item["topBar"], false,
+            "only lights the top bar when Dictate uses Hex"
+        );
+        let current = hex(
+            true,
+            &["update"],
+            json!({"version": "3.3.0", "updateAvailable": false}),
+        );
+        assert_eq!(
+            tool_item(&current, &usage, true).unwrap()["state"],
+            "upToDate"
+        );
+    }
+
+    #[test]
+    fn hex_where_hex_3_does_not_ship_is_not_listed() {
+        let mut tool = hex(false, &[], json!({}));
+        tool["supported"] = json!(false);
+        assert!(tool_item(&tool, &Usage::default(), true).is_none());
+    }
 }

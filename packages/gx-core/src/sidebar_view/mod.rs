@@ -11,12 +11,14 @@
 pub(crate) mod agents;
 mod armed_actions;
 mod assemble;
+mod chief;
 mod close_after_done;
 pub(crate) mod close_successor;
 pub(crate) mod collections;
 mod daemon_wait;
 mod draft_arrivals;
 mod drop_landing;
+mod gbots;
 mod groups;
 #[cfg(test)]
 mod hide_empty_tests;
@@ -54,11 +56,13 @@ mod threads;
 pub(crate) mod view;
 mod work;
 pub(crate) mod workspaces;
+mod worktree_fold;
 
 pub use armed_actions::{
     armed_actions_by_session, ArmedAction, ARMED_ACTION_CLOSE_AFTER_DONE, ARMED_ACTION_DELAYED_SEND,
 };
 pub use assemble::{collection_groups, owner_project_group_id, toggle_all_project_ids};
+pub use chief::{ChiefRowView, HomeHeaderView};
 pub use close_successor::{
     close_project_group_is_active, close_project_successor_candidates,
     close_project_successor_group_order, first_awake_successor_session_id, is_awake_successor_row,
@@ -73,12 +77,15 @@ pub use draft_arrivals::{
     DRAFT_ARRIVAL_WINDOW_MS, DRAFT_CLOCK_SLACK_MS, DRAFT_FOCUS_WAIT_MS,
 };
 pub use drop_landing::{DropLanding, DropWrites, TreeDropTarget};
+pub use gbots::{
+    gbots_department_storage_id, gbots_section_storage_id, GbotsDepartmentView, GbotsSectionView,
+};
 pub use inputs::{
-    BrowserTabInput, CloseAfterDoneInput, DelayedSendInput, MachineTabInput, ProjectDiffStats,
-    SectionCollapse, SectionId, SessionSortMode, SidebarCollapseState, SidebarHiddenItems,
-    SidebarHostInputs, SidebarInputs, SidebarMode, SidebarSettings, SidebarUiState,
-    UnavailableState, GROUP_WORKING_SESSIONS_SETTING_KEY, LOCAL_MACHINE_ID,
-    MACHINE_STATE_CONNECTED, MAX_RECENT_SPACE_SESSION_IDS,
+    BrowserTabInput, CloseAfterDoneInput, DelayedSendInput, MachineTabInput, PinnedSessionOrder,
+    ProjectDiffStats, SectionCollapse, SectionId, SessionSortMode, SidebarCollapseState,
+    SidebarHiddenItems, SidebarHostInputs, SidebarInputs, SidebarMode, SidebarSettings,
+    SidebarUiState, UnavailableState, GROUP_WORKING_SESSIONS_SETTING_KEY, LOCAL_MACHINE_ID,
+    MACHINE_STATE_CONNECTED, MAX_RECENT_SPACE_SESSION_IDS, PINNED_SESSION_ORDER_SETTING_KEY,
 };
 pub use links::{
     link_chips_that_fit, SessionLink, SessionLinkGlyph, SessionLinkKind, SessionLinkTone,
@@ -86,7 +93,8 @@ pub use links::{
     SuggestedSessionLink, SUGGESTED_SHOWN_FIRST,
 };
 pub use machine_connection::{
-    machine_state_copy, machine_state_is_busy, machine_state_is_failure, THIS_COMPUTER_NOTICE_STATE,
+    machine_state_copy, machine_state_is_busy, machine_state_is_failure, machine_state_short_word,
+    THIS_COMPUTER_NOTICE_STATE,
 };
 pub use machine_switch::{
     machine_switch_memory, plan_machine_switch_restore, MACHINE_SESSION_MEMORY_SPACE_ID,
@@ -111,14 +119,17 @@ pub use status_buckets::{
     family_bucket, normalize_sidebar_layout, SessionBucket, SessionBucketFacts, StatusFilter,
     SIDEBAR_LAYOUT_CLASSIC, SIDEBAR_LAYOUT_SETTING_KEY, SIDEBAR_LAYOUT_TWO_COLUMNS,
 };
-pub use tags::{TagListItem, TagListItemKind, TagPresentation, UNTAGGED_TAG_FILTER};
+pub use tags::{
+    tag_choice, tag_choices, TagChoice, TagListItem, TagListItemKind, TagPresentation,
+    UNTAGGED_TAG_FILTER,
+};
 pub use view::{
     rename_shake_key, CollectionView, CoordinatorBadge, CoordinatorBadgeTone, DelayedSendView,
-    EmptyState, FoldedStatus, GhostView, GroupActionTarget, GroupCore, GroupSummary, GroupView,
-    LabelDeadline, MachineChip, MachineNotice, MachineSummary, MachineTabView, NeedsYou, OrderItem,
-    OrderKind, ProjectContextView, RemoteMachineView, RowNesting, SectionView, SessionMenuFacts,
-    SessionRow, SessionTiming, SessionView, ShowAllProjectsRow, SidebarView, SpaceView,
-    ThreadTally, WorktreeView, RENAME_SHAKE_FRESH_MS,
+    EmptyState, FoldedStatus, FoldedWorktree, GhostView, GroupActionTarget, GroupCore,
+    GroupSummary, GroupView, LabelDeadline, MachineChip, MachineNotice, MachineSummary,
+    MachineTabView, NeedsYou, OrderItem, OrderKind, ProjectContextView, RemoteMachineView,
+    RowNesting, RowWorktree, SectionView, SessionMenuFacts, SessionRow, SessionTiming, SessionView,
+    ShowAllProjectsRow, SidebarView, SpaceView, ThreadTally, WorktreeView, RENAME_SHAKE_FRESH_MS,
 };
 pub use work::{SessionWork, WorkGithubIssue, WorkLinearIssue, WorkLinearProject, WorkPullRequest};
 pub use workspaces::{

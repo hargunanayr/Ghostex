@@ -3,9 +3,12 @@ mod about;
 mod accounts;
 mod actions;
 mod agents;
+mod autopilot;
 mod cloud_boxes;
+mod collab;
 mod connectors;
 mod debugging;
+mod dictation;
 mod extensions;
 mod integrations;
 mod open_targets;
@@ -13,6 +16,7 @@ mod os_integration;
 mod projects;
 mod remote;
 mod secrets;
+mod security;
 mod sync;
 mod updates;
 mod voice_agent;
@@ -28,6 +32,8 @@ pub fn pages(platform: Platform) -> Vec<Page> {
         about::page(),
         actions::page(),
         accounts::page(),
+        autopilot::page(),
+        collab::page(),
         agents::page(),
         integrations::page(),
         cloud_boxes::page(),
@@ -38,8 +44,10 @@ pub fn pages(platform: Platform) -> Vec<Page> {
         remote::page(),
         sync::page(),
         secrets::page(),
+        security::page(),
         workspaces::page(),
         connectors::page(),
+        dictation::page(),
         voice_agent::page(),
     ]
 }

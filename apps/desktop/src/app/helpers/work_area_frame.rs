@@ -14,7 +14,17 @@ use crate::app::helpers::*;
 /// CDXC:Workarea 2026-11-05 WHY:
 /// The gutter is 6pt on every side, enough to read the card as its own surface without taking room from the work area. The card's radius is the window's corner radius less the gutter (10.5pt), so the two corners run at the same distance, and it stays 10.5pt in full screen, where the window has no corner; what sits inside the card's 1pt border rounds at 9.5pt. The border is the chrome ink at 6% in dark mode and under dark glass and the theme's divider line in light mode, and the shadow is light. The card keeps its background and the glass keeps its tints, and the frame stays with the sidebar hidden and in full screen. macOS only: elsewhere the work area's web pages cannot be clipped to the card's corners (packages/settings-catalog/src/availability.rs).
 /// SEE-ALSO: app/element/work_area_frame.rs (the card and its glass gutter), app/element/window_corner_pane.rs (panes round to the card), native/macos/GpuiWindowCorners.h (web pages clip to the card).
-static WORK_AREA_FRAME: AtomicBool = AtomicBool::new(false);
+///
+/// CDXC:Workarea 2026-11-08 DECISION:
+/// User: "make frame around work area toggle enabled by default for new users please". Supersedes the off default above: a new install starts with the frame on, and anyone who already had a settings file keeps it off, because the first start of this version writes `workAreaFrame` false into their file (shared_settings/work_area_frame_default.rs). The setting is read as on when the file does not carry it.
+static WORK_AREA_FRAME: AtomicBool = AtomicBool::new(true);
+
+/// `showWindowButtonsWhenSidebarCollapsed` (on when unset), the sub-setting of the frame row in
+/// Settings > Interface > Advanced.
+///
+/// CDXC:Titlebar 2026-11-08 DECISION:
+/// User: "please add setting under this [Frame the work area] to show traffic lights on macos when sidebar is collapsed (default to yes). only show this sub setting on macos". On, the window's traffic lights stay in its top left with the sidebar collapsed, whether or not the frame is on, and the header's toggle keeps the docked sidebar's room for them (`window_controls_state` in floating_reveal/model.rs); the floating sidebar then carries no lights of its own. Off is what the 2026-11-06 and 2026-11-07 decisions made of it: the lights hide with the sidebar and show in the floating sidebar's top row. Full screen is unchanged either way. Supersedes, as a default, those decisions' always-hidden lights.
+static SHOW_WINDOW_BUTTONS_WHEN_SIDEBAR_COLLAPSED: AtomicBool = AtomicBool::new(true);
 
 /// The gutter between the card and the window's edges (and the sidebar), in points.
 pub(crate) const WORK_AREA_FRAME_MARGIN: f32 = 6.0;
@@ -30,15 +40,29 @@ pub(crate) const WORK_AREA_FRAME_RADIUS: f32 = 16.5 - WORK_AREA_FRAME_MARGIN;
 pub(crate) const WORK_AREA_FRAME_INNER_RADIUS: f32 =
     WORK_AREA_FRAME_RADIUS - WORK_AREA_FRAME_BORDER;
 
-/// Reads `workAreaFrame` (off when unset).
+/// Reads `workAreaFrame` and `showWindowButtonsWhenSidebarCollapsed` (both on when unset: the
+/// catalog defaults).
 pub(crate) fn refresh_work_area_frame(object: &serde_json::Map<String, serde_json::Value>) {
+    SHOW_WINDOW_BUTTONS_WHEN_SIDEBAR_COLLAPSED.store(
+        object
+            .get("showWindowButtonsWhenSidebarCollapsed")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true),
+        Ordering::Relaxed,
+    );
     WORK_AREA_FRAME.store(
         object
             .get("workAreaFrame")
             .and_then(serde_json::Value::as_bool)
-            == Some(true),
+            .unwrap_or(true),
         Ordering::Relaxed,
     );
+}
+
+/// Whether the window's traffic lights stay with the sidebar collapsed. The setting exists on macOS
+/// only.
+pub(crate) fn show_window_buttons_when_sidebar_collapsed() -> bool {
+    cfg!(target_os = "macos") && SHOW_WINDOW_BUTTONS_WHEN_SIDEBAR_COLLAPSED.load(Ordering::Relaxed)
 }
 
 /// Whether the work area is drawn as a card. The setting exists on macOS only.
@@ -110,19 +134,28 @@ pub(crate) fn workspace_traffic_light_position() -> Point<Pixels> {
 }
 
 /// The sidebar toggle's window x, whichever row draws it (the docked sidebar's top row or the
-/// header while the sidebar is hidden): `SIDEBAR_TOGGLE_LEADING_X`, one gutter further in with the
-/// work area frame on, where the traffic lights moved in by a gutter too
-/// (`workspace_traffic_light_position`).
+/// header while the sidebar is hidden), one gutter further in with the work area frame on, where
+/// the traffic lights moved in by a gutter too (`workspace_traffic_light_position`).
+/// `lights_reserved` is `GhostexGpuiApp::window_controls_reserved`.
 ///
 /// CDXC:Titlebar 2026-11-05 WHY:
-/// Both rows read this one value, so the toggle keeps the distance from the green light that the 88pt reserve gives it (CDXC:Titlebar 2026-10-11 DECISION in consts.rs) and does not move when the sidebar opens or closes (CDXC:Titlebar 2026-09-20); the row's fit check (`sidebar_top_row_fits`) reads it as well, so a narrow sidebar drops buttons before its menu slides off the edge.
-pub(crate) fn sidebar_toggle_leading_x() -> f32 {
-    let gutter = if work_area_frame_active() {
-        WORK_AREA_FRAME_MARGIN
+/// Both rows read this one value, so the toggle keeps the distance from the green light that the 88pt reserve gives it (CDXC:Titlebar 2026-10-11 DECISION in consts.rs) and does not move when the sidebar opens or closes (CDXC:Titlebar 2026-09-20; on macOS see the 2026-11-07 decision below); the row's fit check (`sidebar_top_row_fits`) reads it as well, so a narrow sidebar drops buttons before its menu slides off the edge.
+///
+/// CDXC:Titlebar 2026-11-07 DECISION:
+/// User: "seems very minor but sure do it why not" (GitHub #432), then "OK after your notes are addressed" when approving PR #455 on 2026-11-07. On macOS the window's traffic lights hide with the sidebar and show in the floating sidebar's top row instead (`floating_reveal_carries_window_controls`), so with the lights gone the toggle takes the x it has on Windows and Linux, the edge strip's width (16pt with the frame). In full screen the header's left group starts there too, and neither the docked nor the floating sidebar's top row keeps room for the lights, because macOS draws them only in the title bar that slides down on hover (`window_controls_reserved`). This supersedes, on macOS, the 2026-11-05 rule that the toggle does not move when the sidebar closes; only the docked sidebar outside full screen keeps the 88pt reserve.
+pub(crate) fn sidebar_toggle_leading_x(lights_reserved: bool) -> f32 {
+    sidebar_toggle_window_x(lights_reserved, work_area_frame_active())
+}
+
+/// `sidebar_toggle_leading_x` for an explicit frame setting.
+pub(crate) fn sidebar_toggle_window_x(lights_reserved: bool, framed: bool) -> f32 {
+    let gutter = if framed { WORK_AREA_FRAME_MARGIN } else { 0.0 };
+    let base = if lights_reserved {
+        crate::app::consts::SIDEBAR_TOGGLE_LEADING_X
     } else {
-        0.0
+        crate::app::floating_reveal::model::FLOATING_REVEAL_EDGE_WIDTH
     };
-    crate::app::consts::SIDEBAR_TOGGLE_LEADING_X + gutter
+    base + gutter
 }
 
 /// The narrowest the sidebar may be: `SIDEBAR_MIN_WIDTH`, one gutter wider with the work area
@@ -139,4 +172,31 @@ pub(crate) fn sidebar_min_width() -> f32 {
         0.0
     };
     crate::app::consts::SIDEBAR_MIN_WIDTH + gutter
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_hidden_sidebar_toggle_sits_on_the_edge_strip() {
+        // With no lights to clear the toggle sits where it does on Windows and Linux: 10pt, one
+        // gutter further in with the frame on.
+        assert_eq!(sidebar_toggle_window_x(false, false), 10.0);
+        assert_eq!(sidebar_toggle_window_x(false, true), 16.0);
+    }
+
+    #[test]
+    fn the_docked_sidebar_toggle_clears_the_lights() {
+        let reserve = crate::app::consts::SIDEBAR_TOGGLE_LEADING_X;
+        assert_eq!(sidebar_toggle_window_x(true, false), reserve);
+        assert_eq!(
+            sidebar_toggle_window_x(true, true),
+            reserve + WORK_AREA_FRAME_MARGIN
+        );
+        #[cfg(target_os = "macos")]
+        assert_eq!(reserve, 88.0);
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(reserve, 10.0);
+    }
 }

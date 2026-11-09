@@ -15,6 +15,7 @@
 
 mod active_project_context;
 mod agentbox;
+pub mod alert_rule;
 mod app_lifecycle;
 mod attention;
 pub mod bot_feed;
@@ -58,6 +59,7 @@ mod sidebar_drag;
 mod sidebar_menu;
 mod sidebar_ui;
 mod sidebar_view;
+pub mod test_files;
 pub mod unified_sidebar;
 mod workspace_groups;
 
@@ -76,7 +78,7 @@ pub use crate::app_lifecycle::{
     AppLifecycleAction, APP_LIFECYCLE_ACTIONS, APP_LIFECYCLE_MESSAGE_TYPE,
 };
 pub use crate::attention::{
-    AgentActivityReport, ATTENTION_PATCH_TTL_MS, ESCAPE_DONE_SUPPRESSION_MS,
+    AgentActivityReport, AttentionAlerts, ATTENTION_PATCH_TTL_MS, ESCAPE_DONE_SUPPRESSION_MS,
     MIN_ATTENTION_VISIBLE_MS,
 };
 pub use crate::change::{ChangeSummary, IgnoredReason, SideStateChanges};
@@ -187,7 +189,8 @@ pub use crate::sidebar_actions::{
     plan_agent_run, plan_delayed_send_action, plan_group_working_sessions, plan_machine_disable,
     GROUP_WORKING_SESSIONS_ACTION, GROUP_WORKING_SESSIONS_SETTINGS_SOURCE,
     HIDE_PROJECTS_WITHOUT_SESSIONS_ACTION, MACHINE_DISABLE_SETTINGS_SOURCE,
-    UNIFIED_GROUP_BY_PROJECT_ACTION, UNIFIED_WORKING_SECTION_ACTION,
+    PINNED_ORDER_MANUAL_ACTION, PINNED_ORDER_RECENT_ACTION, UNIFIED_GROUP_BY_PROJECT_ACTION,
+    UNIFIED_WORKING_SECTION_ACTION,
 };
 pub use crate::sidebar_actions::{
     open_remote_session_terminal, plan_generate_session_title, plan_group_sleep,
@@ -208,14 +211,14 @@ pub use crate::sidebar_drag::{
     check_session_handoff, owns_order_write_message, owns_project_move_command,
     owns_project_order_message, owns_session_drop_command, owns_session_move_command,
     plan_added_project_placement, plan_added_project_space_membership, plan_new_project_placement,
-    plan_new_project_space_membership, plan_order_write, plan_project_move,
+    plan_new_project_space_membership, plan_order_write, plan_pinned_reorder, plan_project_move,
     plan_project_order_write, plan_section_move, plan_session_drop, plan_session_move,
     project_body_drop_command, project_drop_command, project_drop_landing,
     sidebar_group_membership, sidebar_project_group_order, AddedProjectPlacement,
-    NewProjectPlaceChoice, NewProjectPlacement, OrderWrite, OrderWritePlan, ProjectMovePlan,
-    ProjectWrite, SessionDrop, SessionHandoffCheck, SessionHandoffDrop, SessionMovePlan,
-    ORDER_WRITE_MESSAGE_TYPES, PROJECT_MOVE_COMMAND_TYPES, PROJECT_ORDER_MESSAGE_TYPE,
-    SESSION_DROP_ZONE_LIST_END,
+    NewProjectPlaceChoice, NewProjectPlacement, OrderWrite, OrderWritePlan, PinnedReorder,
+    ProjectMovePlan, ProjectWrite, SessionDrop, SessionHandoffCheck, SessionHandoffDrop,
+    SessionMovePlan, ORDER_WRITE_MESSAGE_TYPES, PROJECT_MOVE_COMMAND_TYPES,
+    PROJECT_ORDER_MESSAGE_TYPE, SESSION_DROP_ZONE_LIST_END,
 };
 pub use crate::sidebar_menu::{
     agent_launcher_items, agent_launcher_items_with_accounts, agent_logo_icons, agent_logo_svg,
@@ -242,17 +245,18 @@ pub use crate::sidebar_view::{
     armed_actions_by_session, close_project_group_is_active, close_project_successor_candidates,
     close_project_successor_group_order, first_awake_successor_session_id, is_awake_successor_row,
     link_chips_that_fit, machine_state_copy, machine_state_is_busy, machine_state_is_failure,
-    machine_tab_layout, machine_tab_reveal_offset, machine_tabs_out_of_view, plan_space_sleep,
-    plan_space_switch_restore, project_places, project_slot_plan, rename_shake_key,
-    rendered_session_ids, reveal_plan, session_is_snoozed, session_slot_plan,
-    space_for_focused_row, space_landing_project_ids, ArmedAction, BrowserTabInput,
-    CloseAfterDoneInput, Collection, CollectionView, CollectionsState, CoordinatorBadge,
-    CoordinatorBadgeTone, DelayedSendInput, DelayedSendView, DropLanding, DropWrites, EmptyState,
-    FocusedRowSpace, FoldedStatus, GhostView, GroupActionTarget, GroupCore, GroupSummary,
-    GroupView, LabelDeadline, MachineChip, MachineNotice, MachineSummary, MachineTabInput,
-    MachineTabLayout, MachineTabView, NeedsYou, OrderItem, OrderKind, ProjectContextView,
-    ProjectDiffStats, ProjectDropLanding, ProjectDropRow, ProjectPlace, ProjectSlotPlan,
-    RemoteMachineView, RowNesting, SectionCollapse, SectionId, SectionView, SessionLink,
+    machine_state_short_word, machine_tab_layout, machine_tab_reveal_offset,
+    machine_tabs_out_of_view, plan_space_sleep, plan_space_switch_restore, project_places,
+    project_slot_plan, rename_shake_key, rendered_session_ids, reveal_plan, session_is_snoozed,
+    session_slot_plan, space_for_focused_row, space_landing_project_ids, ArmedAction,
+    BrowserTabInput, CloseAfterDoneInput, Collection, CollectionView, CollectionsState,
+    CoordinatorBadge, CoordinatorBadgeTone, DelayedSendInput, DelayedSendView, DropLanding,
+    DropWrites, EmptyState, FocusedRowSpace, FoldedStatus, FoldedWorktree, GhostView,
+    GroupActionTarget, GroupCore, GroupSummary, GroupView, LabelDeadline, MachineChip,
+    MachineNotice, MachineSummary, MachineTabInput, MachineTabLayout, MachineTabView, NeedsYou,
+    OrderItem, OrderKind, PinnedSessionOrder, ProjectContextView, ProjectDiffStats,
+    ProjectDropLanding, ProjectDropRow, ProjectPlace, ProjectSlotPlan, RemoteMachineView,
+    RowNesting, RowWorktree, SectionCollapse, SectionId, SectionView, SessionLink,
     SessionLinkGlyph, SessionLinkKind, SessionLinkTone, SessionLinks, SessionLinksBadge,
     SessionLinksChatPill, SessionLinksDisplay, SessionLinksRow, SessionMenuFacts, SessionRow,
     SessionSlotPlan, SessionSortMode, SessionTiming, SessionView, SessionWork, ShowAllProjectsRow,
@@ -277,9 +281,14 @@ pub use crate::sidebar_view::{
     SIDEBAR_LAYOUT_CLASSIC, SIDEBAR_LAYOUT_SETTING_KEY, SIDEBAR_LAYOUT_TWO_COLUMNS,
 };
 pub use crate::sidebar_view::{
+    gbots_department_storage_id, gbots_section_storage_id, GbotsDepartmentView, GbotsSectionView,
+};
+pub use crate::sidebar_view::{
     open_draft_headings, project_draft_rows, DraftArrival, DraftArrivals, DraftRow,
     DRAFT_ARRIVAL_WINDOW_MS, DRAFT_CLOCK_SLACK_MS, DRAFT_FOCUS_WAIT_MS,
 };
+pub use crate::sidebar_view::{tag_choice, tag_choices, TagChoice};
+pub use crate::sidebar_view::{ChiefRowView, HomeHeaderView};
 pub use crate::workspace_groups::{
     owns_group_command, plan_group_command, CustomTagsPush, CustomTagsPushEffect, GroupCommandPlan,
 };

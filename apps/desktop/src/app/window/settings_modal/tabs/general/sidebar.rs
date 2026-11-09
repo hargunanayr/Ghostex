@@ -8,7 +8,7 @@ use super::super::super::fields::{
 use super::super::super::page::PageBlock;
 use super::super::super::store::SettingsStore;
 use super::{GeneralCx, GeneralTab, save};
-use gpui::{AnyElement, Context, SharedString, Window};
+use gpui::{AnyElement, Context, Window};
 use serde_json::{Map, Value, json};
 use std::rc::Rc;
 
@@ -141,6 +141,19 @@ fn sidebar_section(
         false,
         cx,
     ));
+    // CDXC:RemoteMachines 2026-11-09 DECISION in gx-core sidebar_view/merged.rs (on by default);
+    // Separate by machine already keeps every copy apart.
+    if !g.values.bool("sidebarSeparateByMachine") {
+        rows.extend(page.toggle(
+            g,
+            s,
+            "sidebarMergeRepositoryCopies",
+            "Merge copies of the same repository",
+            "Show two folders on this computer that are copies of the same repository (the same git remote, opened at the same folder inside it) as one project, with the sessions of both. Turn off to give each folder its own project with only its own sessions. Copies on different computers are one project either way. The phone follows this.",
+            false,
+            cx,
+        ));
+    }
     // The Unified sidebar's own Working section switch, under the switch that selects it (CDXC:Sidebar
     // 2026-10-30 in gx-core unified_sidebar/build.rs `unified_shelf`).
     if g.values.string("sidebarView") == "unified" {
@@ -497,7 +510,32 @@ fn sidebar_section(
             false,
             cx,
         ));
+        // CDXC:Worktrees 2026-11-06 DECISION in gx-core sidebar_view/worktree_fold.rs (an
+        // advanced row, on by default); the Unified sidebar groups worktrees by repository itself.
+        rows.extend(page.toggle(
+            g,
+            s,
+            "worktreeSessionsInProject",
+            "Worktree sessions show in their project",
+            "List a session started in a worktree under its repository's project, with the worktree's branch on its row, instead of giving the worktree a project of its own. The session still works in the worktree's folder. Turn off to show each worktree as its own project under its repository.",
+            false,
+            cx,
+        ));
     }
+    // CDXC:Sidebar 2026-11-07 DECISION in gx-core sidebar_view/inputs.rs (an advanced row, Manual by
+    // default); both sidebars and the phone follow it.
+    rows.extend(page.select(
+        g,
+        s,
+        "pinnedSessionOrder",
+        "Pinned order",
+        "Keep pinned sessions in the order you drag them into, or put the pinned session that came back to you last (started, sent a message, or finished a turn) first. With Most recently updated, pinned sessions can't be dragged to rearrange them. Also in the sidebar's Sort & Filter menu.",
+        g.options("PINNED_SESSION_ORDER_OPTIONS"),
+        Some(256.0),
+        false,
+        window,
+        cx,
+    ));
     rows.extend(page.toggle(
         g,
         s,
@@ -560,8 +598,14 @@ fn sidebar_section(
             cx,
         ));
     }
-    settings_section(&g.p, "Sidebar", None, None, rows)
-        .map(|section| PageBlock::section("sidebar", section))
+    settings_section(
+        &g.p,
+        g.section_title("sidebar", "Sidebar"),
+        None,
+        None,
+        rows,
+    )
+    .map(|section| PageBlock::section("sidebar", section))
 }
 
 fn session_cards_section(
@@ -723,8 +767,14 @@ fn session_cards_section(
             cx,
         ));
     }
-    settings_section(&g.p, "Session Cards", None, None, rows)
-        .map(|section| PageBlock::section("sessionCards", section))
+    settings_section(
+        &g.p,
+        g.section_title("sessionCards", "Session Cards"),
+        None,
+        None,
+        rows,
+    )
+    .map(|section| PageBlock::section("sessionCards", section))
 }
 
 fn sidebar_tags_section(
@@ -750,8 +800,14 @@ fn sidebar_tags_section(
             cx,
         )));
     }
-    settings_section(&g.p, SharedString::from("Sidebar Tags"), None, None, rows)
-        .map(|section| PageBlock::section("sidebarTags", section))
+    settings_section(
+        &g.p,
+        g.section_title("sidebarTags", "Sidebar Tags"),
+        None,
+        None,
+        rows,
+    )
+    .map(|section| PageBlock::section("sidebarTags", section))
 }
 
 pub(super) fn sections(

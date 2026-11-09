@@ -69,6 +69,7 @@ fn group(project: &str, origin: &str, sessions: Vec<SessionRow>) -> GroupView {
             is_stale: false,
             machine_names: Vec::new(),
             action_target: None,
+            folded_worktrees: Vec::new(),
         }),
         collection_color: None,
         collection_id: None,
@@ -91,6 +92,7 @@ fn sidebar(groups: Vec<GroupView>) -> SidebarView {
 const SETTINGS: UnifiedSettings = UnifiedSettings {
     working_section: true,
     enable_session_parking: true,
+    pinned_session_order: crate::sidebar_view::PinnedSessionOrder::Manual,
 };
 
 fn studio() -> MachineId {

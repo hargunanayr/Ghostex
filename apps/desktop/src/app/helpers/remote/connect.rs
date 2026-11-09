@@ -69,7 +69,13 @@ pub(crate) fn gpui_connect_remote_gxserver_platform(
     );
     let uses_easy_connect = config.uses_easy_connect();
     let remote_machine_id = config.remote_machine_id.clone();
-    let result = gpui_connect_remote_gxserver_platform_inner(config, install_approved, progress_tx);
+    let password_saved = config.has_saved_password || config.reuse_ssh_connection;
+    let mut result =
+        gpui_connect_remote_gxserver_platform_inner(config, install_approved, progress_tx);
+    // A refused login with no password saved never had one to send: say so, not that it was wrong.
+    if !password_saved && matches!(result.state, GpuiRemoteGxserverConnectState::AuthFailed) {
+        result.message = GPUI_REMOTE_NO_SAVED_PASSWORD_MESSAGE.to_string();
+    }
     /*
     CDXC:RemotePairing 2026-09-03:
     A failed Easy Connect attempt must not leave its loopback forwarder
@@ -115,6 +121,25 @@ pub(crate) fn gpui_connect_remote_gxserver_platform_inner(
             "The saved remote machine is missing required SSH settings.",
         );
     }
+    // A machine that reuses the user's SSH connection must not open one: this connect either
+    // rides the master the user signed in to, or reports what to do about it before any command
+    // reaches the host (GitHub #496).
+    if config.reuse_ssh_connection {
+        if let Some(refusal) = gpui_remote_ssh_reuse_connection_refusal(&config) {
+            support_logs::append(
+                support_logs::GpuiSupportLog::RemoteGxserverInstall,
+                "gpui.remoteGxserver.sshShare",
+                serde_json::json!({
+                    "shared": false,
+                    "reusedConnection": false,
+                }),
+            );
+            return GpuiRemoteGxserverConnectResult::without_connection(
+                GpuiRemoteGxserverConnectState::SshFailed,
+                refusal.as_str(),
+            );
+        }
+    }
     // Every command below rides this one login; it closes when the connect returns.
     let ssh_share = match GpuiRemoteSshConnectionShare::open(&config) {
         Ok(ssh_share) => ssh_share,
@@ -140,7 +165,10 @@ pub(crate) fn gpui_connect_remote_gxserver_platform_inner(
     support_logs::append(
         support_logs::GpuiSupportLog::RemoteGxserverInstall,
         "gpui.remoteGxserver.sshShare",
-        serde_json::json!({ "shared": ssh_share.is_shared() }),
+        serde_json::json!({
+            "reusedConnection": config.reuse_ssh_connection,
+            "shared": ssh_share.is_shared(),
+        }),
     );
     let config = ssh_share.share_into(config);
     let mut execution_target = GpuiRemoteExecutionTarget::PosixHost;
@@ -356,14 +384,42 @@ pub(crate) fn gpui_connect_remote_gxserver_platform_inner(
         // that reports zmx missing could not have started a session on any platform.
         Ok(mut connection) if connection.capabilities.zmx_missing => {
             connection.terminate();
-            let _ = connection.child.wait();
+            if let Some(child) = connection.child.as_mut() {
+                let _ = child.wait();
+            }
             GpuiRemoteGxserverConnectResult::without_connection(
                 GpuiRemoteGxserverConnectState::InstallFailed,
                 GPUI_REMOTE_RUNTIME_BROKEN_MESSAGE,
             )
         }
         Ok(mut connection) => {
-            connection.this_computer = this_computer;
+            if let Some(message) =
+                gpui_remote_protocol_mismatch_message(connection.capabilities.protocol_version)
+            {
+                connection.terminate();
+                if let Some(child) = connection.child.as_mut() {
+                    let _ = child.wait();
+                }
+                return GpuiRemoteGxserverConnectResult::without_connection(
+                    GpuiRemoteGxserverConnectState::Unsupported,
+                    message.as_str(),
+                );
+            }
+            /*
+            CDXC:RemoteMachines 2026-11-08 WHY:
+            Windows repro of GitHub #508: a machine saved as SSH to 127.0.0.1 on a Windows PC was
+            not seen as this computer, because the identity read above is a POSIX shell command
+            and Windows OpenSSH runs cmd or PowerShell, so it read nothing. The connected-computer
+            registration then ran for it and asked "Let the agents on SSH repro test and this
+            computer reach each other" for the PC's own server id: a Windows Hello prompt for
+            nothing, whose approval had no call to complete. The health answer the tunnel just
+            got names the server on every platform, so it decides too.
+            */
+            connection.this_computer = this_computer
+                || gpui_remote_is_this_computer(
+                    connection.capabilities.server_id.as_deref(),
+                    gpui_local_gxserver_server_id().as_deref(),
+                );
             GpuiRemoteGxserverConnectResult::connected(connection)
         }
         Err(message) => GpuiRemoteGxserverConnectResult::without_connection(
@@ -371,6 +427,35 @@ pub(crate) fn gpui_connect_remote_gxserver_platform_inner(
             message.as_str(),
         ),
     }
+}
+
+/// CDXC:RemotePairing 2026-11-07 WHY: a Mac that runs the Ghostex app keeps the app's own gxserver when another computer connects, whatever its build (GitHub #476, `start_through_app_job` in server/src/cli.rs), so this connection can meet a gxserver this app did not install. Any gxserver of the same protocol works: features follow the capabilities it advertises and terminal attach runs the command it returns. One of another protocol cannot, and nothing on either side checked it, so the machine would read connected and fail request by request. The connection is refused with the Ghostex to update instead; the machine's own gxserver keeps running. A daemon that does not say its protocol predates the field and keeps connecting as before.
+pub(crate) fn gpui_remote_protocol_mismatch_message(
+    remote_protocol: Option<u64>,
+) -> Option<String> {
+    gpui_remote_protocol_mismatch_message_for(
+        remote_protocol,
+        GPUI_GXSERVER_PROTOCOL_VERSION,
+        env!("GHOSTEX_BUILD_MARKETING_VERSION"),
+    )
+}
+
+fn gpui_remote_protocol_mismatch_message_for(
+    remote_protocol: Option<u64>,
+    own_protocol: u64,
+    own_version: &str,
+) -> Option<String> {
+    let remote_protocol = remote_protocol?;
+    if remote_protocol == own_protocol {
+        return None;
+    }
+    Some(if remote_protocol < own_protocol {
+        format!(
+            "That machine runs an older Ghostex than this computer, and this Ghostex cannot work with its gxserver. Update Ghostex on that machine to {own_version} to connect."
+        )
+    } else {
+        "That machine runs a newer Ghostex than this computer, and this Ghostex cannot work with its gxserver. Update Ghostex on this computer to connect.".to_string()
+    })
 }
 
 pub(crate) fn gpui_remote_token_read_failure_state(
@@ -407,7 +492,8 @@ pub(crate) fn gpui_remote_token_read_failure_message(
 pub(crate) const GPUI_REMOTE_PACKAGE_INCOMPLETE_MARKER: &str =
     "__ghostex_remote_package_incomplete__";
 pub(crate) const GPUI_REMOTE_PACKAGE_INCOMPLETE_MESSAGE: &str = "The gxserver package for that machine is incomplete: zmx, ghostex or gxserver is missing or does not run, so the machine was left as it was. Update or reinstall Ghostex on this computer, then reconnect.";
-pub(crate) const GPUI_REMOTE_RUNTIME_BROKEN_MESSAGE: &str = "gxserver runs on that machine, but its zmx program is missing or broken, so new sessions cannot start.";
+pub(crate) const GPUI_REMOTE_NO_SAVED_PASSWORD_MESSAGE: &str = "The machine refused the login: no SSH password is saved for it, and it accepted no SSH key from this computer. Enter its SSH password in Settings > Remote > this machine. On Windows, that is the account password, not the Windows Hello PIN.";
+pub(crate) const GPUI_REMOTE_RUNTIME_BROKEN_MESSAGE: &str = "Ghostex on that machine answers, but it can't find its session program (zmx), so new sessions there can't start.";
 
 pub(crate) fn gpui_remote_sanitized_process_failure(
     default_message: &str,
@@ -416,6 +502,18 @@ pub(crate) fn gpui_remote_sanitized_process_failure(
     let stderr = result.stderr.trim().to_ascii_lowercase();
     if stderr.contains(GPUI_REMOTE_PACKAGE_INCOMPLETE_MARKER) {
         return GPUI_REMOTE_PACKAGE_INCOMPLETE_MESSAGE.to_string();
+    }
+    // The remote token read stops when `gxserver start` there met another account's listener, or
+    // one run as root (ghostex_paths::loopback_owner::REFUSAL_MARKER, lowercased like `stderr`).
+    if stderr.contains("so ghostex did not send it the access token") {
+        let who = if stderr.contains("running as root") {
+            "Ghostex's service on that machine runs as root (it was started with sudo)"
+        } else {
+            "Another account on that machine is listening where its Ghostex service should be"
+        };
+        return format!(
+            "{who}, so Ghostex did not send it the access token. Stop that program on the machine (an administrator can find it with `sudo lsof -nP -iTCP:58744 -sTCP:LISTEN`), then reconnect."
+        );
     }
     if stderr.contains("netcat-openbsd") {
         return "SSH password authentication on Linux requires netcat-openbsd. Install it on this computer, then reconnect.".to_string();
@@ -840,7 +938,7 @@ pub(crate) fn gpui_remote_identity_server_id(stdout: &str) -> Option<String> {
 }
 
 /// This app's own gxserver's server id, from its health answer.
-fn gpui_local_gxserver_server_id() -> Option<String> {
+pub(crate) fn gpui_local_gxserver_server_id() -> Option<String> {
     gpui_gxserver_server_health(Duration::from_millis(1500))
         .ok()?
         .get("serverId")?
@@ -875,13 +973,19 @@ pub(crate) fn gpui_remote_token_read_command() -> &'static str {
         "if [ ! -x \"$GHOSTEX_BIN\" ] && [ -x \"$GHOSTEX_REMOTE_LEGACY_ROOT/package/bin/ghostex\" ]; then GHOSTEX_BIN=\"$GHOSTEX_REMOTE_LEGACY_ROOT/package/bin/ghostex\"; fi; ",
         "if [ ! -x \"$GHOSTEX_BIN\" ] && [ -x \"$HOME/.local/bin/ghostex\" ]; then GHOSTEX_BIN=\"$HOME/.local/bin/ghostex\"; fi; ",
         "GHOSTEX_REMOTE_START_FAILED=0; ",
+        "GHOSTEX_REMOTE_START_LOG=\"$(mktemp 2>/dev/null || printf /dev/null)\"; ",
         "if [ -x \"$GXSERVER_BIN\" ]; then ",
         "GHOSTEX_REMOTE_COMMAND_BIN=\"$GXSERVER_BIN\"; ",
-        "\"$GXSERVER_BIN\" start --json >/dev/null 2>&1 || \"$GXSERVER_BIN\" start >/dev/null 2>&1 || GHOSTEX_REMOTE_START_FAILED=1; ",
+        "\"$GXSERVER_BIN\" start --json >\"$GHOSTEX_REMOTE_START_LOG\" 2>&1 || \"$GXSERVER_BIN\" start >>\"$GHOSTEX_REMOTE_START_LOG\" 2>&1 || GHOSTEX_REMOTE_START_FAILED=1; ",
         "elif [ -x \"$GHOSTEX_BIN\" ]; then ",
         "GHOSTEX_REMOTE_COMMAND_BIN=\"$GHOSTEX_BIN\"; ",
-        "\"$GHOSTEX_BIN\" server start --json >/dev/null 2>&1 || \"$GHOSTEX_BIN\" server start >/dev/null 2>&1 || GHOSTEX_REMOTE_START_FAILED=1; ",
+        "\"$GHOSTEX_BIN\" server start --json >\"$GHOSTEX_REMOTE_START_LOG\" 2>&1 || \"$GHOSTEX_BIN\" server start >>\"$GHOSTEX_REMOTE_START_LOG\" 2>&1 || GHOSTEX_REMOTE_START_FAILED=1; ",
         "else exit 127; fi; ",
+        // Another account (or root) holding gxserver's port there makes `start` refuse with words
+        // every refusal has (ghostex_paths::loopback_owner::REFUSAL_MARKER); the token must not
+        // go through the tunnel to that listener.
+        "if grep -q 'so Ghostex did not send it the access token' \"$GHOSTEX_REMOTE_START_LOG\" 2>/dev/null; then cat \"$GHOSTEX_REMOTE_START_LOG\" >&2; rm -f \"$GHOSTEX_REMOTE_START_LOG\"; exit 125; fi; ",
+        "[ \"$GHOSTEX_REMOTE_START_LOG\" = /dev/null ] || rm -f \"$GHOSTEX_REMOTE_START_LOG\"; ",
         "GHOSTEX_REMOTE_COMMAND_LINK=\"$(readlink \"$GHOSTEX_REMOTE_COMMAND_BIN\" 2>/dev/null || true)\"; ",
         "case \"$GHOSTEX_REMOTE_COMMAND_BIN|$GHOSTEX_REMOTE_COMMAND_LINK\" in *\"$GHOSTEX_REMOTE_LEGACY_ROOT/\"*) GHOSTEX_REMOTE_TOKEN_FILE=\"$GHOSTEX_REMOTE_LEGACY_ROOT/auth/token\";; esac; ",
         "if [ ! -r \"$GHOSTEX_REMOTE_TOKEN_FILE\" ]; then if [ \"$GHOSTEX_REMOTE_START_FAILED\" = \"1\" ]; then exit 127; fi; exit 126; fi; ",
@@ -939,6 +1043,8 @@ pub(crate) enum GpuiRemoteManagedPackageUpdate {
     BuildIdentity,
     /// Its zmx or ghostex is missing, dangling or not executable, whatever its build.
     BrokenRuntime,
+    /// The user pressed Reinstall for the machine (`GpuiRemoteMachineConfig::reinstall_package`).
+    Requested,
 }
 
 /// The decision over [`gpui_remote_managed_gxserver_build_identity_command`]'s output and the
@@ -1016,6 +1122,8 @@ pub(crate) fn gpui_remote_installed_gxserver_version_command() -> &'static str {
         "GHOSTEX_REMOTE_IDENTITY_FILE=\"$(dirname \"$(dirname \"$GHOSTEX_REMOTE_RESOLVED_BIN\")\")/build-identity.json\"; ",
         "if [ ! -r \"$GHOSTEX_REMOTE_IDENTITY_FILE\" ] && [ -r \"$GHOSTEX_REMOTE_DATA_DIR/gxserver/package/build-identity.json\" ]; then GHOSTEX_REMOTE_IDENTITY_FILE=\"$GHOSTEX_REMOTE_DATA_DIR/gxserver/package/build-identity.json\"; fi; ",
         "if [ ! -r \"$GHOSTEX_REMOTE_IDENTITY_FILE\" ] && [ -r \"$GHOSTEX_REMOTE_LEGACY_ROOT/package/build-identity.json\" ]; then GHOSTEX_REMOTE_IDENTITY_FILE=\"$GHOSTEX_REMOTE_LEGACY_ROOT/package/build-identity.json\"; fi; ",
+        // A package Ghostex installed there (the one Reinstall replaces), printed outside the markers.
+        "if [ -r \"$GHOSTEX_REMOTE_DATA_DIR/gxserver/package/build-identity.json\" ] || [ -r \"$GHOSTEX_REMOTE_LEGACY_ROOT/package/build-identity.json\" ]; then printf '__GHOSTEX_REMOTE_GXSERVER_MANAGED__\\n'; fi; ",
         "printf '__GHOSTEX_REMOTE_GXSERVER_VERSION_START__\\n'; ",
         "if [ -r \"$GHOSTEX_REMOTE_IDENTITY_FILE\" ]; then cat \"$GHOSTEX_REMOTE_IDENTITY_FILE\"; elif [ -x \"$GXSERVER_BIN\" ]; then \"$GXSERVER_BIN\" --version 2>/dev/null || true; fi; ",
         "printf '\\n__GHOSTEX_REMOTE_GXSERVER_VERSION_END__\\n'"
@@ -1088,5 +1196,28 @@ mod this_computer_tests {
         assert_eq!(gpui_remote_identity_server_id(""), None);
         assert!(!gpui_remote_is_this_computer(None, Some("S6s")));
         assert!(!gpui_remote_is_this_computer(Some("S6s"), None));
+    }
+}
+
+#[cfg(test)]
+mod protocol_mismatch_tests {
+    use super::gpui_remote_protocol_mismatch_message_for;
+
+    /// GitHub #476: a machine's own gxserver at another build connects; only another protocol is
+    /// refused, naming the Ghostex to update.
+    #[test]
+    fn only_another_protocol_is_refused_with_the_ghostex_to_update() {
+        assert_eq!(
+            gpui_remote_protocol_mismatch_message_for(Some(1), 1, "10.50.0"),
+            None
+        );
+        assert_eq!(
+            gpui_remote_protocol_mismatch_message_for(None, 1, "10.50.0"),
+            None
+        );
+        let older = gpui_remote_protocol_mismatch_message_for(Some(1), 2, "10.50.0").unwrap();
+        assert!(older.contains("Update Ghostex on that machine to 10.50.0 to connect."));
+        let newer = gpui_remote_protocol_mismatch_message_for(Some(3), 2, "10.50.0").unwrap();
+        assert!(newer.contains("Update Ghostex on this computer to connect."));
     }
 }

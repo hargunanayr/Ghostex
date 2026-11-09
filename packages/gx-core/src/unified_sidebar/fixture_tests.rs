@@ -83,6 +83,7 @@ fn session_row(machine: &MachineId, session: &Value) -> SessionRow {
         },
         activity: session["activity"].as_str().unwrap_or("idle").to_string(),
         awaiting_approval: flag(session, "awaitingApproval"),
+        awaiting_answer: flag(session, "awaitingAnswer"),
         pending_question_count: session["pendingQuestionCount"].as_u64().unwrap_or(0),
         model_selection_failed: flag(session, "modelSelectionFailed"),
         program_status_failed: flag(session, "programStatusFailed"),
@@ -151,6 +152,7 @@ fn project_group(machine: &MachineId, project: &Value, sessions: &[&Value]) -> G
             is_stale: false,
             machine_names: Vec::new(),
             action_target: None,
+            folded_worktrees: Vec::new(),
         }),
         collection_color: None,
         collection_id: None,
@@ -264,6 +266,7 @@ fn expected_of(case: &Value) -> Value {
     let settings = UnifiedSettings {
         working_section: case["settings"]["workingSection"].as_bool() != Some(false),
         enable_session_parking: flag(&case["settings"], "parking"),
+        pinned_session_order: crate::sidebar_view::PinnedSessionOrder::Manual,
     };
     let set =
         |key: &str| -> BTreeSet<String> { strings(&case["filter"][key]).into_iter().collect() };

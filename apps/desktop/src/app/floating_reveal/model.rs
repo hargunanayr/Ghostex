@@ -144,6 +144,22 @@ pub(crate) struct FloatingRevealState {
     pub(crate) slide: FloatingRevealSlide,
 }
 
+/// macOS: (whether the window shows its own traffic lights, whether its top-left keeps room for
+/// them). Shown while the sidebar is docked, and in full screen, where macOS needs them for the title
+/// bar that slides down over the window, and with the sidebar collapsed when
+/// `showWindowButtonsWhenSidebarCollapsed` keeps them (CDXC:Titlebar 2026-11-08 DECISION in
+/// helpers/work_area_frame.rs); room is kept only outside full screen (CDXC:Titlebar 2026-11-07
+/// DECISION in helpers/work_area_frame.rs).
+fn window_controls_state(
+    sidebar_collapsed: bool,
+    fullscreen: bool,
+    keep_when_collapsed: bool,
+) -> (bool, bool) {
+    let shown =
+        cfg!(target_os = "macos") && (!sidebar_collapsed || fullscreen || keep_when_collapsed);
+    (shown, shown && !fullscreen)
+}
+
 impl GhostexGpuiApp {
     /// The reveal exists while something is folded away: the collapsed sidebar, or the sessions
     /// column an expanded view has taken the workarea from.
@@ -158,7 +174,7 @@ impl GhostexGpuiApp {
     /// supersedes the same-day arrangement that floated it over the sidebar for the hover.
     pub(crate) fn floating_reveal_left_inset(&self) -> f32 {
         if self.sidebar_collapsed {
-            0.0
+            self.floating_reveal_card_inset(self.floating_reveal_content())
         } else {
             self.sidebar_width + SIDEBAR_DIVIDER_WIDTH
         }
@@ -266,6 +282,115 @@ impl GhostexGpuiApp {
         (sidebar + rail + column).clamp(1.0, span)
     }
 
+    /// macOS: the main window shows its own traffic lights. They hide with the sidebar unless
+    /// Settings keeps them (`showWindowButtonsWhenSidebarCollapsed`), and show in full screen, where macOS shows them only with the menu bar and the floating sidebar does
+    /// not carry them. Always false on Windows and Linux, which have no lights on the left.
+    pub(crate) fn window_controls_shown(&self) -> bool {
+        window_controls_state(
+            self.sidebar_collapsed,
+            self.main_window_fullscreen,
+            crate::app::helpers::show_window_buttons_when_sidebar_collapsed(),
+        )
+        .0
+    }
+
+    /// The window's top-left keeps room for its traffic lights (`sidebar_toggle_leading_x`).
+    pub(crate) fn window_controls_reserved(&self) -> bool {
+        window_controls_state(
+            self.sidebar_collapsed,
+            self.main_window_fullscreen,
+            crate::app::helpers::show_window_buttons_when_sidebar_collapsed(),
+        )
+        .1
+    }
+
+    /// The floating panel carrying `content` runs the window's full height and shows the main
+    /// window's own traffic lights in its top row, where the window keeps them
+    /// (`workspace_traffic_light_position`; native/macos/GpuiSidebarReveal.m lends them back).
+    /// Only a panel that carries the hidden sidebar does: it is then at the window's left edge,
+    /// where the lights belong. A sessions column alone keeps today's place under the header.
+    ///
+    /// CDXC:Sidebar 2026-11-06 DECISION:
+    /// GitHub #432 (maintainer: "seems very minor but sure do it why not"): with the sidebar hidden the floating sidebar carries the traffic lights in its top row, as in Arc and Dia, and its content stays as it is (the maintainer designs that row himself). The row only keeps the lights clear: it starts past them by the docked row's reserve, so its right-aligned buttons narrow before they reach the green light, and it holds the lights' centre line as the docked row does (native_sidebar/navigation.rs).
+    pub(crate) fn floating_reveal_carries_window_controls(
+        &self,
+        content: FloatingRevealContent,
+    ) -> bool {
+        cfg!(target_os = "macos") && content.sidebar && !self.window_controls_shown()
+    }
+
+    /// The floating sidebar's top row while the panel shows the window's lights at its start: where
+    /// its buttons may start (the docked row's reserve) and how much lower than without the frame
+    /// the lights sit in the panel (native_sidebar/navigation.rs). None while it shows no lights.
+    /// With the work area frame on the lights move in and down by the frame's gutter and so does
+    /// the panel (`floating_reveal_card_inset`), so in the panel they sit where they do without it.
+    pub(crate) fn floating_sidebar_lights_row(&self) -> Option<(f32, f32)> {
+        self.floating_reveal_carries_window_controls(self.floating_reveal_content())
+            .then(|| {
+                (
+                    crate::app::helpers::sidebar_toggle_window_x(true, false),
+                    0.0,
+                )
+            })
+    }
+
+    /// macOS: the panel carrying `content` floats the hidden sidebar, so it runs the window's full
+    /// height from the top, in full screen too (where it carries no lights), unless the window keeps
+    /// its own lights in its top-left with the sidebar collapsed (`floating_sidebar_full_height`). A
+    /// sessions column alone keeps its place under the header, as on Windows and Linux.
+    ///
+    /// CDXC:Sidebar 2026-11-07 WHY:
+    /// A contributor change from the GitHub #432 follow-up PR, not a maintainer decision (promote it to a DECISION if you agree with it). In full screen the floating sidebar runs the full height too, from the top of the screen as it does windowed, instead of sitting under the header; full screen shows no lights, so there are no holes and its top row starts at the top. With "Frame the work area" on it sits inside the frame like a card, as in Dia: inset from the window's top, left and bottom edges by the frame's gutter, its corners concentric with the window's, the lights inside it where the window shows them with the frame (`floating_reveal_card_inset`, `floating_panel_corner_radii` in host_macos.rs). The floating sidebar thus keeps one shape in every mode where it runs the full height (see `floating_sidebar_full_height` for when it does not) and never runs outside the frame.
+    pub(crate) fn floating_reveal_full_height(&self, content: FloatingRevealContent) -> bool {
+        content.sidebar && self.floating_sidebar_full_height()
+    }
+
+    /// macOS: the floating sidebar runs the window's full height, except while the window keeps its
+    /// own traffic lights and their room in its top-left with the sidebar collapsed
+    /// (`window_controls_reserved`): then it keeps its place under the header, as before #494.
+    ///
+    /// CDXC:Sidebar 2026-11-08 WHY:
+    /// The full-height panel above came in the same week as `showWindowButtonsWhenSidebarCollapsed` (CDXC:Titlebar 2026-11-08 DECISION in helpers/work_area_frame.rs), and the user asked that the two not conflict ("keep in mind i added the setting to show/hide traffic lights when sidebar collapsed i think might conflict?"). With that setting on (its default) the window shows its own lights with the sidebar collapsed and the floating sidebar carries none, so a panel from the window's top would cover them and the header's toggles beside them for as long as it is open. One rule decides both: the panel runs full height (and is a card inside the frame) exactly when the window keeps no room for its lights, which is with the setting off (the panel carries the lights) and in full screen (no lights in the window).
+    pub(crate) fn floating_sidebar_full_height(&self) -> bool {
+        cfg!(target_os = "macos") && !self.window_controls_reserved()
+    }
+
+    /// The gutter the full-height panel keeps from the window's top, left and bottom edges: the work
+    /// area frame's, so it sits inside the frame as a card; 0 without the frame.
+    pub(crate) fn floating_reveal_card_inset(&self, content: FloatingRevealContent) -> f32 {
+        if self.floating_reveal_full_height(content)
+            && crate::app::helpers::work_area_frame_active()
+        {
+            crate::app::helpers::WORK_AREA_FRAME_MARGIN
+        } else {
+            0.0
+        }
+    }
+
+    /// The panel's top in the main window: the window's top (inside the frame's gutter) while it
+    /// floats the sidebar, otherwise the header's bottom, so the header keeps its controls and its
+    /// drag band.
+    pub(crate) fn floating_reveal_top(&self, content: FloatingRevealContent) -> f32 {
+        if self.floating_reveal_full_height(content) {
+            self.floating_reveal_card_inset(content)
+        } else {
+            crate::app::render::workarea_header::workarea_header_bottom_y()
+        }
+    }
+
+    /// The window's own traffic lights show through the open panel over the header's start, so the
+    /// header draws nothing there (its toggles hide; render/workarea_header/breadcrumb.rs and the
+    /// header's copy of the sidebar row in native_sidebar/navigation.rs).
+    ///
+    /// CDXC:Sidebar 2026-11-07 WHY:
+    /// The panel's holes sit half a point inside each light, but AppKit draws a light's rim partly transparent, so on a light or glass theme thin slivers of the toggle icons under it showed around the lights (GitHub #432 follow-up). Nothing the window draws there may depend on that inset.
+    pub(crate) fn window_lights_over_header(&self) -> bool {
+        self.floating_reveal
+            .panel
+            .as_ref()
+            .is_some_and(|panel| self.floating_reveal_carries_window_controls(panel.content))
+    }
+
     /// True while the sidebar is shown as the floating panel (the collapsed sidebar revealed from
     /// the left edge). A panel carrying only the sessions column sits beside a docked sidebar, so
     /// it does not count.
@@ -284,5 +409,20 @@ impl GhostexGpuiApp {
             .panel
             .as_ref()
             .is_some_and(|panel| panel.content.agents_column)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::window_controls_state;
+
+    #[test]
+    fn only_the_docked_window_outside_full_screen_keeps_room_for_the_lights() {
+        let mac = cfg!(target_os = "macos");
+        // (sidebar collapsed, full screen, kept when collapsed) -> (lights shown, room kept)
+        assert_eq!(window_controls_state(false, false, false), (mac, mac));
+        assert_eq!(window_controls_state(true, false, false), (false, false));
+        assert_eq!(window_controls_state(false, true, false), (mac, false));
+        assert_eq!(window_controls_state(true, true, false), (mac, false));
     }
 }

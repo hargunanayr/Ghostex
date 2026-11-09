@@ -28,7 +28,15 @@ impl GhostexGpuiApp {
                     .sessions
                     .iter()
                     .find(|session| session.row.key.as_ref() == Some(key))
-                    .map(|session| (group.core.title.clone(), session.row.display_title.clone()))
+                    .map(|session| {
+                        // A worktree session its parent project lists is the worktree's (gx-core
+                        // sidebar_view/worktree_fold.rs), as the desktop header names it.
+                        let project = match &session.row.worktree {
+                            Some(worktree) if !worktree.name.is_empty() => worktree.name.clone(),
+                            _ => group.core.title.clone(),
+                        };
+                        (project, session.row.display_title.clone())
+                    })
             })
     }
 
@@ -112,6 +120,8 @@ impl GhostexGpuiApp {
                 )
             })
             .child(div().flex_1())
+            // Approvals put aside with Escape or Close, as on the desktop (notice_modal_host.rs).
+            .children(self.render_approvals_waiting_pill(false, cx))
             // Start and Open follow the Actions and Open In extensions, as the desktop header does.
             .when(
                 Self::web_built_in_enabled(ghostex_settings_catalog::built_in_extensions::ACTIONS),
@@ -304,6 +314,9 @@ impl GhostexGpuiApp {
 
 impl Render for GhostexGpuiApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if crate::app::collab_guest::guest().is_some() {
+            return self.render_collab_guest_shell(window, cx);
+        }
         self.web_sync_terminal_zmx_visibility(cx);
         self.web_report_chat_grid_claims(cx);
         let sidebar = (!self.sidebar_collapsed).then(|| self.render_native_sidebar(window, cx));
@@ -446,5 +459,6 @@ impl Render for GhostexGpuiApp {
             )
             .children(self.render_web_git_menu(cx))
             .children(self.render_web_toasts())
+            .into_any_element()
     }
 }

@@ -17,7 +17,7 @@
 //! lines after the first, and no style ever puts text beside the label.
 //!
 //! CDXC:MarkedHandovers 2026-10-11 DECISION:
-//! User: the chat colours the sections an agent marks, in one of three styles picked in Settings > Chat under Marked handovers ("Marked sections style": a thin left rule, a coloured badge in place of the emoji, or coloured labels, the default). A bold label line and the bullets under it are one section. Colours are the mockup's palette (docs/2026-10-11/chat-section-markers/index.html), In progress #00A6ED; ❓ Needs you is orange #fb923c (#c2410c on a light chat; 2026-10-12, user: "these both are same color, please change Needs you color", when it was blue #60a5fa next to In progress); 🛫 Kicked off (user: "let's call it 'Kicked off'", work started this turn) is pink. It applies to every agent's replies that carry markers (orchestrators and their threads always mark their handovers; Marked handovers extends that to every session); copying a message still gives the agent's own text (`copyText` is the unmarked body). The label stands alone on its line (2026-10-13, user: "we agreed that we shouldn't show the text to the right of the heading in the responses when using colorful handover"): text an agent writes after the label on the same line is drawn under it as the section's first paragraph, in every style, whatever the agent wrote. Supersedes the same day's summary strip of chips at the top of the message counting what needs the reader (user: "let's actually just remove the summary at the top i don't think it's useful at all").
+//! User: the chat colours the sections an agent marks, in one of three styles picked in Settings > Chat under Marked handovers ("Marked sections style": a thin left rule, a coloured badge in place of the emoji, or coloured labels, the default). A bold label line and the bullets under it are one section. Colours are the mockup's palette (docs/2026-10-11/chat-section-markers/index.html), In progress #C68A06 (2026-11-06, user: "please make in progress color in handover headings #C68A06 like Moving is in the board"; first #00A6ED); ❓ Needs you is pink #f472b6, the sidebar's question dot (#be185d on a light chat; 2026-11-08, user: "please make Needs you pinkish color in the handover section headings, and make blocked red"; 🛑 Blocked is the sidebar's red dot #ef4444, #dc2626 on a light chat; before that it was orange #fb923c / #c2410c, set 2026-10-12, user: "these both are same color, please change Needs you color", when it was blue #60a5fa next to In progress); 🛫 Kicked off (user: "let's call it 'Kicked off'", work started this turn) was pink and is sky blue #38bdf8 (#0369a1 light) since 2026-11-08, when Needs you took the pink. It applies to every agent's replies that carry markers (orchestrators and their threads always mark their handovers; Marked handovers extends that to every session); copying a message still gives the agent's own text (`copyText` is the unmarked body). The label stands alone on its line (2026-10-13, user: "we agreed that we shouldn't show the text to the right of the heading in the responses when using colorful handover"): text an agent writes after the label on the same line is drawn under it as the section's first paragraph, in every style, whatever the agent wrote. Supersedes the same day's summary strip of chips at the top of the message counting what needs the reader (user: "let's actually just remove the summary at the top i don't think it's useful at all").
 //! SEE-ALSO: apps/desktop/src/app/native_chat/marked_sections.rs (GPUI drawing and the palette), apps/mobile/app/src/chat/native/transcript/markdown/MarkedSections.tsx (phone drawing), server/src/agents/marked_handovers.rs (the note that asks agents for these markers; the emoji and names must match it).
 
 use serde_json::json;
@@ -75,7 +75,8 @@ const MARKERS: [Marker; 12] = [
         kind: "shipped",
         emoji: "\u{1f680}",
         name: "Shipped",
-    },    Marker {
+    },
+    Marker {
         kind: "comms",
         emoji: "\u{1f4e3}",
         name: "Comms",
@@ -349,7 +350,15 @@ fn skip_block(lines: &[&str], index: usize) -> Option<usize> {
             }
             end += 1;
         }
-        return Some(lines.len());
+        // A mark with no closing line is a line of its own (the inline answers' `answers:`).
+        //
+        // CDXC:MarkedHandovers 2026-11-08 WHY:
+        // User: "why do i see emojis here even tho i shouldn't since i have emojis disabled?" A
+        // reply with a one-click answer line ([In 11.1.2](ghostex-answer:Q1981)) above its
+        // handover drew ✅ Done, 🧪 Untested and ❓ Needs you plain, emoji and all: the answers
+        // mark has no closing line, so it was read as a block running to the end of the reply,
+        // and every section after it went unmarked.
+        return Some(index + 1);
     }
     let (character, run, _) = fence_open(line)?;
     let close = lines[index + 1..]
@@ -477,6 +486,35 @@ pub fn heading_strength(percent: f64) -> Option<u8> {
     (snapped != DEFAULT_HEADING_STRENGTH).then_some(snapped)
 }
 
+/// Whether the reply has a 🛑 Blocked or ❓ Needs you section, read the way the chat draws its
+/// marked sections: a top-level line or heading that opens with the marker, outside code fences.
+///
+/// CDXC:Notifications 2026-11-06 WHY:
+/// A finished turn whose handover ends with Blocked or Needs you waits on the reader as much as a
+/// question card does, so
+/// gxserver publishes it on the session's attention (`handoverNeedsYou`) for the Needs you only
+/// alerts (gx-core `attention::AttentionAlerts`).
+pub fn waits_on_reader(markdown: &str) -> bool {
+    if !markdown.contains(['\u{2753}', '\u{1f6d1}']) {
+        return false;
+    }
+    let lines = split_lf(markdown);
+    let mut index = 0;
+    while index < lines.len() {
+        if let Some(end) = skip_block(&lines, index) {
+            index = end;
+            continue;
+        }
+        if opening(lines[index])
+            .is_some_and(|opening| matches!(opening.marker.kind, "need" | "blocked"))
+        {
+            return true;
+        }
+        index += 1;
+    }
+    false
+}
+
 /// The reply's text without the section marks, for search: what a reader sees.
 pub fn without_section_marks(text: &str) -> String {
     if !text.contains(NATIVE_SECTION_OPEN) {
@@ -506,5 +544,27 @@ mod tests {
             );
         }
         assert_eq!(marked.matches(NATIVE_SECTION_CLOSE).count(), 4);
+    }
+
+    #[test]
+    fn a_blocked_or_needs_you_section_waits_on_the_reader() {
+        for reply in [
+            "✅ **Done:**\n- Fixed it.\n\n❓ **Needs you:**\n- Pick a name.",
+            "**🛑 Blocked:**\n- The token expired.",
+            "## ❓ Open questions\n- Which branch?",
+            "❓ Needs you: approve the deploy.",
+            "⚠️ **Read this:**\n- Slow.\n\n🛑 Blocked\n- CI is red.",
+        ] {
+            assert!(waits_on_reader(reply), "{reply}");
+        }
+        for reply in [
+            "Plain reply with no markers.",
+            "✅ **Done:**\n- Fixed it.\n\n💡 **Suggestions:**\n- Add a flag.",
+            "✅ **Done:**\n- ❓ Needs you was empty this time.",
+            "```\n❓ **Needs you:** inside a fence\n```",
+            "The ❓ marker in the middle of a sentence.",
+        ] {
+            assert!(!waits_on_reader(reply), "{reply}");
+        }
     }
 }

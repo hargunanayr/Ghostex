@@ -29,7 +29,8 @@ use super::super::rail::{rail_pages, render_no_matches};
 use super::super::search::{GeneralSearch, RowTier};
 use super::super::store::{SettingsStore, SettingsValues};
 use gpui::{
-    AnyElement, Context, Entity, IntoElement, ParentElement as _, Render, Styled as _, Window, div,
+    AnyElement, Context, Entity, IntoElement, ParentElement as _, Render, SharedString,
+    Styled as _, Window, div,
 };
 use serde_json::{Value, json};
 
@@ -41,7 +42,7 @@ pub(crate) struct GeneralTab {
     powershell: powershell::PowerShellState,
     /// The Marked sections style Preview dialog, while it is open (its focus, for Escape).
     marked_preview: Option<gpui::FocusHandle>,
-    /// The orchestrator playbook for all projects and its editor.
+    /// The playbook overrides and their editor.
     orchestrator_playbook: super::orchestrator_playbook::OrchestratorPlaybookState,
 }
 
@@ -78,10 +79,16 @@ impl GeneralTab {
             .filter(|state| super::orchestrator_playbook::preview_opens_editor(state))
             .filter(|state| !state.starts_with("projects"))
         {
-            super::orchestrator_playbook::open_playbook_sheet(&mut page, None, window, cx);
+            super::orchestrator_playbook::open_playbook_sheet(&mut page, window, cx);
             if state.ends_with("-armed") {
-                super::orchestrator_playbook::preview_arm_reset(&mut page);
+                super::orchestrator_playbook::preview_arm_switch(&mut page);
             }
+        }
+        // `orchestrator-playbook…-view` opens the read-only playbook.
+        if preview_state.as_deref().is_some_and(|state| {
+            chat && state.starts_with("orchestrator-playbook") && state.ends_with("-view")
+        }) {
+            super::orchestrator_playbook::open_playbook_view(&mut page, window, cx);
         }
         page
     }
@@ -111,13 +118,25 @@ pub(super) struct GeneralCx {
     pub(super) p: SettingsPalette,
     pub(super) values: SettingsValues,
     pub(super) search: GeneralSearch,
-    /// `showBetaFeatures`: Power shows only with Enable Experimental Features.
+    /// Power shows only while Keep Awake is on (Settings > Extensions > Experimental).
     pub(super) power_visible: bool,
     /// The Sidebar Tags deep link asked for the New tag form.
     pub(super) create_tag: bool,
+    /// The anchors of the sections the page already shows above the Advanced fold.
+    pub(super) shown_above_fold: Vec<String>,
 }
 
 impl GeneralCx {
+    /// CDXC:Settings 2026-11-07 WHY:
+    /// The Advanced fold reuses each page's section builders, so a section with both everyday and advanced rows used to show its heading twice ("Sidebar" and "Session Cards" again under Advanced on Sidebar & Sessions). Inside the fold such a section is titled "More <title> settings"; a section whose rows are all advanced keeps its own title, since it shows only once.
+    pub(super) fn section_title(&self, anchor: &str, title: &str) -> SharedString {
+        if self.shown_above_fold.iter().any(|shown| shown == anchor) {
+            format!("More {title} settings").into()
+        } else {
+            SharedString::from(title.to_string())
+        }
+    }
+
     /// `mainSettingVisible(settingsSearch[section], key)`.
     pub(super) fn visible(&self, section: &str, key: &str) -> bool {
         self.search.setting_visible(section, key)
@@ -333,9 +352,10 @@ impl Render for GeneralTab {
                 p: store.palette(),
                 values: store.values(),
                 search: store.general_search().clone(),
-                power_visible: store.bool("showBetaFeatures"),
+                power_visible: store.keep_awake_on(),
                 create_tag: store.request().initial_sidebar_tags_action.as_deref()
                     == Some("createTag"),
+                shown_above_fold: Vec::new(),
             };
             let matching: Vec<SettingsTabId> = if store.is_searching() {
                 rail_pages(store).into_iter().map(|page| page.tab).collect()
@@ -368,6 +388,10 @@ impl Render for GeneralTab {
         let mut blocks: Vec<PageBlock> = sections(self, &everyday, window, cx);
         let advanced = GeneralCx {
             search: g.search.clone().with_tier(RowTier::Advanced),
+            shown_above_fold: blocks
+                .iter()
+                .filter_map(|block| block.anchor.clone())
+                .collect(),
             ..g.clone()
         };
         let advanced_blocks = sections(self, &advanced, window, cx);
@@ -440,10 +464,13 @@ impl Render for GeneralTab {
         let preview = self.marked_sections_preview(&g, window, cx);
         let instructions =
             super::orchestrator_playbook::render_playbook_sheet(self, &g.p, window, cx);
+        let playbook_view =
+            super::orchestrator_playbook::render_playbook_view_sheet(self, &g.p, window, cx);
         div()
             .size_full()
             .child(settings_page(&self.store, tab, &g.p, blocks, cx))
             .children(preview)
             .children(instructions)
+            .children(playbook_view)
     }
 }

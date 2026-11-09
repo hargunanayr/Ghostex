@@ -43,6 +43,10 @@ pub const DEFAULT_GHOSTEX_SETTINGS: &[(&str, J)] = &[
     // CDXC:SessionLinks 2026-10-24 DECISION: User: "user can pick to open in embedded or external browser in settings (default to embedded)".
     ("sessionLinkOpenTarget", J::Str("embedded")),
     ("browserPagesInViewRow", J::Bool(false)),
+    // CDXC:Extensions 2026-11-09 DECISION: User: "that url is mine but it should open grok.com usually please". The Grok page opens grok.com unless the user puts their own page (a Grok bot, say) here; no one's own page ships as a default.
+    ("grokWebStartPage", J::Str("https://grok.com/")),
+    // The Grok logins, each `{ "id", "name" }` with its own browser profile (apps/desktop/src/app/claude_web/grok.rs). Empty is one login named Grok.
+    ("grokWebLogins", J::Arr(&[])),
     // CDXC:SessionLinks 2026-10-27 SEE-ALSO: `SessionLinksDisplay` in packages/gx-core/src/sidebar_view/links.rs (what each value shows). The default is Badge (2026-10-27: "and also please make the sidebar show as badge by default"), which replaces the 2026-10-24 Always default.
     ("sidebarSessionLinks", J::Str("badge")),
     // CDXC:SessionLinks 2026-10-24 SEE-ALSO: native_sidebar/links_list.rs; the links list's folded groups, kept app-wide (Merged or closed and Removed folded until opened).
@@ -57,6 +61,7 @@ pub const DEFAULT_GHOSTEX_SETTINGS: &[(&str, J)] = &[
     // CDXC:Navigation 2026-10-17 SEE-ALSO: these replace markdownFileOpenView, htmlFileOpenView and imageFileOpenTarget, which still decide until documentFileOpenTarget is saved (file_opening.rs).
     ("documentFileOpenTarget", J::Str("files")),
     ("fileChangesOpenTarget", J::Str("changes")),
+    ("changesHideTestFiles", J::Bool(false)),
     ("otherFileOpenTarget", J::Str("files")),
     ("videoFileOpenTarget", J::Str("files")),
     ("audioFileOpenTarget", J::Str("files")),
@@ -84,10 +89,8 @@ pub const DEFAULT_GHOSTEX_SETTINGS: &[(&str, J)] = &[
     // Advanced Settings.
     //
     // CDXC:Automations 2026-09-17:
-    // All Automations and project Automate start hidden behind their
-    // coming-soon overlay until Enable Experimental Features is on.
-    ("showBetaFeatures", J::Bool(false)),
     ("fasterRendering", J::Bool(false)),
+    ("chatToolCallLines", J::Bool(false)),
     ("codeViewTabHidden", J::Bool(false)),
     ("browserViewTabHidden", J::Bool(false)),
     ("kanbanViewTabHidden", J::Bool(false)),
@@ -114,6 +117,10 @@ pub const DEFAULT_GHOSTEX_SETTINGS: &[(&str, J)] = &[
     // CDXC:Bots 2026-09-26 DECISION:
     // User: Bot automations is its own switch, off by default, so Bots can be on without the feed.
     ("botAutomationsHidden", J::Bool(true)),
+    // CDXC:GBots 2026-11-08 DECISION: GBots is off by default (official_extensions.rs).
+    ("gbotsEnabled", J::Bool(false)),
+    // CDXC:GBots 2026-11-09 DECISION: User (Q2103 A): Chief of Staff adds GBots on its own, on by default; off, each add asks you first (server/src/server/security_gates.rs).
+    ("gbotsChiefAddsOnItsOwn", J::Bool(true)),
     ("tipsAndTricksTitlebarButtonHidden", J::Bool(false)),
     ("notificationsTitlebarButtonHidden", J::Bool(false)),
     ("helpTitlebarButtonHidden", J::Bool(false)),
@@ -140,12 +147,55 @@ pub const DEFAULT_GHOSTEX_SETTINGS: &[(&str, J)] = &[
     ("sessionNotesHidden", J::Bool(true)),
     // CDXC:Extensions 2026-10-25 DECISION: Claude is off by default (official_extensions.rs).
     ("claudeWebHidden", J::Bool(true)),
+    // CDXC:Extensions 2026-11-09 DECISION: Grok is off by default, like Claude (official_extensions.rs).
+    ("grokWebHidden", J::Bool(true)),
     // CDXC:Extensions 2026-10-19 DECISION: Connectors, OS Integration and Debugging are on by default; their old gates still apply (official_extensions.rs).
-    ("connectorsHidden", J::Bool(false)),
-    ("osIntegrationHidden", J::Bool(false)),
+    // Off by default since Experimental features became one switch each (2026-11-09).
+    ("connectorsHidden", J::Bool(true)),
+    ("osIntegrationHidden", J::Bool(true)),
+    ("keepAwakeEnabled", J::Bool(false)),
+    ("allAutomationsEnabled", J::Bool(false)),
     ("debuggingHidden", J::Bool(false)),
     // CDXC:VoiceMode 2026-10-25 DECISION: the voice agent is a built-in extension, on by default (official_extensions.rs).
     ("voiceAgentHidden", J::Bool(false)),
+    // CDXC:Chief 2026-11-08 DECISION: Chief is a built-in extension, on by default (official_extensions.rs).
+    // CDXC:Chief 2026-11-08 DECISION: User: "please disable chief of staff for now and make it an extension so ppl aren't confused by it until i finish working on it (call it beta in settings pls)", "i mean the Main Hub thingy". Main Hub (with Chief of Staff) is off by default under a new key: the settings file stores every default, so a new key is what turns it off once for every install that never chose, while anyone who turns it on after this release keeps it. Supersedes `chiefHidden` (on by default), which nothing reads any more.
+    ("mainHubHidden", J::Bool(true)),
+    // CDXC:Chief 2026-11-08 DECISION: User (Q1910): New Chat asks first, with a Don't ask again box that turns this off.
+    ("chiefConfirmNewChat", J::Bool(true)),
+    // CDXC:Chief 2026-11-08 DECISION: User: the home row "should remain top of the space that it's a part of ... not show on top of all spaces like we have now (make this a setting, default off, 'Show on all spaces')".
+    ("chiefShowOnAllSpaces", J::Bool(false)),
+    // CDXC:Chief 2026-11-08 DECISION: User (Q1915): agents Ghostex starts in the home folder are kept out of secret folders (server/src/agents/home_secret_folders.rs). Paths start with ~/ or are absolute; a missing one costs nothing.
+    (
+        "homeSecretFolders",
+        J::Arr(&[
+            J::Str("~/.ssh"),
+            J::Str("~/.aws"),
+            J::Str("~/.gnupg"),
+            J::Str("~/.config/gh"),
+            J::Str("~/.netrc"),
+            J::Str("~/.git-credentials"),
+            J::Str("~/.password-store"),
+            J::Str("~/.config/gcloud"),
+            J::Str("~/.azure"),
+            J::Str("~/.codex/auth.json"),
+            J::Str("~/.claude/.credentials.json"),
+            J::Str("~/Library/Keychains"),
+            J::Str("~/Library/Cookies"),
+            J::Str("~/Library/Safari"),
+            J::Str("~/Library/Application Support/Google/Chrome"),
+            J::Str("~/Library/Application Support/Firefox"),
+            J::Str("~/Library/Application Support/BraveSoftware"),
+            J::Str("~/Library/Application Support/Arc"),
+            J::Str("~/.mozilla"),
+            J::Str("~/.config/google-chrome"),
+            J::Str("~/.config/chromium"),
+            J::Str("~/.local/share/keyrings"),
+            J::Str("~/AppData/Local/Google/Chrome/User Data"),
+            J::Str("~/AppData/Roaming/Mozilla/Firefox"),
+            J::Str("~/AppData/Roaming/Microsoft/Credentials"),
+        ]),
+    ),
     ("openInTitlebarButtonHidden", J::Bool(false)),
     // CDXC:CodeEditor 2026-05-06-15:00
     // Embedded code-server editor panes can reuse the user's local VS Code
@@ -473,10 +523,9 @@ pub const DEFAULT_GHOSTEX_SETTINGS: &[(&str, J)] = &[
     // management from Ghostex.
     //
     // CDXC:Settings 2026-06-28-07:41:
-    // Keep Awake is an experimental macOS feature. Enable Experimental Features
-    // must be enabled before the titlebar button or runtime automation is
-    // available; this preference only hides the button again inside that enabled
-    // state.
+    // Keep Awake is an experimental macOS feature. Its own switch (`keepAwakeEnabled`, Settings >
+    // Extensions > Experimental, since 2026-11-09) must be on before the titlebar button or
+    // runtime automation is available; this preference only hides the button again while it is on.
     ("hideKeepAwakeTitlebarControl", J::Bool(false)),
     // CDXC:AgentLauncher 2026-08-01:
     // Every built-in tab strip button stays visible until the user hides it, so
@@ -490,6 +539,8 @@ pub const DEFAULT_GHOSTEX_SETTINGS: &[(&str, J)] = &[
     // Keep this default-on even after adding macOS permission prompts and test
     // controls; users should opt out explicitly when they do not want banners.
     ("showMacOSAttentionNotifications", J::Bool(true)),
+    // CDXC:Notifications 2026-11-07 DECISION: All stays the default; Needs you only (approved with PR #457) is the rule in packages/gx-core/src/attention.rs.
+    ("attentionAlertsFor", J::Str("all")),
     // CDXC:Notifications 2026-10-05 DECISION:
     // User: a banked reset that expires within 3 days, and again within 24 hours, also gets a system notification, which "can be switched off for the system" while the red bell row stays.
     ("resetExpirySystemNotifications", J::Bool(true)),
@@ -541,10 +592,19 @@ pub const DEFAULT_GHOSTEX_SETTINGS: &[(&str, J)] = &[
     ),
     ("sidebarHideProjectsWithoutSessions", J::Bool(false)),
     ("sidebarSeparateByMachine", J::Bool(false)),
+    // CDXC:RemoteMachines 2026-11-09 DECISION in gx-core sidebar_view/merged.rs: off by default in this fork (clones on one computer stay separate projects, 2026-11-06).
+    ("sidebarMergeRepositoryCopies", J::Bool(false)),
+    // CDXC:Worktrees 2026-11-06 DECISION in gx-core sidebar_view/worktree_fold.rs.
+    ("worktreeSessionsInProject", J::Bool(true)),
+    // CDXC:Sidebar 2026-11-07 DECISION in gx-core sidebar_view/inputs.rs (Pinned order): Manual by default.
+    ("pinnedSessionOrder", J::Str("manual")),
     // Settings > Sync, one switch per thing that syncs (gx-core settings_sync `SYNC_CATEGORIES`).
     ("syncSpaces", J::Bool(true)),
     ("syncAppearance", J::Bool(false)),
     ("syncAgentDefaults", J::Bool(false)),
+    ("syncAgents", J::Bool(false)),
+    ("syncSkills", J::Bool(false)),
+    ("syncAccounts", J::Bool(false)),
     ("syncSoundsAndNotifications", J::Bool(false)),
     ("syncKeybindings", J::Bool(false)),
     ("syncCoordinator", J::Bool(false)),
@@ -562,6 +622,8 @@ pub const DEFAULT_GHOSTEX_SETTINGS: &[(&str, J)] = &[
     // CDXC:Settings 2026-11-05 DECISION: User (issue #425): one Interface scale for the sidebar, chat, Files and terminal font, with Scale areas separately off by default. A file that never saved the switch reads it as on when an area was already set away from its default (`interface_scale::scale_areas_separately`).
     ("interfaceScalePercent", J::Num(100.0)),
     ("interfaceScaleAreasSeparately", J::Bool(false)),
+    // CDXC:PlatformSupport 2026-11-08 DECISION: User (issue #503): Linux takes its Display scale from the desktop by default; Settings can fix one instead (`interface_scale::LINUX_DISPLAY_SCALE_SETTING`).
+    ("linuxDisplayScale", J::Str("auto")),
     ("sessionChatZoomPercent", J::Num(100.0)),
     ("filesZoomPercent", J::Num(100.0)),
     ("sessionChatCustomTranscriptWidthEnabled", J::Bool(false)),
@@ -872,7 +934,10 @@ pub const DEFAULT_GHOSTEX_SETTINGS: &[(&str, J)] = &[
     ),
     ("showActivePaneOutline", J::Bool(false)),
     ("workspaceActivePaneBorderColor", J::Str("#3b82f6")),
-    ("workAreaFrame", J::Bool(false)),
+    // CDXC:Workarea 2026-11-08 DECISION: User: "make frame around work area toggle enabled by default for new users please". On for a new install; a settings file that already exists keeps the look it has (off) because `keep_work_area_frame_off_for_existing_settings` writes `workAreaFrame` false into it once, at the first start of the version that flips this default. Supersedes 2026-11-05's off default (GitHub issue #407, helpers/work_area_frame.rs).
+    ("workAreaFrame", J::Bool(true)),
+    // CDXC:Settings 2026-11-08 DECISION: User: "to show traffic lights on macos when sidebar is collapsed (default to yes)". On: the window's buttons stay with the sidebar collapsed, as they did before the 2026-11-06 floating-sidebar change (GitHub #432), which off restores.
+    ("showWindowButtonsWhenSidebarCollapsed", J::Bool(true)),
     ("windowGlass", J::Str("auto")),
     ("windowGlassSource", J::Str("desktopAndWindows")),
     ("windowGlassImagePlacement", J::Str("static")),

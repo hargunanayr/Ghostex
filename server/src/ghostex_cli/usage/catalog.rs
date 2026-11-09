@@ -221,6 +221,10 @@ pub fn usage() -> String {
             "List the computers this one is connected to; any agent can then start, message and read sessions there with --computer <name> (sessions, agents create/send/list, coordinator start-thread, read-session-chat, read-text and the other session verbs), or with a session ref from that computer",
         ),
         format_help_command(
+            "autopilot [status|on|off|log [--last n]|project <id> on|off|session <project-id> <session-id> on|off] [--json]",
+            "Autopilot keeps sessions going while you are away (carries on, interrupts a hung command, reloads, switches account at a limit) and logs every decision; Settings > Autopilot has every choice",
+        ),
+        format_help_command(
             "create-session [title] [--input text] [--start] [--project-id id] [--group-id id] [--cwd path]",
             "Create a terminal session; --start materializes the live terminal immediately; --group-id (with --start) puts it in one of the project's session groups (ghostex session-groups lists them); --cwd starts it in another folder while it stays in the project",
         ),
@@ -254,11 +258,11 @@ pub fn usage() -> String {
         ),
         format_help_command(
             "show <file.html> [--title text] [--json] [--no-check]",
-            "Publish a self-contained HTML page and print the ```visual block that shows it as a card in the chat; the card opens it where the reader's Open chat pages in setting says (a floating window over the chat by default). Questions written as <gx-questions> (or the page's own ghostex.submit(answers)) send the reader's answers back to you as a message; the block then lists the questions' tags, so the chat counts the page as unanswered until they arrive. When Chrome is installed it then opens the page at a phone's width and says what did not fit (--no-check skips that). Ghostex paints the page's backdrop and glass cards itself; for a page that looks good at a glance (a strong header, options side by side in .gx-options with Pick buttons, one question under them, about one screen) follow $ghostex-visuals and its examples/plan-review.html",
+            "Publish a Ghostex page (gx page): a self-contained HTML page, and print the ```visual block that shows it as a card in the chat; the card opens it where the reader's Open Ghostex pages in setting says (a floating window over the chat by default). Questions written as <gx-questions> (or the page's own ghostex.submit(answers)) send the reader's answers back to you as a message; the block then lists the questions' tags, so the chat counts the page as unanswered until they arrive. When Chrome is installed it then opens the page at a phone's width and says what did not fit (--no-check skips that). Ghostex paints the page's backdrop and glass cards itself; for a page that looks good at a glance (a strong header, options side by side in .gx-options with Pick buttons, one question under them, about one screen) follow $ghostex-visuals and its examples/plan-review.html",
         ),
         format_help_command(
             "visual check <file.json|-|page.html> [--width N] [--light] [--out file.png]",
-            "Draw a ```visual block's JSON to a PNG and print its path, or read a ```questions block and list its questions, so an agent can check it before replying. Given a page (.html), opens it in headless Chrome at a phone's width (390px) and a computer's (1280px), saves a screenshot of each and lists what does not fit",
+            "Draw a Ghostex visual (a ```visual block's JSON) to a PNG and print its path, or read a Ghostex form (a ```questions block) and list its questions, so an agent can check it before replying. Given a page (.html), opens it in headless Chrome at a phone's width (390px) and a computer's (1280px), saves a screenshot of each and lists what does not fit",
         ),
         format_help_command(
             "run-agent <agentId> [--allow-hidden]",
@@ -404,7 +408,7 @@ pub fn usage() -> String {
         format_help_command("guide --help", "Show Ghostex Help skill setup"),
         format_help_command(
             "agent-guide",
-            "Print what an agent running in Ghostex can do: pages, questions and charts in the chat, the browser, other agents, secrets, Ghostex skills",
+            "Print what an agent running in Ghostex can do: Ghostex pages, forms and visuals in the chat, the browser, other agents, secrets, Ghostex skills",
         ),
         format_help_command(
             "help ask \"<question>\" [--new] [--timeout-seconds N] [--json]",
@@ -545,15 +549,15 @@ pub fn usage() -> String {
         ),
         format_help_command(
             "team join <invite link> [--name n] [--slack-user U… --slack-code gxl_…] | status | invite | identity [--slack-user U… --slack-code gxl_…] [--linear-user id] | threads <ticket> | ping | leave | deploy [--team-name n] [--project slug] [--convex-team slug] [--dev]  (each takes --workspace name|id)",
-            "Connect a Work workspace to its team's Convex project: join with an invite link, or deploy Ghostex's functions with your Convex CLI login",
+            "Connect a Work workspace to its team's Convex project: join with an invite link, or deploy Ghostex's functions with your Convex CLI login. Joining and invites are the user's, in Settings > Workspaces; the CLI is refused. deploy's last step (connecting this workspace) waits for the user's approval on their computer or phone. status, threads, ping and leave stay open",
         ),
         format_help_command(
             "team flow [show] | set [--working-channel C…] [--watch-only C1,C2] [--default-run cloud|local] [--linear-team KEY] [--qc-owner U…] [--instructions-file path] | map <channel> --repo owner/name [--project name] [--linear-team KEY] [--linear-project name] | unmap <channel>",
-            "Read or change the team's Slack flow: the working channel, watch-only channels, which repo each channel's work goes to, where new work runs, and the team instructions",
+            "Read or change the team's Slack flow: the working channel, watch-only channels, which repo each channel's work goes to, where new work runs, and the team instructions. Only the user changes it, in Settings > Workspaces; set, map and unmap are refused here",
         ),
         format_help_command(
             "team slack-manifest [--name n] | slack-connect [--dev] | linear-connect [--remove] | own-linear-key on|off",
-            "Print the Slack app manifest for this team; store the Slack bot token and signing secret on the team's Convex project (read from stdin); owners set or remove the team's Linear key (read from stdin); own-linear-key on creates the Slack tickets you request with this workspace's Linear key instead",
+            "Print the Slack app manifest for this team; store the Slack bot token and signing secret on the team's Convex project (read from stdin); owners set or remove the team's Linear key (read from stdin); own-linear-key on creates the Slack tickets you request with this workspace's Linear key instead. linear-connect and own-linear-key are the user's, in Settings > Workspaces; the CLI is refused",
         ),
         format_help_command(
             "slack post [--session <session>] \"<text>\" [--final]",
@@ -636,6 +640,10 @@ pub fn usage() -> String {
             "Stop a stuck session's agent and start it again on the same conversation (its current turn is lost)",
         ),
         format_help_command(
+            "chief --help",
+            "Chief of Staff, the Ghostex-wide coordinator pinned at the top of Main Hub: its status, its playbook, a new chat, its agent, and messaging another computer's Chief of Staff",
+        ),
+        format_help_command(
             "coordinator --help",
             "Run a coordinator: one agent you talk to that starts, supervises, and reports on thread sessions",
         ),
@@ -654,6 +662,10 @@ pub fn usage() -> String {
         format_help_command(
             "agent-cli status | install <agent> | update <agent> [--json]",
             "Install, update, and check the agent CLIs (claude, codex, cursor, grok, …)",
+        ),
+        format_help_command(
+            "agent-hooks status | install <agent>... | --all [--computer <name>] [--json]",
+            "Check and install Ghostex's session resume hooks, here or on a connected computer",
         ),
         format_help_command(
             "agents-orchestration --help",

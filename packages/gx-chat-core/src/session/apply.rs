@@ -81,8 +81,14 @@ pub fn apply_state_frame(
     if let Some(ids) = frame.state.removed_question_ids.clone() {
         state.session.removed_question_ids = ids;
     }
-    if let Some(index) = frame.state.resource_index.clone() {
-        state.session.resource_index = index;
+    // An index equal to the one held keeps its lookups (`ResourceIndex`).
+    if let Some(index) = frame
+        .state
+        .resource_index
+        .as_ref()
+        .filter(|index| state.session.resource_index != **index)
+    {
+        state.session.resource_index = index.clone().into();
     }
     apply_selected_options(state, frame.state.selected_options.as_ref());
     state.session.terminal_notice = frame.state.terminal_notice.clone();
@@ -117,6 +123,13 @@ pub fn apply_state_frame(
     }
     if let Some(answers) = frame.state.relayed_answers.clone() {
         state.session.relayed_answers = Some(answers);
+    }
+    if let Some(autopilot) = frame.state.autopilot.clone() {
+        state.session.autopilot = Some(autopilot);
+    }
+    if let Some(collab) = frame.state.collab.clone() {
+        state.session.collab = Some(collab);
+        crate::extras::collab::settle_held_answers(state);
     }
     if let Some(deliveries) = frame.state.agent_message_deliveries.clone() {
         state.session.agent_message_deliveries = Some(deliveries);
@@ -165,7 +178,7 @@ pub fn apply_agent_identity(state: &mut ChatState, patch: &AgentIdentity) {
         session.later_question_ids = Vec::new();
         session.unavailable_modes = Vec::new();
         session.removed_question_ids = Vec::new();
-        session.resource_index = Vec::new();
+        session.resource_index = Default::default();
     }
     if patch.agent.is_some() {
         session.agent = patch.agent.clone();
@@ -295,6 +308,9 @@ pub fn apply_draft_agent_carriage(state: &mut ChatState, result: &ReadSessionCha
     }
     if let Some(all_efforts) = result.all_orchestrator_efforts {
         state.core.all_orchestrator_efforts_enabled = all_efforts;
+    }
+    if let Some(icons) = &result.enabled_agent_icons {
+        state.session.enabled_agent_icons = Some(icons.clone());
     }
     if let Some(strength) = result.marked_heading_strength {
         state.core.marked_heading_strength =
@@ -448,8 +464,13 @@ pub fn apply_authoritative(
     if let Some(ids) = result.state.removed_question_ids.clone() {
         state.session.removed_question_ids = ids;
     }
-    if let Some(index) = result.state.resource_index.clone() {
-        state.session.resource_index = index;
+    if let Some(index) = result
+        .state
+        .resource_index
+        .as_ref()
+        .filter(|index| state.session.resource_index != **index)
+    {
+        state.session.resource_index = index.clone().into();
     }
     // The status machine decides whether this becomes the working strip's activity, a transient
     // status row, the streaming bubble or the pending tool row.
@@ -484,6 +505,13 @@ pub fn apply_authoritative(
     }
     if let Some(answers) = result.state.relayed_answers.clone() {
         state.session.relayed_answers = Some(answers);
+    }
+    if let Some(autopilot) = result.state.autopilot.clone() {
+        state.session.autopilot = Some(autopilot);
+    }
+    if let Some(collab) = result.state.collab.clone() {
+        state.session.collab = Some(collab);
+        crate::extras::collab::settle_held_answers(state);
     }
     if let Some(deliveries) = result.state.agent_message_deliveries.clone() {
         state.session.agent_message_deliveries = Some(deliveries);

@@ -53,7 +53,7 @@ export const TOOLCHAIN = Object.freeze({
    * One Zig toolchain for the whole repo. Ghostty and the zmx fork moved from
    * 0.16 to 0.17 together on 2026-10-26, when both upstreams required 0.17.
    */
-  zig: '0.17.0',
+  zig: '0.17.1',
 });
 
 /* Mirrors CODE_SERVER_COMPONENT_IDENTITY_REVISION; asserted equal in the tests. */
@@ -147,7 +147,13 @@ const DESKTOP_APP_PATHSPECS = Object.freeze([
   { pathspec: 'packages/shared/**' },
   { pathspec: 'packages/core-ui/**' },
   { pathspec: 'packages/components/**' },
-  { pathspec: 'components.json' },
+  /*
+   * CDXC:Dependencies 2026-11-06: components.json (the shadcn CLI's config) was deleted with the shadcn package. The
+   * pathspec string is part of every desktop digest (`path\0<pathspec>\0…`), so dropping it would need a
+   * FINGERPRINT_ALGORITHM_REVISION bump and a full rebuild; `allowMissing` is not hashed, so it stays declared and
+   * matches nothing. Remove it together with the next revision bump.
+   */
+  { pathspec: 'components.json', allowMissing: true },
   /*
    * Compiled in with include_str! by server/src/agent_model_catalog.rs and
    * packages/gx-chat-core/src/menus/picker/settle.rs, so the snapshot is baked
@@ -156,9 +162,11 @@ const DESKTOP_APP_PATHSPECS = Object.freeze([
    */
   { pathspec: 'agent-model-catalog.json' },
   /*
-   * The licence notices every desktop package ships beside the app. Purely additive and desktop-only, so
+   * The theme presets' terminal palettes, embedded by apps/desktop/build.rs, and the licence
+   * notices every desktop package ships beside the app. Purely additive and desktop-only, so
    * FINGERPRINT_ALGORITHM_REVISION is not bumped (same reasoning as the android product's note below).
    */
+  { pathspec: '.dependencies/theme-presets/**' },
   { pathspec: 'THIRD_PARTY_NOTICES.md' },
   { pathspec: '.dependencies/ghostty/**' },
   { pathspec: ':(exclude).dependencies/ghostty/.zig-cache' },
@@ -169,6 +177,7 @@ const DESKTOP_APP_PATHSPECS = Object.freeze([
   { pathspec: 'tooling/release-gpui/prepare-references.sh' },
   { pathspec: 'tooling/release-gpui/create-deterministic-tar.sh' },
   { pathspec: 'tooling/release-gpui/publish-component.mjs' },
+  { pathspec: 'tooling/release-gpui/component-signing.mjs' },
   { pathspec: 'tooling/release-gpui/on-demand-manifest.mjs' },
   { pathspec: 'tooling/release-gpui/patches' },
   { pathspec: 'tsconfig.json' },

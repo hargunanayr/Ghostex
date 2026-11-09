@@ -587,6 +587,32 @@ pub(crate) async fn handle_renderer_command_http(
             ),
         );
     }
+    // Only settings an agent may write pass the API (settings_agent_writable.rs).
+    if action == "updateSettingsPatch" {
+        let refused = payload
+            .get("patch")
+            .and_then(Value::as_object)
+            .map(crate::settings_agent_writable::refused_keys)
+            .unwrap_or_default();
+        if !refused.is_empty() {
+            let message = crate::settings_agent_writable::refusal_message(&refused);
+            crate::audit::record(
+                crate::audit::Action::new(
+                    "settings.ownerOnly",
+                    "Tried to change settings only you can change",
+                )
+                .target(refused.join(", ")),
+                crate::audit::Actor::current(),
+                crate::audit::Outcome::Refused(message.clone()),
+                None,
+            );
+            return routed_json(
+                Some(endpoint_path),
+                StatusCode::FORBIDDEN,
+                rpc_error("forbidden", message, Some(request_id)),
+            );
+        }
+    }
     let timeout_ms = match normalize_renderer_command_timeout_ms(params.get("timeoutMs")) {
         Ok(timeout_ms) => timeout_ms,
         Err(message) => {
@@ -597,6 +623,10 @@ pub(crate) async fn handle_renderer_command_http(
             );
         }
     };
+    // A settings save on a computer without the desktop app is gxserver's (headless_settings.rs).
+    let settings_patch = (action == "updateSettingsPatch")
+        .then(|| payload.get("patch").and_then(Value::as_object).cloned())
+        .flatten();
     match state
         .event_hub
         .dispatch_renderer_command(action, payload, timeout_ms)
@@ -607,6 +637,32 @@ pub(crate) async fn handle_renderer_command_http(
             StatusCode::OK,
             rpc_success(request_id, result),
         ),
+        Err(error) if error.code == "dependencyUnavailable" && settings_patch.is_some() => {
+            let paths = state.paths.clone();
+            let patch = settings_patch.unwrap_or_default();
+            match tokio::task::spawn_blocking(move || {
+                crate::headless_settings::save_settings_patch(&paths, &patch)
+            })
+            .await
+            .unwrap_or_else(|join| Err(join.to_string()))
+            {
+                Ok(Some(result)) => routed_json(
+                    Some(endpoint_path),
+                    StatusCode::OK,
+                    rpc_success(request_id, result),
+                ),
+                Ok(None) => routed_json(
+                    Some(endpoint_path),
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    rpc_error(error.code, error.message, Some(request_id)),
+                ),
+                Err(message) => routed_json(
+                    Some(endpoint_path),
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    rpc_error("internalError", message, Some(request_id)),
+                ),
+            }
+        }
         Err(error) => routed_json(
             Some(endpoint_path),
             StatusCode::SERVICE_UNAVAILABLE,

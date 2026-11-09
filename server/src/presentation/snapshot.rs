@@ -51,6 +51,9 @@ pub fn read_presentation_snapshot(
     insert_delayed_send_presentation_payload(db, &mut snapshot)?;
     crate::close_after_done::insert_close_after_done_presentation_payload(&mut snapshot, db);
     crate::coordinators::insert_coordinator_presentation_payload(&mut snapshot, db, &repository);
+    crate::chief::insert_chief_presentation_payload(&mut snapshot, db);
+    // After the coordinator fields: the verdict reads the session's role from them.
+    insert_attention_alerts_presentation_payload(&mut snapshot);
     insert_session_chat_queue_presentation_payload(&mut snapshot, db);
     insert_session_chat_draft_presentation_payload(&mut snapshot, db);
     insert_session_agent_note_presentation_payload(&mut snapshot, db);
@@ -171,6 +174,8 @@ pub fn build_presentation_session_delta(
         db,
         &session,
     );
+    crate::chief::insert_chief_session_projection(&mut presentation_session, db);
+    insert_attention_alerts(&mut presentation_session);
     insert_session_chat_queue_session_projection(
         &mut presentation_session,
         db,
@@ -365,6 +370,11 @@ pub fn presentation_capabilities(sidebar_v2_selected: bool) -> Value {
         With the flag, a missing id means no row to link right now, never "guess one"; without it a client has no exact link at all.
         */
         "attentionNotificationId": true,
+        /*
+        CDXC:SessionStatus 2026-10-31 WHY:
+        `awaitingAnswer` promises that this daemon publishes `awaitingAnswer` on a running session holding a question card, so a client may read its absence as "no card". Without the flag the client cannot tell "no card" from "too old to say".
+        */
+        "awaitingAnswer": true,
         /*
         CDXC:Git 2026-07-29-00:00:
         `sessionGitStatus` promises the `gitStatus` FIELD exists on this

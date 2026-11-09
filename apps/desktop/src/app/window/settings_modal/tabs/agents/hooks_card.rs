@@ -33,18 +33,34 @@ impl AgentsTab {
         cx: &mut Context<Self>,
     ) -> Option<Div> {
         let section = search.section(super::HOOKS_ANCHOR);
-        let status = self
-            .store
-            .read(cx)
-            .host_payload("agentHookStatus")
-            .map(HookStatus::parse);
-        let loading = self.hook_status_loading;
-        let mut on_hooks: Vec<String> = self
-            .all_agents(cx)
-            .iter()
-            .filter(|agent| agent.enabled)
-            .filter_map(hook_agent_id)
-            .collect();
+        // With a remote machine picked the card is that machine's (remote_hooks.rs): its agents
+        // are the CLIs installed there, since turning agents on is this computer's setting.
+        let remote = self.shown_machine.is_some();
+        let (status, loading) = if remote {
+            (self.remote_hook_status(), self.remote_hooks_loading)
+        } else {
+            (
+                self.store
+                    .read(cx)
+                    .host_payload("agentHookStatus")
+                    .map(HookStatus::parse),
+                self.hook_status_loading,
+            )
+        };
+        let mut on_hooks: Vec<String> = if remote {
+            status
+                .iter()
+                .flat_map(|status| &status.agents)
+                .filter(|item| !matches!(item.status.as_str(), "cliMissing" | "notRequired"))
+                .map(|item| item.agent_id.clone())
+                .collect()
+        } else {
+            self.all_agents(cx)
+                .iter()
+                .filter(|agent| agent.enabled)
+                .filter_map(hook_agent_id)
+                .collect()
+        };
         on_hooks.sort();
         on_hooks.dedup();
         let mut rows: Vec<AnyElement> = Vec::new();
@@ -63,6 +79,15 @@ impl AgentsTab {
                 Some(status) if status.error_message.is_some() => {
                     "Ghostex could not check the hooks.".to_string()
                 }
+                Some(_) if remote && on_hooks.is_empty() => format!(
+                    "No agent CLI with a hook is installed on {}.",
+                    self.cli_machine_label()
+                ),
+                Some(_) if remote => format!(
+                    "{ready} of the {} agent CLIs on {} have their hook.",
+                    on_hooks.len(),
+                    self.cli_machine_label()
+                ),
                 Some(_) => format!(
                     "{ready} of the {} agent CLIs you use have their hook.",
                     on_hooks.len()
@@ -153,7 +178,11 @@ impl AgentsTab {
                 cx,
             ));
             if menu_open && let Some(bounds) = trigger_bounds.get() {
-                buttons = buttons.child(self.hooks_menu_popup(p, bounds, cx));
+                let hook_folder = status
+                    .as_ref()
+                    .map(|status| status.hook_state_directory.clone())
+                    .filter(|folder| !folder.is_empty());
+                buttons = buttons.child(self.hooks_menu_popup(p, bounds, hook_folder, cx));
             }
             let small = |text: String| {
                 div()
@@ -177,21 +206,22 @@ impl AgentsTab {
                 .child(small(summary));
             if let Some(status) = &status {
                 if let Some(message) = &status.error_message {
-                    text = text.child(
+                    // CDXC:AgentHooks 2026-11-08 WHY: a machine on an older Ghostex showed that
+                    // message twice, here in red under the same words at the top of the page (the
+                    // remote tile audit, finding 6). The card says only what it means for hooks.
+                    text = text.child(if message.contains("runs an older Ghostex") {
+                        small(format!(
+                            "Needs a newer Ghostex on {}.",
+                            self.cli_machine_label()
+                        ))
+                    } else {
                         div()
                             .text_size(px(12.5))
                             .text_color(hsla(p.destructive))
-                            .child(message.clone()),
-                    );
+                            .child(message.clone())
+                    });
                 }
-                if !status.hook_state_directory.is_empty() {
-                    text = text.child(
-                        small(format!("Hook state: {}", status.hook_state_directory))
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis(),
-                    );
-                }
+                // The hook folder's path is not shown here (finding 7: a raw path in the card).
             }
             rows.push(card_inset(
                 h_flex()
@@ -205,7 +235,7 @@ impl AgentsTab {
                     .child(buttons),
             ));
         }
-        if should_show_setting(&section, AUTO_INSTALL_HOOKS, None) {
+        if !remote && should_show_setting(&section, AUTO_INSTALL_HOOKS, None) {
             let checked = self.store.read(cx).values().bool(AUTO_INSTALL_HOOKS);
             rows.push(toggle_field(
                 self,
@@ -226,10 +256,45 @@ impl AgentsTab {
         &mut self,
         p: &SettingsPalette,
         trigger: Bounds<Pixels>,
+        hook_folder: Option<String>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = *p;
         let hover = p.popup_hover;
+        // The folder the hooks keep their state in, once a line of the card ("Hook state: …").
+        let copy_folder = hook_folder.map(|folder| {
+            h_flex()
+                .id("agents-hooks-copy-folder")
+                .role(gpui::Role::MenuItem)
+                .aria_label(SharedString::from("Copy hook folder"))
+                .w_full()
+                .min_h(px(32.0))
+                .px(px(8.0))
+                .py(px(6.0))
+                .gap(px(8.0))
+                .items_center()
+                .rounded(px(6.0))
+                .text_size(px(14.0))
+                .line_height(px(20.0))
+                .text_color(hsla(p.foreground))
+                .cursor_pointer()
+                .hover(move |this| this.bg(hsla(hover)))
+                .on_press(cx, move |page, _window, cx| {
+                    page.hooks_menu_open = false;
+                    super::super::super::store::store_copy_to_clipboard(
+                        &page.store,
+                        folder.clone(),
+                        cx,
+                    );
+                    cx.notify();
+                })
+                .child(settings_icon(
+                    "modals/settings/copy.svg",
+                    16.0,
+                    p.foreground,
+                ))
+                .child("Copy hook folder")
+        });
         let row = h_flex()
             .id("agents-hooks-uninstall-all")
             .role(gpui::Role::MenuItem)
@@ -284,6 +349,7 @@ impl AgentsTab {
                                 cx.notify();
                             },
                         ))
+                        .children(copy_folder)
                         .child(row),
                 ),
         )
@@ -337,7 +403,16 @@ impl AgentsTab {
         let focus = self.confirm_focus.clone();
         Some(settings_dialog(
             p,
-            SettingsDialogSpec::new("agents-hooks-uninstall", "Uninstall hooks for all agents?")
+            SettingsDialogSpec::new(
+                "agents-hooks-uninstall",
+                match &self.shown_machine {
+                    Some(_) => format!(
+                        "Uninstall hooks for all agents on {}?",
+                        self.cli_machine_label()
+                    ),
+                    None => "Uninstall hooks for all agents?".to_string(),
+                },
+            )
                 .width(400.0)
                 .spacing(20.0, 16.0)
                 .description(

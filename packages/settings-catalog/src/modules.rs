@@ -469,6 +469,10 @@ pub fn exports(module: &str, platform: Platform) -> Vec<(&'static str, Json)> {
             ),
             ("SIDEBAR_VIEW_OPTIONS", SIDEBAR_VIEW_OPTIONS.to_json()),
             (
+                "PINNED_SESSION_ORDER_OPTIONS",
+                PINNED_SESSION_ORDER_OPTIONS.to_json(),
+            ),
+            (
                 "SIDEBAR_THEME_SETTING_OPTIONS",
                 SIDEBAR_THEME_SETTING_OPTIONS.to_json(),
             ),
@@ -489,6 +493,7 @@ pub fn exports(module: &str, platform: Platform) -> Vec<(&'static str, Json)> {
                 "TERMINAL_VIEW_WIDTH_PERCENT_STEP",
                 TERMINAL_VIEW_WIDTH_PERCENT_STEP.to_json(),
             ),
+            ("THEME_PRESETS", THEME_PRESETS.to_json()),
             (
                 "MARKED_HANDOVERS_STYLE_OPTIONS",
                 MARKED_HANDOVERS_STYLE_OPTIONS.to_json(),
@@ -496,6 +501,10 @@ pub fn exports(module: &str, platform: Platform) -> Vec<(&'static str, Json)> {
             (
                 "CHAT_PAGE_OPEN_TARGET_OPTIONS",
                 CHAT_PAGE_OPEN_TARGET_OPTIONS.to_json(),
+            ),
+            (
+                "ATTENTION_ALERTS_FOR_OPTIONS",
+                ATTENTION_ALERTS_FOR_OPTIONS.to_json(),
             ),
             (
                 "COORDINATOR_BOARD_VIEW_OPTIONS",

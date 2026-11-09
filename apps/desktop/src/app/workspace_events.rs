@@ -18,9 +18,12 @@ use crate::app::helpers::*;
 use crate::app::model::*;
 use crate::*;
 impl GhostexGpuiApp {
+    /// `page` is the address of the page this handler is made for, so an answer can find the page
+    /// that asked (`dispatch_manage_files_answer`).
     pub(crate) fn project_workarea_bridge_event_handler(
         &self,
         slot_key: ProjectWorkareaCefSurfaceSlotKey,
+        page: ProjectWorkareaRealRuntimeUrl,
         cx: &mut gpui::Context<Self>,
     ) -> cef::ProjectWorkareaBridgeEventHandler {
         let app = cx.entity().downgrade();
@@ -29,11 +32,14 @@ impl GhostexGpuiApp {
 
         Rc::new(move |event: cef::ProjectWorkareaBridgeEvent| {
             let app = app.clone();
+            let page = page.clone();
             let mut async_cx = async_cx.clone();
             foreground
                 .spawn(async move {
                     let _ = app.update_in(&mut async_cx, |this, window, cx| {
-                        this.receive_project_workarea_bridge_event(slot_key, event, window, cx);
+                        this.receive_project_workarea_bridge_event(
+                            slot_key, page, event, window, cx,
+                        );
                     });
                 })
                 .detach();
@@ -43,6 +49,7 @@ impl GhostexGpuiApp {
     pub(crate) fn receive_project_workarea_bridge_event(
         &mut self,
         slot_key: ProjectWorkareaCefSurfaceSlotKey,
+        page: ProjectWorkareaRealRuntimeUrl,
         event: cef::ProjectWorkareaBridgeEvent,
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
@@ -115,20 +122,34 @@ impl GhostexGpuiApp {
                     && let Some(action) = manage_request_string(&request, "action")
                     && matches!(
                         action.as_str(),
-                        "annotationSendTarget" | "sendAnnotationFeedback"
+                        "annotationSendTarget" | "sendAnnotationFeedback" | "sendPageAnnotation"
                     )
                 {
                     let request_id =
                         manage_request_string(&request, "requestId").unwrap_or_default();
-                    if action == "annotationSendTarget" {
+                    if action == "sendPageAnnotation" {
+                        // Annotate's Send in an HTML file (app/page_annotations.rs); answered
+                        // at once, the delivery reports itself (chat, terminal or clipboard).
+                        let annotation =
+                            crate::app::page_annotations::page_annotation_from_fields(&request);
+                        let response = match annotation {
+                            Some(_) => {
+                                serde_json::json!({"action": action, "requestId": request_id})
+                            }
+                            None => serde_json::json!({
+                                "action": action,
+                                "requestId": request_id,
+                                "error": "There is nothing to send.",
+                            }),
+                        };
+                        if let Some(annotation) = annotation {
+                            self.deliver_page_annotation(annotation, cx);
+                        }
+                        self.dispatch_manage_files_answer(&page, &response.to_string(), cx);
+                    } else if action == "annotationSendTarget" {
                         let response =
                             self.docs_annotation_send_target_response(&action, &request_id);
-                        self.dispatch_project_workarea_json_event(
-                            slot_key,
-                            "ghostex-manage-files-response",
-                            &response.to_string(),
-                            cx,
-                        );
+                        self.dispatch_manage_files_answer(&page, &response.to_string(), cx);
                     } else {
                         let content =
                             manage_request_string(&request, "content").unwrap_or_default();
@@ -149,12 +170,7 @@ impl GhostexGpuiApp {
                     if let Some(path) = page_save.as_deref() {
                         this.native_docs_finish_page_save(path, &response);
                     }
-                    this.dispatch_project_workarea_json_event(
-                        slot_key,
-                        "ghostex-manage-files-response",
-                        &response.to_string(),
-                        cx,
-                    );
+                    this.dispatch_manage_files_answer(&page, &response.to_string(), cx);
                 });
             }
             // The Work page's requests (app/work_view/bridge.rs).
@@ -171,6 +187,42 @@ impl GhostexGpuiApp {
             }
             _ => {}
         }
+    }
+
+    /// Hands a Files answer to the embed page that asked, found by its address: the page in the
+    /// Files slot, or one parked while it waits for its project (`project_keep_alive.rs`).
+    ///
+    /// CDXC:Docs 2026-11-07 WHY:
+    /// Answers used to go to whatever page the Files slot showed at the moment they arrived (`dispatch_project_workarea_json_event`). A drawing's page asks for its file the moment it loads, while the project switch that `ghostex open` or a chat link starts is still settling, so the page could be parked or the slot could briefly have no address when the answer came back: the answer was dropped, the page came back from the park still waiting, showed "Files request timed out." and every later open of that drawing reused the same stuck page. HTML files escaped only because their page waits for gxserver's Ghostex page check. An agent's published page never matches, because it has its own address and no Files bridge.
+    pub(crate) fn dispatch_manage_files_answer(
+        &mut self,
+        page: &ProjectWorkareaRealRuntimeUrl,
+        json: &str,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let slot_key = ProjectWorkareaCefSurfaceSlotKey::Manage;
+        let surface = self
+            .project_workarea_runtime_cef_surfaces
+            .get(&slot_key)
+            .filter(|owned| owned.matches_runtime_url(page))
+            .or_else(|| {
+                self.parked_project_workarea_surfaces
+                    .iter()
+                    .find(|parked| {
+                        parked.slot_key == slot_key && parked.owned.matches_runtime_url(page)
+                    })
+                    .map(|parked| &parked.owned)
+            })
+            .map(|owned| owned.surface.clone());
+        let Some(surface) = surface else {
+            return;
+        };
+        let script = format!(
+            "window.dispatchEvent(new CustomEvent('ghostex-manage-files-response', {{ detail: {json} }})); undefined;"
+        );
+        surface.update(cx, |surface, _| {
+            surface.execute_app_owned_script(&script);
+        });
     }
 
     pub(crate) fn dispatch_project_workarea_json_event(
@@ -831,6 +883,56 @@ impl GhostexGpuiApp {
         );
     }
 
+    /// The early chat of a Chat launch: the session's `attachSessionMetadata` names its agent, and
+    /// the chat tab opens on it (`show_pending_agents_chat_launch`) while the attach plan, which
+    /// starts the terminal, is still on its way.
+    fn local_workspace_attach_chat_preview(
+        &mut self,
+        key: GpuiLocalWorkspaceSessionKey,
+        requested_pane_id: WorkspacePaneId,
+        origin: GpuiLocalWorkspaceAttachOrigin,
+        cx: &mut gpui::Context<Self>,
+    ) -> gpui::Task<()> {
+        let background = cx.background_executor().clone();
+        cx.spawn(async move |this, cx| {
+            let preview_key = key.clone();
+            let preview = background
+                .spawn(async move {
+                    gpui_gxserver_rpc_result(
+                        "/api/attachSessionMetadata",
+                        &serde_json::json!({
+                            "projectId": preview_key.project_id,
+                            "sessionId": preview_key.session_id,
+                        }),
+                        std::time::Duration::from_secs(15),
+                    )
+                })
+                .await;
+            let _ = this.update(cx, |this, _| {
+                this.help_chat_timing_session_step(
+                    &key.project_id,
+                    &key.session_id,
+                    "attachMetadataAnswered",
+                    serde_json::json!({ "ok": preview.is_ok() }),
+                )
+            });
+            if let Ok(metadata) = preview {
+                let _ = this.update(cx, |this, cx| {
+                    if this.local_workspace_latest_focus_key.as_ref() == Some(&key) {
+                        this.show_pending_agents_chat_launch(
+                            GpuiWorkspaceTerminalSessionKey::Local(key.clone()),
+                            &metadata,
+                            requested_pane_id,
+                            origin == GpuiLocalWorkspaceAttachOrigin::BackgroundSelect
+                                || this.should_keep_project_editor_open_for_local_workspace_terminal_focus(&key),
+                            cx,
+                        );
+                    }
+                });
+            }
+        })
+    }
+
     pub(crate) fn spawn_local_workspace_attach_plan(
         &mut self,
         key: GpuiLocalWorkspaceSessionKey,
@@ -849,44 +951,44 @@ impl GhostexGpuiApp {
         } else {
             self.local_workspace_attach_refused.remove(&key);
         }
+        let chat_intent = self
+            .pending_agents_chat_launch_intents
+            .contains(&GpuiWorkspaceTerminalSessionKey::Local(key.clone()));
         if !self.local_workspace_attach_pending.insert(key.clone()) {
+            /*
+            CDXC:Onboarding 2026-11-07 WHY:
+            An attach already running for this session started before its Chat intent was armed:
+            a create in another project switches the workspace first (which drops the pending
+            intents, `park_all_agents_chat_surfaces`), and the store's focus publish starts the
+            attach right then. That attach skipped the early chat, so the chat and its staged draft
+            waited for the whole attach plan. Measured on Ask Ghostex in the real app
+            (gpui-help-chat-timing.log): from another project the draft appeared at 988 ms, behind
+            the attach plan; from inside the Help project at 337 ms through this preview. The
+            preview now starts when the intent arrives, beside the running attach.
+            */
+            if chat_intent
+                && self
+                    .local_workspace_attach_chat_previewed
+                    .insert(key.clone())
+            {
+                self.local_workspace_attach_chat_preview(key, requested_pane_id, origin, cx)
+                    .detach();
+            }
             return;
         }
 
         let focused_at_request = self.gx_store_focused_session();
-        let open_chat_early = self
-            .pending_agents_chat_launch_intents
-            .contains(&GpuiWorkspaceTerminalSessionKey::Local(key.clone()));
+        let open_chat_early = chat_intent
+            && self
+                .local_workspace_attach_chat_previewed
+                .insert(key.clone());
+        let preview = open_chat_early.then(|| {
+            self.local_workspace_attach_chat_preview(key.clone(), requested_pane_id, origin, cx)
+        });
         let background = cx.background_executor().clone();
         cx.spawn(async move |this, cx| {
-            if open_chat_early {
-                let preview_key = key.clone();
-                let preview = background
-                    .spawn(async move {
-                        gpui_gxserver_rpc_result(
-                            "/api/attachSessionMetadata",
-                            &serde_json::json!({
-                                "projectId": preview_key.project_id,
-                                "sessionId": preview_key.session_id,
-                            }),
-                            std::time::Duration::from_secs(15),
-                        )
-                    })
-                    .await;
-                if let Ok(metadata) = preview {
-                    let _ = this.update(cx, |this, cx| {
-                        if this.local_workspace_latest_focus_key.as_ref() == Some(&key) {
-                            this.show_pending_agents_chat_launch(
-                                GpuiWorkspaceTerminalSessionKey::Local(key.clone()),
-                                &metadata,
-                                requested_pane_id,
-                                origin == GpuiLocalWorkspaceAttachOrigin::BackgroundSelect
-                                    || this.should_keep_project_editor_open_for_local_workspace_terminal_focus(&key),
-                                cx,
-                            );
-                        }
-                    });
-                }
+            if let Some(preview) = preview {
+                preview.await;
             }
             let prepare_key = key.clone();
             let result = background
@@ -899,7 +1001,14 @@ impl GhostexGpuiApp {
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
+                this.help_chat_timing_session_step(
+                    &key.project_id,
+                    &key.session_id,
+                    "attachPlanAnswered",
+                    serde_json::json!({ "ok": result.is_ok() }),
+                );
                 this.local_workspace_attach_pending.remove(&key);
+                this.local_workspace_attach_chat_previewed.remove(&key);
                 match &result {
                     Err(error) if error.code.as_deref() == Some("accountUnavailable") => {
                         let account_id = this

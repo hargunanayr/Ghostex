@@ -51,7 +51,7 @@ choose between instead of sending a newer selector and losing the whole action t
 a 400. Keep this to fixed capability names: no daemon paths, ports, tokens, or
 response text may be retained here.
 */
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct GpuiRemoteGxserverCapabilities {
     pub(crate) code_server_prompt_editor: bool,
     pub(crate) browser_tcp_websocket_v1: bool,
@@ -61,6 +61,10 @@ pub(crate) struct GpuiRemoteGxserverCapabilities {
     /// The daemon keeps a handed-off orchestrator's staged draft for its Chat box instead of typing
     /// it into the terminal while `/ghostex-orchestrator` starts (`coordinatorHandoffDraft`).
     pub(crate) coordinator_handoff_draft: bool,
+    /// The `protocolVersion` the daemon answers health with, `None` when it does not say.
+    pub(crate) protocol_version: Option<u64>,
+    /// The daemon's server id from its health answer, `None` when it does not say.
+    pub(crate) server_id: Option<String>,
 }
 
 pub(crate) struct GpuiRemoteGxserverConnection {
@@ -72,7 +76,12 @@ pub(crate) struct GpuiRemoteGxserverConnection {
     pub(crate) presentation_stream_cancel: Option<Arc<AtomicBool>>,
     pub(crate) presentation_stream_generation: Option<u64>,
     pub(crate) token: String,
-    pub(crate) child: Child,
+    /// The tunnel's ssh process, which owns the forward; `None` when the forward lives in the
+    /// user's own SSH master (GitHub #496).
+    pub(crate) child: Option<Child>,
+    /// The tunnel's forward in the user's SSH master, taken back when this connection ends
+    /// (GitHub #496); `None` unless the machine reuses an existing connection.
+    pub(crate) forward: Option<crate::app::helpers::GpuiRemoteSharedSshForward>,
     /// The watchdog's probes in a row that did not confirm the tunnel (helpers/remote/tunnel_liveness.rs).
     pub(crate) liveness: crate::app::helpers::GpuiRemoteTunnelLiveness,
     /// The machine's gxserver is this computer's own (`gpui_remote_is_this_computer`), so it is
@@ -86,7 +95,7 @@ pub(crate) struct GpuiRemoteGxserverConnection {
 impl GpuiRemoteGxserverConnection {
     pub(crate) fn request_target(&self) -> GpuiRemoteGxserverRequestTarget {
         GpuiRemoteGxserverRequestTarget {
-            capabilities: self.capabilities,
+            capabilities: self.capabilities.clone(),
             code_server_component_platform: self.code_server_component_platform.clone(),
             execution_target: self.execution_target.clone(),
             local_port: self.local_port,
@@ -98,8 +107,12 @@ impl GpuiRemoteGxserverConnection {
         if let Some(cancel) = self.presentation_stream_cancel.as_ref() {
             cancel.store(true, Ordering::SeqCst);
         }
-        gpui_forget_remote_tunnel(self.child.id());
-        let _ = self.child.kill();
+        if let Some(child) = self.child.as_mut() {
+            gpui_forget_remote_tunnel(child.id());
+            let _ = child.kill();
+        }
+        // A forward ssh registered in the user's master outlives the client that asked for it.
+        self.forward = None;
         if let Some(mut reverse) = self.reverse_tunnel.take() {
             reverse.terminate();
         }
@@ -942,22 +955,29 @@ impl SourceCodeServerRuntimeFailure {
 #[derive(Clone)]
 pub(crate) struct SharedSourceCodeServerChild(Rc<RefCell<OwnedSourceCodeServerChild>>);
 
-pub(crate) struct OwnedSourceCodeServerChild(Child);
+pub(crate) struct OwnedSourceCodeServerChild {
+    child: Child,
+    /// The tunnel's forward in the user's SSH master, taken back when the process goes (GitHub #496).
+    _forward: Option<GpuiRemoteSharedSshForward>,
+}
 
 impl Drop for OwnedSourceCodeServerChild {
     fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 }
 
 impl SharedSourceCodeServerChild {
-    fn new(child: Child) -> Self {
-        Self(Rc::new(RefCell::new(OwnedSourceCodeServerChild(child))))
+    fn new(child: Child, forward: Option<GpuiRemoteSharedSshForward>) -> Self {
+        Self(Rc::new(RefCell::new(OwnedSourceCodeServerChild {
+            child,
+            _forward: forward,
+        })))
     }
 
     fn try_wait(&self) -> std::io::Result<Option<std::process::ExitStatus>> {
-        self.0.borrow_mut().0.try_wait()
+        self.0.borrow_mut().child.try_wait()
     }
 }
 
@@ -1169,12 +1189,14 @@ impl SourceCodeServerRuntimeOwner {
         target: SourceCodeServerRuntimeTarget,
         settings: SourceCodeServerRuntimeSettings,
         child: Child,
+        // The tunnel's forward in the user's SSH master, taken back with the process (GitHub #496).
+        forward: Option<GpuiRemoteSharedSshForward>,
         started_at: Instant,
         runtime_origin: String,
         runtime_key: Option<String>,
         prompt_editor_ipc_ready: bool,
     ) {
-        self.replace_child(child);
+        self.replace_child(child, forward);
         self.started_at = Some(started_at);
         self.runtime_origin = Some(runtime_origin);
         self.runtime_key = runtime_key;
@@ -1186,13 +1208,13 @@ impl SourceCodeServerRuntimeOwner {
         &mut self,
         target: SourceCodeServerRuntimeTarget,
         settings: SourceCodeServerRuntimeSettings,
-        child: Option<Child>,
+        child: Option<(Child, Option<GpuiRemoteSharedSshForward>)>,
         started_at: Option<Instant>,
         failure: SourceCodeServerRuntimeFailure,
     ) {
         self.pending_remote_prompt_editor_request = None;
-        if let Some(child) = child {
-            self.replace_child(child);
+        if let Some((child, forward)) = child {
+            self.replace_child(child, forward);
         }
         self.started_at = started_at;
         self.waiting_for_shared_launch = false;
@@ -1277,8 +1299,12 @@ impl SourceCodeServerRuntimeOwner {
     }
 
     /// Dropping the previous handle stops its process unless another window still uses it.
-    pub(crate) fn replace_child(&mut self, child: Child) {
-        self.child = Some(SharedSourceCodeServerChild::new(child));
+    pub(crate) fn replace_child(
+        &mut self,
+        child: Child,
+        forward: Option<GpuiRemoteSharedSshForward>,
+    ) {
+        self.child = Some(SharedSourceCodeServerChild::new(child, forward));
     }
 
     /// This window's ready process, for another window to adopt: the same machine and settings.
@@ -1389,6 +1415,8 @@ impl SourceCodeServerRuntimeOwner {
 
 pub(crate) struct SourceCodeServerRuntimeStartOutput {
     pub(crate) child: Child,
+    /// The tunnel's forward in the user's SSH master, taken back with the process (GitHub #496).
+    pub(crate) forward: Option<GpuiRemoteSharedSshForward>,
     pub(crate) runtime_origin: String,
     /// The key this launch gave the editor; the Code view's first load carries it.
     pub(crate) runtime_key: Option<String>,

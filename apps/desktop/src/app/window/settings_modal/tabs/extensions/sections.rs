@@ -11,7 +11,7 @@ use super::super::super::fields::{
 };
 use super::super::super::model::SettingsTabId;
 use super::super::super::palette::SettingsPalette;
-use super::super::super::store::post_store_message;
+use super::super::super::store::{SettingsValues, post_store_message};
 use super::ExtensionsTab;
 use super::cards::{
     GridCardSpec, GridCell, add_view_card, card_grid, card_group, card_option_row, card_status,
@@ -222,6 +222,9 @@ impl ExtensionsTab {
         let mut groups: Vec<AnyElement> = Vec::new();
         let filter = self.page_filter(cx);
         for category in official_categories() {
+            if !self.category_shown(&category.id, cx) {
+                continue;
+            }
             let visible: Vec<&OfficialExtension> = official_extensions()
                 .iter()
                 .filter(|extension| {
@@ -243,10 +246,13 @@ impl ExtensionsTab {
                         .scope_editor
                         .as_ref()
                         .is_some_and(|editor| editor.key == scope_key);
+                // The type ends the (i) tooltip of a view, a header button or a menu item. A
+                // feature has none: "Feature · Every project" said the same thing on every card
+                // (User, Q2036).
                 let meta = if extension.placement == "sidebar" {
                     "Sidebar".to_string()
-                } else if extension.app_wide {
-                    format!("{} · Every project", category.type_label)
+                } else if extension.placement == "feature" {
+                    String::new()
                 } else {
                     category.type_label.clone()
                 };
@@ -299,15 +305,17 @@ impl ExtensionsTab {
                     GridCardSpec {
                         id: SharedString::from(format!("official-{}", extension.id)),
                         icon: tabler_tile(p, official_icon(&extension.id), false),
-                        control: Some(control),
+                        control: Some(control.into_any_element()),
                         leading: None,
                         title: extension.title.clone().into(),
+                        badge: extension.badge.clone().map(Into::into),
                         description: extension.description.clone().into(),
                         extra: None,
                         scope_summary: scoped
                             .then(|| self.describe_scope(&scope_key, cx))
                             .flatten(),
-                        meta: runtime_meta.or(blocked_reason).unwrap_or(meta).into(),
+                        meta: meta.into(),
+                        status: runtime_meta.or(blocked_reason).map(Into::into),
                         actions,
                         editing,
                         enabled,
@@ -322,13 +330,21 @@ impl ExtensionsTab {
                 cells.push(GridCell { card, wide });
             }
             let first = groups.is_empty();
-            groups.push(card_group(
-                p,
-                category.label.clone(),
-                Some(visible.len()),
-                first,
-                card_grid(cells, None, columns),
-            ));
+            // A tab of one category (Built-in, Experimental) shows its tiles under the section
+            // title alone; the group label would repeat it.
+            let single =
+                !self.store.read(cx).is_searching() && self.page_tab(cx).categories().len() == 1;
+            groups.push(if single {
+                card_grid(cells, None, columns)
+            } else {
+                card_group(
+                    p,
+                    category.label.clone(),
+                    Some(visible.len()),
+                    first,
+                    card_grid(cells, None, columns),
+                )
+            });
         }
         let loading = self.plugin_status_loading;
         let refresh = settings_sized_button(
@@ -344,12 +360,29 @@ impl ExtensionsTab {
             |page: &mut Self, _window, cx| page.request_plugin_status(cx),
             cx,
         );
+        let (title, description) = if self.store.read(cx).is_searching() {
+            ("Built-in", "Extensions Ghostex ships and maintains.")
+        } else {
+            match self.page_tab(cx) {
+                super::page_tabs::PageTab::Views => (
+                    "Built-in views",
+                    "Views Ghostex ships: project websites, code and files, and planning.",
+                ),
+                super::page_tabs::PageTab::PanelsMenus => (
+                    "Panels & menus",
+                    "Buttons in the work area header and entries in its ⋯ menu.",
+                ),
+                super::page_tabs::PageTab::Experimental => (
+                    "Experimental",
+                    "Early features. Each one is off until you turn it on.",
+                ),
+                _ => ("Built-in", "Parts of Ghostex you can switch off."),
+            }
+        };
         plain_section(
             p,
-            "Built-in",
-            div()
-                .child("Extensions Ghostex ships and maintains.")
-                .into_any_element(),
+            title,
+            div().child(description).into_any_element(),
             Some(refresh),
             v_flex().w_full().children(groups).into_any_element(),
         )
@@ -432,7 +465,23 @@ impl ExtensionsTab {
             .child("\u{a0}repo. Reviewed and tested by @maddada.")
             .into_any_element();
         let body = self.render_store_list(p, window, cx);
-        plain_section(p, "Get more", description, None, body)
+        let from_folder = self.install_from_folder_button(p, cx);
+        // "Get more should be Community" (User, Q2041); on the Installed tab the section is
+        // what you installed, with Install from folder… beside it.
+        let installed_tab = !self.store.read(cx).is_searching()
+            && self.page_tab(cx) == super::page_tabs::PageTab::Installed;
+        if installed_tab {
+            let description = div()
+                .child("Extensions you installed, and Collab, which Ghostex downloads when you turn it on.")
+                .into_any_element();
+            return plain_section(p, "Installed", description, Some(from_folder), body);
+        }
+        let title = if self.store.read(cx).is_searching() {
+            "Installed and Community"
+        } else {
+            "Community"
+        };
+        plain_section(p, title, description, None, body)
     }
 
     fn render_store_list(
@@ -494,12 +543,25 @@ impl ExtensionsTab {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let columns = grid_columns(page_column_width(window));
-        let (installed_matches, store_matches) = filter_store(
-            &self.page_filter(cx),
+        let filter = self.page_filter(cx);
+        let (mut installed_matches, mut store_matches) = filter_store(
+            &filter,
             self.browser.catalog_entries(),
             &self.browser.installed,
         );
-        if installed_matches.is_empty() && store_matches.is_empty() {
+        let installed_shown = self.tab_shown(super::page_tabs::PageTab::Installed, cx);
+        if !installed_shown {
+            installed_matches.clear();
+        }
+        if !self.tab_shown(super::page_tabs::PageTab::Community, cx) {
+            store_matches.clear();
+        }
+        let collab = if installed_shown {
+            self.render_collab_group(p, &filter, columns, installed_matches.is_empty(), cx)
+        } else {
+            None
+        };
+        if installed_matches.is_empty() && store_matches.is_empty() && collab.is_none() {
             return empty_state(
                 p,
                 super::super::super::fields::icon::SEARCH,
@@ -526,6 +588,7 @@ impl ExtensionsTab {
                 card_grid(cells, None, columns),
             ));
         }
+        groups.extend(collab);
         if !store_matches.is_empty() {
             let mut cells = Vec::new();
             for index in &store_matches {
@@ -655,9 +718,10 @@ impl ExtensionsTab {
         grid_card(
             p,
             GridCardSpec {
+                badge: None,
                 id: SharedString::from(format!("installed-{id}")),
                 icon: extension_icon_tile(p, icon_bytes, has_source, false),
-                control: Some(control),
+                control: Some(control.into_any_element()),
                 leading: None,
                 title: title.into(),
                 description: extension.description().into(),
@@ -670,6 +734,7 @@ impl ExtensionsTab {
                 ]
                 .join(" · ")
                 .into(),
+                status: None,
                 actions,
                 editing,
                 enabled: extension.enabled(),
@@ -748,15 +813,17 @@ impl ExtensionsTab {
         grid_card(
             p,
             GridCardSpec {
+                badge: None,
                 id: SharedString::from(format!("store-{name}")),
                 icon: extension_icon_tile(p, icon_bytes, has_source, false),
-                control: Some(control),
+                control: Some(control.into_any_element()),
                 leading: None,
                 title: entry.title().into(),
                 description: entry.description().into(),
                 extra: None,
                 scope_summary: None,
                 meta: meta.join(" · ").into(),
+                status: None,
                 actions: vec![details],
                 editing: false,
                 enabled: true,
@@ -954,15 +1021,17 @@ impl ExtensionsTab {
         let card = grid_card(
             p,
             GridCardSpec {
+                badge: None,
                 id: SharedString::from(format!("custom-{id}")),
                 icon: tabler_tile(p, "modals/settings/world.svg", false),
-                control: Some(control),
+                control: Some(control.into_any_element()),
                 leading: grip,
                 title: view.name().into(),
                 description: view.description().into(),
                 extra: None,
                 scope_summary: None,
                 meta: view.kind_label().into(),
+                status: None,
                 actions: vec![edit, remove],
                 editing: self
                     .view_editor

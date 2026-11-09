@@ -94,6 +94,7 @@ impl Render for NativeChatView {
         if self.maximized_window.is_none() {
             self.ensure_input(window, cx);
         }
+        self.release_held_send(window, cx);
         self.sync_form_inputs(window, cx);
         self.sync_chat_zoom();
         let p = ChatAppearance::current(&self.snapshot).on_window_glass(
@@ -114,6 +115,7 @@ impl Render for NativeChatView {
             window.request_animation_frame();
         }
         self.sync_disclosure_anchor(window);
+        self.sync_reply_arrival(cx);
         self.sync_transcript_focus_anchor(window, cx);
         /*
         CDXC:SessionChat 2026-09-18 WHY:
@@ -134,7 +136,11 @@ impl Render for NativeChatView {
             self.render_search_bar(&p, window, cx)
         };
         let state = self.snapshot.clone();
-        let error = self.error.clone();
+        // The chat's own failure (it could not load or start) is the same card as the chat box's.
+        let error_card = self.error.clone().map(|error| {
+            let card = ghostex_gx_chat_core::session::error_card::error_card(&error, None);
+            self.error_card("chat-load-error", &card, Vec::new(), &p, cx)
+        });
         self.transcript_inset = if maximized {
             0.0
         } else {
@@ -257,16 +263,11 @@ impl Render for NativeChatView {
                     .iter()
                     .map(|path| path.to_string_lossy().into_owned())
                     .collect::<Vec<_>>();
-                chat.invoke(serde_json::json!({"type":"attachPaths","paths":paths}), cx);
+                chat.attach_to_composer(Vec::new(), paths, cx);
                 cx.stop_propagation();
             }))
-            .when_some(error, |this, error| {
-                this.child(
-                    div()
-                        .p(px(16.0 * s))
-                        .text_color(gpui::rgb(0xef9999))
-                        .child(error),
-                )
+            .when_some(error_card, |this, card| {
+                this.child(div().p(px(16.0 * s)).child(card))
             })
             // Only React's one manual case: a transcript with no rows yet. A filled
             // one pages itself near the top and keeps its anchor (pagination.rs).

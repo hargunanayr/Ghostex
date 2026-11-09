@@ -190,7 +190,8 @@ async fn send_session_chat_message_attempt(
         Codex effort. Re-read after delivery so the pill confirms the value
         promptly instead of waiting for the idle probe.
         */
-        let agent = session_chat_agent_for_session(&target.session);
+        let agent =
+            crate::session_chat_follower::session_chat_display_agent_for_session(&target.session);
         schedule_session_chat_option_redetect(
             state,
             &target.project_id,
@@ -276,6 +277,35 @@ async fn send_session_chat_message_attempt(
             &target.session_id,
         )
     {
+        return crate::session_chat_send_wake::queue_startup_send(
+            state,
+            endpoint_path,
+            request_id,
+            &params,
+            &target,
+            &text,
+        );
+    }
+    /*
+    CDXC:SessionChat 2026-11-07 WHY: GitHub #479 follow-up: a message sent while Claude's
+    question was open waited six seconds for an input box the question keeps off screen, then
+    was queued anyway. When the screen shows the question picker the message is queued at once;
+    the queue holds it as "Waiting for you to answer the agent's question." and sends it once the
+    question is answered. Interrupt and send keeps its direct path: stopping the turn is what it
+    asks for.
+    */
+    if !interrupt
+        && crate::presentation::effective_lifecycle_state(&target.session) == "running"
+        && claude_question_open(state, &target).await
+    {
+        crate::session_chat_send_diagnostics::record_send_recovery(
+            state,
+            "sessionChatSendHeldForQuestion",
+            &target.project_id,
+            &target.session_id,
+            CLAUDE_QUESTION_OPEN,
+            &[],
+        );
         return crate::session_chat_send_wake::queue_startup_send(
             state,
             endpoint_path,
@@ -416,6 +446,7 @@ pub(crate) async fn handle_interrupt_session_chat_http(
         Ok(target) => target,
         Err(error) => return domain_error_response(endpoint_path, request_id, error),
     };
+    crate::autopilot::note_user_interrupt(&target.project_id, &target.session_id);
     // An interrupt that precedes a send (`ghostex agents send --interrupt`) names that send; when
     // the send already went out, this is its retry, and a second Escape would stop the turn the
     // message started.
@@ -572,4 +603,32 @@ pub(crate) async fn handle_interrupt_session_chat_http(
         StatusCode::OK,
         rpc_success(request_id, json!({ "interrupted": true })),
     )
+}
+
+const CLAUDE_QUESTION_OPEN: &str = "Claude is waiting for you to answer its question.";
+
+/// Whether a Claude session's screen shows its question picker now. The screen is captured only
+/// when the cached screen verdict or the stored question card says a question may be open, so an
+/// ordinary send pays for no extra capture.
+async fn claude_question_open(state: &AppState, target: &SessionChatSendTarget) -> bool {
+    let agent = crate::session_chat_composer::session_chat_composer_agent_id(&target.session);
+    if !matches!(agent.as_deref(), Some("claude" | "openclaude")) {
+        return false;
+    }
+    let maybe_open = crate::session_approval::session_awaits_answer(&target.session)
+        || crate::session_chat_options::cached_session_chat_composer_readiness(
+            state,
+            &target.project_id,
+            &target.session_id,
+        )
+        .waits_on_question();
+    if !maybe_open {
+        return false;
+    }
+    capture_session_terminal_text(&target.zmx_name)
+        .await
+        .is_some_and(|screen| {
+            crate::session_chat_composer::session_composer_verdict(agent.as_deref(), &screen)
+                .waits_on_question()
+        })
 }

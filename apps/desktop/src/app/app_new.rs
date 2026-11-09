@@ -99,13 +99,12 @@ impl GhostexGpuiApp {
         shell_layout_state
             .project_editor_shell
             .sleep_all_modes_for_launch(shell_layout_state.active_mode);
-        // Claude comes back on with its page asleep until clicked, like every web view.
-        if shell_layout_state.claude_takeover.is_some() {
+        // Claude (or Grok) comes back on with its page asleep until clicked, like every web view.
+        if let Some(takeover) = &shell_layout_state.claude_takeover {
+            let mode = takeover.view().mode();
             shell_layout_state
                 .project_editor_shell
-                .mark_mode_sleeping(TitlebarMode::Extension(
-                    crate::app::claude_web::claude_web_view_id(),
-                ));
+                .mark_mode_sleeping(mode);
         }
         let restored_sidebar_collapsed = match sidebar_visibility_memory {
             GpuiSidebarVisibilityMemory::Shared => {
@@ -316,6 +315,7 @@ impl GhostexGpuiApp {
                 local_workspace_session_mappings: shell_layout_state
                     .local_workspace_session_mappings,
                 local_workspace_attach_pending: HashSet::new(),
+                local_workspace_attach_chat_previewed: HashSet::new(),
                 local_workspace_attach_refused: HashMap::new(),
                 agents_chat_mode_sessions: shell_layout_state.agents_chat_mode_sessions,
                 agents_chat_notice_admitted_sessions: HashSet::new(),
@@ -351,6 +351,7 @@ impl GhostexGpuiApp {
                 session_chat_composer_ready_sessions: HashSet::new(),
                 session_chat_composer_empty_reports: HashMap::new(),
                 pending_session_chat_composer_insert: HashMap::new(),
+                storybook_annotation_bridge: None,
                 pending_session_terminal_composer_insert: HashMap::new(),
                 pending_session_chat_draft_handoffs: HashSet::new(),
                 session_chat_draft_capture_in_flight: HashSet::new(),
@@ -467,6 +468,7 @@ impl GhostexGpuiApp {
                 command_pane_side,
                 sidebar_width,
                 sidebar_collapsed: restored_sidebar_collapsed,
+                main_window_fullscreen: false,
                 sidebar_drag: None,
                 sidebar_divider_hovering: false,
                 sidebar_divider_hover_visible: false,
@@ -492,6 +494,10 @@ impl GhostexGpuiApp {
                 app_toasts: Vec::new(),
                 app_toast_epoch: 0,
                 app_toast_id_counter: 0,
+                app_notices: Default::default(),
+                security_upgrade_notice_checked: false,
+                security_notice_code_shown: false,
+                security_notice_computer_pairing: Vec::new(),
                 agents_terminal_runtime_osc_states: HashMap::new(),
                 command_terminal_runtime_osc_states: HashMap::new(),
                 agents_gpui_engine_terminals: HashMap::new(),

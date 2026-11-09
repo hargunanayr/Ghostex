@@ -1,4 +1,6 @@
 pub mod authorized_keys;
+pub mod computer_pairing;
+pub mod easy_connect_addresses;
 pub mod http;
 pub mod identity;
 pub mod pair_device;
@@ -17,6 +19,7 @@ mod windows_elevation;
 // `http` exposes only the crate-internal endpoint handler, so its re-export
 // matches that visibility rather than widening it to `pub`.
 pub use authorized_keys::*;
+pub use easy_connect_addresses::*;
 pub(crate) use http::*;
 pub use identity::*;
 pub use pair_device::*;

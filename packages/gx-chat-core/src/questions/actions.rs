@@ -319,7 +319,7 @@ fn async_projection(
 }
 
 /// Closing a notice that only describes a state. A notice with a picker or a dialog has to be
-/// answered instead, so the button does nothing there.
+/// answered instead, so the button does nothing there, unless an answer on it was refused.
 fn dismiss_notice(
     state: &mut ChatState,
     notice: Option<&TerminalNotice>,
@@ -328,8 +328,15 @@ fn dismiss_notice(
     let Some(notice) = notice else {
         return Vec::new();
     };
-    if notice.choices.as_ref().is_some_and(|rows| !rows.is_empty()) || notice.dialog.is_some() {
+    let answerable =
+        notice.choices.as_ref().is_some_and(|rows| !rows.is_empty()) || notice.dialog.is_some();
+    // CDXC:SessionChat 2026-11-07 WHY: a card whose answer gxserver refused ("Codex's dialog changed", GitHub #458) could be neither answered nor closed, and it covered the chat until the agent's screen moved on. Once a pick on it was refused (the card shows why), its Dismiss closes it like any notice and it stops holding the composer, as a refused plain picker already does in `answer_settled`; gxserver still refuses a message the agent's screen cannot take.
+    let refused = state.questions.notice_error.is_some();
+    if answerable && !refused {
         return Vec::new();
+    }
+    if answerable {
+        state.questions.retired_notice_key = notice_dismiss_key(Some(notice));
     }
     // Giving the keyboard back from a pass-through card hides that one detection only: the
     // dismissal cooldown would hide the agent's next picker with the same title too.
@@ -370,7 +377,7 @@ fn notice_answer(
     let position = if primary {
         notice.primary_choice_position()
     } else {
-        notice.secondary_choice_position()
+        notice.secondary_choice_position(state.session.agent.as_deref())
     };
     match position.and_then(|position| choices.get(position)) {
         Some(choice) => Some(terminal_notice_choice_answer(Some(notice), choice.index)),
@@ -412,7 +419,10 @@ fn answer_prompt(state: &mut ChatState, answer: &Value) -> Vec<Effect> {
     if crate::questions::terminal_picker::is_navigation_answer(answer) {
         return send_navigation(state, answer);
     }
-    if state.questions.answering {
+    if state.questions.answering
+        || crate::questions::pending_approval::holds_notice(state)
+        || crate::questions::pending_approval::holds_prompt(state)
+    {
         return Vec::new();
     }
     let kind = answer
@@ -422,6 +432,9 @@ fn answer_prompt(state: &mut ChatState, answer: &Value) -> Vec<Effect> {
         .to_string();
     state.questions.answering = true;
     state.questions.notice_error = None;
+    state.questions.settled_approval = None;
+    state.questions.pending_approval =
+        crate::questions::pending_approval::begin(state, &kind, answer);
     // CDXC:SessionChat 2026-09-16 DECISION: User: picking an option is optimistic: the card disappears at once while the answer is sent in the background; it only comes back, with its failure line, when the daemon proves the answer did not land.
     // A picker answer hides the card at once: gxserver keeps reporting the detection until the
     // agent's screen catches up, and the user has already chosen.

@@ -137,23 +137,70 @@ pub(crate) fn modal_switch(p: &ModalPalette, checked: bool, disabled: bool) -> A
         .h(px(20.0))
         .rounded(px(6.0))
         .border_2()
-        .border_color(if checked {
-            hsla(p.primary)
+        .border_color(transparent())
+        .bg(hsla(if checked {
+            switch_on_track(p.foreground, p.light)
         } else {
-            transparent()
-        })
-        .bg(hsla(if checked { p.primary } else { p.switch_off }))
+            p.switch_off
+        }))
         .when(disabled, |this| this.opacity(0.5))
         .child(
             div()
                 .size(px(16.0))
                 .ml(px(if checked { 12.0 } else { 0.0 }))
                 .rounded(px(4.0))
-                .bg(hsla(p.background))
+                .bg(hsla(if checked {
+                    SWITCH_ON_THUMB
+                } else {
+                    p.background
+                }))
                 .shadow_sm(),
         )
         .into_any_element()
 }
+
+/// The track of an on switch: the theme's ink at partial strength, a mid grey that carries the
+/// theme's hue (the dark themes' foregrounds are tinted), so the white [`SWITCH_ON_THUMB`] stands
+/// out on it in every look and the track never turns black on glass.
+///
+/// CDXC:Switches 2026-11-08 DECISION:
+/// User, of an on Settings switch under dark glass (a near-white track with a light grey handle): "i dont like how this looks when enabled fam please make it look better (the color of the handle blends with the white of the toggle)". Every on switch (Settings rows, Settings cards, the modal kit's app-wide switch) now draws a mid-tone track (the foreground at 42% in dark looks, 62% in light ones) under a white handle with a soft shadow, the same in glass and solid. The off state keeps its faint track and its foreground or surface handle at the left, so on reads as a brighter track with a white handle at the right. The light on track was the near-black foreground, which the user does not want as a fill on glass.
+pub(crate) fn switch_on_track(foreground: Rgba, light: bool) -> Rgba {
+    rgba_of(foreground, if light { 0.62 } else { 0.42 })
+}
+
+/// The handle of an on switch: white, over [`switch_on_track`].
+pub(crate) const SWITCH_ON_THUMB: Rgba = Rgba {
+    r: 1.0,
+    g: 1.0,
+    b: 1.0,
+    a: 1.0,
+};
+
+/// The faint wash a switch row shows while the pointer is over it: the foreground at 4%, so it is
+/// a light veil on a dark surface and a dark one on a light surface, never a solid fill.
+pub(crate) fn switch_row_wash(foreground: Rgba) -> Rgba {
+    rgba_of(foreground, 0.04)
+}
+
+/// Makes a row that holds a switch toggle from a click anywhere on it, not only on the switch.
+///
+/// CDXC:SwitchRows 2026-11-06 DECISION:
+/// User: "allow clicking in the center of any toggle bar or on it's title to toggle it (not just the toggle button itself)". Every row of the app that pairs a title with a switch is built through this one helper (`modal_panel_row` callers, onboarding's `switch_row`, Settings' `toggle_field_with`/`setting_toggle_row`): the whole row is the click target, it shows a pointer cursor and a hover wash, and a disabled row does neither. The switch's own `switch_control` and a row's other controls (reset asterisk, text field, dropdown, button) call `App::stop_propagation` when pressed, so a click on them never reaches the row and a click on the switch itself toggles once, not twice.
+pub(crate) trait SwitchRowExt:
+    gpui::StatefulInteractiveElement + gpui::Styled + Sized
+{
+    fn switch_row_press(self, wash: Rgba, disabled: bool, press: BoundPress) -> Self {
+        if disabled {
+            return self;
+        }
+        self.cursor_pointer()
+            .hover(move |this| this.bg(hsla(wash)))
+            .on_bound_press(press)
+    }
+}
+
+impl<E: gpui::StatefulInteractiveElement + gpui::Styled> SwitchRowExt for E {}
 
 /// The app's vertical scrollbar, the look of the chat transcript's: gpui-component's own geometry
 /// (a 16px strip, a 6px thumb 4px in from the edge that grows to 8px on hover or drag, the theme's
@@ -196,7 +243,9 @@ pub(crate) fn modal_spinner(color: Rgba) -> AnyElement {
     modal_icon(ICON_LOADER, 15.0, color)
         .with_animation(
             "native-modal-spinner",
-            Animation::new(Duration::from_millis(900)).repeat(),
+            Animation::new(Duration::from_millis(900))
+                .repeat()
+                .with_max_fps(crate::app::helpers::INDICATOR_MAX_FPS),
             |svg, delta| {
                 svg.with_transformation(Transformation::rotate(radians(
                     delta * std::f32::consts::TAU,
@@ -251,14 +300,7 @@ fn modal_action_button_bound(
     let p = *p;
     let (fills, text) = match tone {
         ModalButtonTone::Neutral => (neutral_button_fills(p.light), p.foreground),
-        ModalButtonTone::Primary => (
-            ButtonFills {
-                rest: p.primary,
-                hover: p.primary_hover(),
-                pressed: css_mix(p.primary, 0.8, gpui::rgb(0xffffff)),
-            },
-            p.primary_foreground,
-        ),
+        ModalButtonTone::Primary => (p.primary_button_fills(), p.primary_button_text()),
         ModalButtonTone::Danger => (
             destructive_button_fills(p.destructive, p.light),
             p.destructive,
@@ -397,6 +439,26 @@ pub(crate) trait PressExt: gpui::StatefulInteractiveElement + Sized {
 }
 
 impl<E: gpui::StatefulInteractiveElement> PressExt for E {}
+
+/// `press` that also stops the click reaching the elements behind it: a control inside a switch
+/// row (the switch itself, the reset asterisk, a button) runs its own handler and never the row's
+/// toggle, so it cannot flip the switch twice or flip it by accident. See [`SwitchRowExt`].
+pub(crate) fn stopping_press(press: BoundPress) -> BoundPress {
+    Rc::new(move |window, app| {
+        app.stop_propagation();
+        press(window, app)
+    })
+}
+
+/// Wraps a control that sits inside a switch row (a colour swatch, a button, a field) so a click on
+/// it never reaches the row's toggle. See [`SwitchRowExt`].
+pub(crate) fn click_shield(child: impl IntoElement) -> AnyElement {
+    div()
+        .id("click-shield")
+        .on_click(|_, _, app| app.stop_propagation())
+        .child(child)
+        .into_any_element()
+}
 
 /// Captures one child's bounds from a prepaint pass, for anchoring popovers.
 pub(crate) fn capture_child_bounds(

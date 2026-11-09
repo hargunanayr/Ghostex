@@ -20,7 +20,7 @@
 
 <br />
 
-<h3 align="center">Lots of useful extensions & views</h3>
+<h3 align="center">Customizable extensions & sidepanels</h3>
 
 <p align="center">
   <a href="media/readme/gx-hero-1.webp">
@@ -30,8 +30,7 @@
   </a>
 </p>
 
-<h3 align="center">Super Customizable & Powerful</h3>
-<p align="center">As minimal or feature-rich as you want it to be</p>
+<h3 align="center">As minimal or feature-rich as you want it to be</h3>
 <p align="center">
   <a href="media/readme/gx-hero-2.jpeg">
     <picture>
@@ -40,20 +39,20 @@
   </a>
 </p>
 
-<h3 align="center">First-class Coordinators with Visual Questions</h3>
-<p align="center">Coordinators fully manage your projects for you and spin up threads automatically.</br>Work best with the /ghostex-visuals skill</p>
+<h3 align="center">First-class Coordinators with Visual Inline Pages</h3>
 <p align="center">
-  <a href="media/readme/gx-hero-7.webp">
+  <a href="media/readme/gx-hero-9.webp">
     <picture>
-      <img width="960" src="media/readme/gx-hero-7.webp" />
+      <img width="960" src="media/readme/gx-hero-9.webp" />
     </picture>
   </a>
 </p>
 
+<h3 align="center">Visually pick from different designs/options then send choices to agent</h3>
 <p align="center">
-  <a href="media/readme/gx-hero-8.webp">
+  <a href="media/readme/gx-hero-10.webp">
     <picture>
-      <img width="960" src="media/readme/gx-hero-8.webp" />
+      <img width="960" src="media/readme/gx-hero-10.webp" />
     </picture>
   </a>
 </p>
@@ -82,7 +81,7 @@
 
 <h3 align="center">💬 Chat &amp;&nbsp;CLI&nbsp;views</h3>
 
-<p align="center">Talk to Claude Code, Codex, or any other agent in a proper chat GUI: clickable images, readable diffs, queued prompts, sub-agents in view, and a full editor for long messages. If you ever need the raw CLI, it is one hotkey away and your draft comes&nbsp;with&nbsp;you.</p>
+<p align="center">Talk to Claude Code, Codex, or any other agent in a proper chat GUI: clickable images, readable diffs, queued prompts, sub-agents in view, and a full editor for long messages. If you ever need the raw CLI, it is one hotkey away.</p>
 
 <p align="center"><img src="media/readme/gx-diff.png" alt="A chat showing the agent's code change as a diff" width="70%" /></p>
 
@@ -185,6 +184,14 @@ Or download the app directly:
   <a href="https://maddada.com/download/windows-arm64"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/Windows-ARM64%20Setup.svg?variant=secondary&logo=windows&mode=dark" /><img src="https://shieldcn.dev/badge/Windows-ARM64%20Setup.svg?variant=secondary&logo=windows&mode=light" alt="Windows ARM64 installer" /></picture></a>
 </p>
 
+Or install from PowerShell:
+
+```powershell
+irm https://ghostex.dev/install.ps1 | iex
+```
+
+The [script](tooling/install/install.ps1) downloads the installer for your PC from GitHub, checks it against the SHA-256 digest GitHub publishes, and runs it. It isn't a browser download, so Windows doesn't show the SmartScreen prompt, and it changes no security settings.
+
 Agents run in native PowerShell by default. Prefer Linux? Switch to WSL in Settings > General > Terminal > Windows Environment. Updates arrive automatically.
 
 ### Linux
@@ -264,7 +271,7 @@ Ghostex builds on open source work from these projects and communities:
 - [VS Code](https://github.com/microsoft/vscode) and [code-server](https://github.com/coder/code-server) for the embedded IDE
 - [Beads](https://github.com/gastownhall/beads) by [Steve Yegge](https://github.com/steveyegge) and [Beads Viewer](https://github.com/Dicklesworthstone/beads_viewer) for the Kanban board
 - [OpenUsage](https://github.com/robinebers/openusage) for Claude and Codex usage stats
-- [Agentation](https://github.com/benjitaylor/agentation) for browser annotation tooling
+- [Agentation](https://github.com/benjitaylor/agentation) for browser annotation tooling (Ghostex bundles [a fork](https://github.com/maddada/agentation/tree/ghostex) that adds screenshots)
 - [cmux](https://github.com/manaflow-ai/cmux) for agent hook and notification patterns
 - [zehn](https://github.com/al3rez/zehn) by [al3rez](https://github.com/al3rez) for prompt-history search
 - [vvterm](https://github.com/vivy-company/vvterm) and [Termux](https://github.com/termux/termux-app) for mobile terminal components

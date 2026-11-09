@@ -68,6 +68,9 @@ pub(crate) struct NativeChatView {
     pub(super) menu_toggle: super::menu_toggle::ChatMenuToggle,
     /// The working card's pills, measured where their menus open (`chat_pills.rs`).
     pub(super) pill_bounds: super::chat_pills::ChatPillBounds,
+    /// "Don't show again" is ticked in the open coordinator tips; it applies when they close
+    /// (coordinator_intro.rs).
+    pub(super) coordinator_intro_dont_show: bool,
     /// What the working card measured at its last paint (`working_card.rs`).
     pub(super) working_card: super::working_card::WorkingCardCells,
     /// The chat box's pill strip (pills_strip.rs).
@@ -129,6 +132,13 @@ pub(crate) struct NativeChatView {
     pub(super) composer_held_key: Option<String>,
     /// When the last `Paste` reached a chat field, for the slow clipboard read log (clipboard.rs).
     pub(super) paste_started: Option<web_time::Instant>,
+    /// The composer pastes this view has started and the chat host may not have counted yet
+    /// (clipboard.rs `PasteTiles`).
+    pub(super) paste_tiles: super::clipboard::PasteTiles,
+    /// A send from the chat box waiting for a paste or drop to land (`composer_attach.rs`): its mode.
+    pub(super) held_send: Option<String>,
+    /// The timer that looks at a held send again while a clipboard read is pending.
+    pub(super) held_send_recheck: Option<gpui::Task<()>>,
     /// The chat box's height tween and the arrival fade of the controls an expansion brings back.
     pub(super) composer_animation: super::composer_animation::ComposerAnimation,
     /// Whether this session's status line holds its row of space, remembered across view
@@ -169,6 +179,10 @@ pub(crate) struct NativeChatView {
     pub(super) secret_request_inputs: super::secret_request::SecretRequestInputs,
     pub(super) terminal_dialog_key_focus: gpui::FocusHandle,
     pub(super) terminal_picker_input: Option<super::terminal_picker::TerminalPickerInput>,
+    /// The pass-through card's screen region, kept scrolled to its end (terminal_picker.rs).
+    pub(super) passthrough_screen_scroll: gpui::ScrollHandle,
+    /// The screen text that region last showed; new text scrolls it to its end again.
+    pub(super) passthrough_screen_shown: Option<String>,
     pub(crate) note_input: Option<Entity<TextareaState>>,
     pub(crate) note_subscription: Option<Subscription>,
     /// The note and text boxes of the open question forms, by `<form id>:<question>`.
@@ -266,6 +280,8 @@ pub(crate) struct NativeChatView {
     pub(crate) list: gpui::ListState,
     /// Set while a transcript field has focus: whether tail following resumes when it leaves (scroll_bottom.rs).
     pub(super) transcript_focus_follow: std::cell::Cell<Option<bool>>,
+    /// The agent's reply arriving: its fade and the hold at its top (reply_arrival.rs).
+    pub(super) reply_arrival: std::rc::Rc<std::cell::RefCell<super::reply_arrival::ReplyArrival>>,
     /// A one-click answer holding the row the reader clicked still (answer_anchor.rs).
     pub(super) answer_hold: std::rc::Rc<std::cell::RefCell<super::answer_anchor::AnswerHold>>,
     /// Where the focused transcript field was painted, which streaming rows must not move (scroll_bottom.rs).
@@ -416,6 +432,7 @@ impl NativeChatView {
             worktree_tray_detail_bounds: Default::default(),
             menu_toggle: Default::default(),
             pill_bounds: Default::default(),
+            coordinator_intro_dont_show: false,
             working_card: Default::default(),
             pills_strip: Default::default(),
             context_editor_window: Default::default(),
@@ -431,6 +448,7 @@ impl NativeChatView {
             hide_file_changes: false,
             disclosure_motion: Default::default(),
             transcript_focus_follow: Default::default(),
+            reply_arrival: Default::default(),
             answer_hold: Default::default(),
             transcript_focus_field_top: Default::default(),
             in_subagent: false,
@@ -457,6 +475,9 @@ impl NativeChatView {
             composer_measurements: None,
             composer_held_key: None,
             paste_started: None,
+            paste_tiles: Default::default(),
+            held_send: None,
+            held_send_recheck: None,
             composer_animation: Default::default(),
             context_status_scroll: Default::default(),
             bounds: Default::default(),
@@ -484,6 +505,8 @@ impl NativeChatView {
             secret_request_inputs: Default::default(),
             terminal_dialog_key_focus: cx.focus_handle(),
             terminal_picker_input: None,
+            passthrough_screen_scroll: Default::default(),
+            passthrough_screen_shown: None,
             note_input: None,
             note_subscription: None,
             form_inputs: Default::default(),
@@ -728,7 +751,13 @@ impl NativeChatView {
         cx: &mut Context<Self>,
     ) {
         if callback == "onSessionChatAttachmentsPicked" {
-            self.invoke(json!({"type":"attachPaths","paths":payload["paths"]}), cx);
+            let paths = payload["paths"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|path| path.as_str().map(str::to_owned))
+                .collect();
+            self.attach_to_composer(Vec::new(), paths, cx);
         }
     }
 
@@ -737,14 +766,19 @@ impl NativeChatView {
     }
 
     /// Adds `content` after what is already in the chat box (a review comment pill, an
-    /// annotation), so a second one joins the first instead of replacing it.
+    /// annotation), so a second one joins the first instead of replacing it. Its pictures
+    /// (`[Image #N](path)`, an annotation's screenshots) are numbered on from the draft's own.
     pub(crate) fn append_prompt(&mut self, content: &str, cx: &mut Context<Self>) {
+        let content = ghostex_gx_chat_core::composer::references::renumber_image_references(
+            &self.draft,
+            content,
+        );
         let next =
-            ghostex_gx_chat_core::composer::review_comments::append_to_draft(&self.draft, content);
+            ghostex_gx_chat_core::composer::review_comments::append_to_draft(&self.draft, &content);
         self.replace_draft(&next, false, false, cx);
     }
 
-    fn replace_draft(
+    pub(super) fn replace_draft(
         &mut self,
         content: &str,
         history: bool,
@@ -1000,6 +1034,11 @@ impl NativeChatView {
                 }
                 // The page card's picture (`page_card.rs`), which the view keeps for itself.
                 Some("host") if request["method"] == "pageThumbnail" => self.receive_page_thumbnail(&request["params"], cx),
+                // The offline-computer card's check and Retry name the chat's machine for the app
+                // (remote_conn/chat_computers.rs).
+                Some("host") if matches!(request["method"].as_str(), Some("checkComputer" | "reconnectComputer")) => {
+                    self.host(request["method"].as_str().unwrap_or_default(), json!({"machineId": self.config.machine_id}), cx)
+                }
                 Some("host") => self.host(request["method"].as_str().unwrap_or_default(), request["params"].clone(), cx),
                 Some("chatImage") => self.receive_chat_image(request, cx),
                 // The two arms the Rust brain's `Effect::Copy` and `Effect::Toast` ride in. The
@@ -1020,6 +1059,7 @@ impl NativeChatView {
                 }
                 Some("actionError") => { cx.notify(); }
                 Some("composer") => {
+                    self.paste_tiles.inserted();
                     self.replace_draft(request["params"]["content"].as_str().unwrap_or_default(), request["method"] == "history", request["params"]["preserveError"] == true, cx);
                     self.input_caret = request["params"]["caret"].as_u64().map(|caret|caret as usize);
                 }
@@ -1047,6 +1087,12 @@ impl NativeChatView {
             return;
         }
         let endpoint = format!("/api/{method}");
+        // A message held for a computer that is offline lives on THIS computer's gxserver
+        // (server/src/connected_computers/held_sends.rs), never on the session's own.
+        let held_send = matches!(
+            method,
+            "holdSessionChatSend" | "listHeldSessionChatSends" | "cancelHeldSessionChatSend"
+        );
         let diagnostic_method = method.to_owned();
         let import_attachments = method == "importNativeAttachments";
         let mut params = request["params"].as_object().cloned().unwrap_or_default();
@@ -1069,18 +1115,22 @@ impl NativeChatView {
                     | "/api/sendSessionChatQueuedPrompt"
                     | "/api/answerSessionChatPrompt"
             );
-            let remote = match crate::app::gx_store::cloud_box_send_target(
-                &config.machine_id,
-                delivers_message,
-            )
-            .await
-            {
-                Ok(Some(target)) => Some(target),
-                Ok(None) => config.remote,
-                Err(refusal) => {
-                    return Err(
-                        json!({"code":refusal.code,"message":refusal.message,"endpoint":endpoint}),
-                    );
+            let remote = if held_send {
+                None
+            } else {
+                match crate::app::gx_store::cloud_box_send_target(
+                    &config.machine_id,
+                    delivers_message,
+                )
+                .await
+                {
+                    Ok(Some(target)) => Some(target),
+                    Ok(None) => config.remote,
+                    Err(refusal) => {
+                        return Err(
+                            json!({"code":refusal.code,"message":refusal.message,"endpoint":endpoint}),
+                        );
+                    }
                 }
             };
             super::rpc::request(remote, &endpoint, &params).await
@@ -1092,6 +1142,12 @@ impl NativeChatView {
                     Ok(value) => (value, Value::Null),
                     Err(error) => (Value::Null, error),
                 };
+                // A pasted file's import answered: an answer goes on to the chat box as references
+                // (`attachmentReferences`, then the core's `insertAttachments`), a refusal does not.
+                if import_attachments {
+                    this.paste_tiles.finished(error.is_null());
+                    cx.notify();
+                }
                 crate::support_logs::append_for_scenario(
                     crate::support_logs::GpuiSupportLog::SessionChat,
                     "gpui.sessionChat.viewState",

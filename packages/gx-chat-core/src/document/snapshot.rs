@@ -66,6 +66,10 @@ pub struct Document {
     /// (`session/cloud_box.rs`). The composer's placeholder already says so.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub cloud_box_asleep: bool,
+    /// The card above the chat box while the session's computer is offline, or a message to it
+    /// got no answer (`session/computer.rs`): "Windows PC is offline · last seen 2h ago" and Retry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub computer_notice: Option<crate::session::computer::ComputerNotice>,
     pub agent: Tri<String>,
     pub agent_session_id: Tri<String>,
     /// A draft session's agent choices. Family e.
@@ -103,6 +107,10 @@ pub struct Document {
     /// (`transcript/workflow_card.rs`); a tool row's `workflow` names its card. Family b.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub workflow_cards: BTreeMap<String, Value>,
+    /// What can change on each "GBot added" card, by change id (`transcript/gbot_cards.rs`); a
+    /// card with no entry here asks for one with `gbotCard` `op: load`. Family b.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub gbot_card_states: BTreeMap<String, Value>,
 
     // ---- composer ---------------------------------------------------------
     pub queue: Queue,
@@ -157,7 +165,7 @@ pub struct Document {
     pub async_questions: AsyncQuestions,
     /// The question forms (```questions blocks) by id, with the reader's picks or the sent answers
     /// (`questions/forms.rs`); the transcript's Markdown names each by id where it is drawn.
-    pub question_forms: BTreeMap<String, Value>,
+    pub question_forms: SharedForms,
     /// The form or chart a Resources row opened in the floating modal, or `null`
     /// (`questions/resource_modal.rs`); a form's picks are in `questionForms` under its id.
     #[serde(default)]
@@ -171,6 +179,11 @@ pub struct Document {
     pub send_failure_card_prompt_id: Option<String>,
     #[serde(default, skip_serializing_if = "Tri::is_absent")]
     pub notice_error: Tri<String>,
+    /// The approval answer the drawn notice or approval card waits on: `{ label, card, sending }`
+    /// (`card` is `notice` or `prompt`), drawn dimmed with a spinner; `null` otherwise
+    /// (`questions/pending_approval.rs`).
+    #[serde(default)]
+    pub approval_pending: Value,
     #[serde(default, skip_serializing_if = "Tri::is_absent")]
     pub operation_error: Tri<String>,
     /// The refusal's own code, so the composer can draw `composerNotReady` instead of an error
@@ -183,6 +196,10 @@ pub struct Document {
     /// Absent when Retry only reconnects.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operation_error_resend: Option<String>,
+    /// How the refusal is drawn: `{tone, title, chip, detail}` (`session::error_card`). Absent with
+    /// no refusal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation_error_card: Option<Value>,
 
     // ---- options, model picker, accounts ----------------------------------
     /// The pill labels the composer shows. Family e.
@@ -241,7 +258,10 @@ pub struct Document {
     /// A coordinator's Threads panel, or `null`. Family f.
     pub coordinator_threads_panel: Tri<Value>,
     /// A coordinator's board (`extras::coordinator_board`), or `null`. Family f.
-    pub coordinator_board: Tri<Value>,
+    pub coordinator_board: Tri<SharedValue>,
+    /// A coordinator's "How to use coordinators" tips (`extras::coordinator_intro`), or `null` where
+    /// its pill does not show. Family f.
+    pub coordinator_intro: Tri<Value>,
     /// The Side chats pill's menu (`extras::side_chats::project`), or `null`. Family f.
     pub side_chats_panel: Tri<Value>,
     /// A side chat's own bar (`{ parentSessionId, parentTitle }`), or `null`. Family f.
@@ -249,6 +269,9 @@ pub struct Document {
     /// The private secret request cards above the composer (`extras::secret_requests::project`),
     /// an array, empty when none. Family f.
     pub secret_requests: Tri<Value>,
+    /// Ghostex Collab (`extras::collab::project`): who watches and types, the owner's "Message
+    /// from" cards, a guest's waiting rows and chat box note; `null` while not shared. Family f.
+    pub collab: Tri<Value>,
     /// A coordinator's relayed thread approval cards (`extras::relayed_approvals::project`), an
     /// array, empty when none: drawn under each thread's report, in the Approvals pill's menu and
     /// on the board's Needs you row. Family f.
@@ -354,5 +377,59 @@ impl Document {
         let mut copy = self.clone();
         copy.async_questions = Default::default();
         copy
+    }
+}
+
+/// The document's `questionForms`, shared rather than copied: the core keeps the projection it
+/// built and hands the same map to every document assembled while its inputs stay the same
+/// (`document::AssembleCache`), so an unchanged map is neither copied, compared nor dropped value
+/// by value. Serialized as the bare map.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SharedForms(pub std::sync::Arc<BTreeMap<String, Value>>);
+
+impl PartialEq for SharedForms {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0) || self.0 == other.0
+    }
+}
+
+impl std::ops::Deref for SharedForms {
+    type Target = BTreeMap<String, Value>;
+
+    fn deref(&self) -> &BTreeMap<String, Value> {
+        &self.0
+    }
+}
+
+impl From<BTreeMap<String, Value>> for SharedForms {
+    fn from(forms: BTreeMap<String, Value>) -> Self {
+        Self(std::sync::Arc::new(forms))
+    }
+}
+
+/// A document value kept by the core across documents (`document::AssembleCache`): the same value
+/// is shared rather than copied, compared or dropped while its inputs hold. Serialized as the value.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SharedValue(pub std::sync::Arc<Value>);
+
+impl PartialEq for SharedValue {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0) || self.0 == other.0
+    }
+}
+
+impl std::ops::Deref for SharedValue {
+    type Target = Value;
+
+    fn deref(&self) -> &Value {
+        &self.0
+    }
+}
+
+impl From<Value> for SharedValue {
+    fn from(value: Value) -> Self {
+        Self(std::sync::Arc::new(value))
     }
 }

@@ -63,7 +63,9 @@ impl NativeChatView {
         p: &ChatAppearance,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let pending = self.snapshot["pendingAttachments"].as_u64().unwrap_or(0);
+        let pending = self
+            .paste_tiles
+            .shown(self.snapshot["pendingAttachments"].as_u64().unwrap_or(0));
         let active = self.composer_active_image(cx);
         self.render_reference_previews(
             self.composer_references.clone(),
@@ -263,6 +265,15 @@ impl NativeChatView {
                             ),
                     ),
             );
+            // Enter was pressed while the picture was still on its way (composer_attach.rs).
+            if answer_key.is_none() && self.held_send.is_some() {
+                row = row.child(
+                    div()
+                        .text_size(px(12.0 * s))
+                        .text_color(p.muted)
+                        .child("Sends once the image is attached"),
+                );
+            }
         }
         Some(row.into_any_element())
     }

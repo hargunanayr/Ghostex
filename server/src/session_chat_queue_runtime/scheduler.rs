@@ -1,6 +1,6 @@
 use super::wait_reason::{
     stuck_input_box_text, stuck_notification_body, HeadWait, InputBoxStep, WaitReason,
-    INPUT_BOX_LAST_RESORT_AFTER_MS, WATCHDOG_AFTER_MS,
+    INPUT_BOX_LAST_RESORT_AFTER_MS, INPUT_BOX_RELOAD_AFTER_MS, WATCHDOG_AFTER_MS,
 };
 use super::*;
 
@@ -60,6 +60,19 @@ pub type SessionChatQueueWaker = Arc<dyn Fn(&str, &str, &str) + Send + Sync>;
 /// stuck on a missing input box for five minutes (`INPUT_BOX_STUCK_AFTER_MS`), once per row.
 pub type SessionChatQueueStuckNotifier = Arc<dyn Fn(&str, &str, &str) + Send + Sync>;
 
+/// Reloads the agent of `(project, session)` for its head row `prompt` held on a missing input box
+/// (held_reload.rs); the scheduler awaits it under the session's delivery claim. Answers false when
+/// a passing state (a turn, the cooldown on automatic restarts) refused it, so it is tried again.
+pub type SessionChatQueueInputBoxReloader = Arc<
+    dyn Fn(
+            String,
+            String,
+            String,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send>>
+        + Send
+        + Sync,
+>;
+
 #[derive(Default)]
 struct SessionQueueGate {
     /// First moment this session looked stopped without looking busy since.
@@ -68,6 +81,8 @@ struct SessionQueueGate {
     transcript: SessionChatTranscriptGate,
     /// The head row held for a missing input box, since when, and whether that was logged.
     input_box_hold: Option<InputBoxHold>,
+    /// The head row that is a thread report, and when it may be checked for staleness again.
+    stale_report_check: Option<(String, DateTime<Utc>)>,
     /// How long the head row has waited and why, for the words it shows and the watchdog.
     head_wait: Option<HeadWait>,
     /// A blocking notice seen for the head row: its title and when a fresh read was asked for.
@@ -139,12 +154,24 @@ enum Assessment {
     },
     /// A sleeping session's head row becomes a startup send and the session is woken.
     HoldAndWake(String),
+    /// The head row is a thread report that no longer holds (coordinators/stale_report.rs): it
+    /// is dropped.
+    DropStale {
+        prompt_id: String,
+        reason: String,
+    },
     Hold {
         prompt_id: String,
         startup_send: bool,
         reason: WaitReason,
     },
 }
+
+/// A queued thread report is checked for staleness once it has waited this long: the coordinator
+/// runtime checked it right before sending it.
+const STALE_REPORT_CHECK_AFTER_MS: i64 = 60_000;
+/// How often a waiting thread report is checked again (each check may read a transcript tail).
+const STALE_REPORT_CHECK_EVERY_MS: i64 = 30_000;
 
 /// How long a head row waits on a missing input box before the wait is logged with its screen.
 const INPUT_BOX_HOLD_LOG_AFTER_MS: i64 = 60_000;
@@ -155,7 +182,14 @@ struct InputBoxHold {
     since: DateTime<Utc>,
     logged: bool,
     last_resort_logged: bool,
+    /// The reload step ran or was settled for this row (held_reload.rs): once per row.
+    reload_done: bool,
+    /// When the reload step may be tried again after a passing refusal.
+    reload_retry_at: Option<DateTime<Utc>>,
 }
+
+/// How long the reload step waits after a passing refusal before it tries again.
+const INPUT_BOX_RELOAD_RETRY_MS: i64 = 120_000;
 
 /// Starts or continues `hold` for `prompt_id`. Answers how long the row has waited on the input
 /// box, and true exactly once per row, when it has waited [`INPUT_BOX_HOLD_LOG_AFTER_MS`].
@@ -171,6 +205,8 @@ fn input_box_hold_log_due(
             since: now,
             logged: false,
             last_resort_logged: false,
+            reload_done: false,
+            reload_retry_at: None,
         }),
     };
     let waited = now.signed_duration_since(hold.since).num_milliseconds();
@@ -324,6 +360,9 @@ struct ReadyDelivery {
     /// long as the input box is missing (CDXC:SessionChat 2026-10-11 in session_chat_send_wake.rs).
     startup_send: bool,
     model_selection: Option<crate::session_chat_model_selection::PendingModelSelection>,
+    /// Not a send: the head row has waited past [`INPUT_BOX_RELOAD_AFTER_MS`] on a missing input
+    /// box, so the agent is reloaded instead (held_reload.rs).
+    input_box_reload: bool,
 }
 
 #[derive(Clone)]
@@ -338,6 +377,7 @@ pub struct SessionChatQueueRuntime {
     compacting_refresher: SessionChatQueueCompactingRefresher,
     waker: SessionChatQueueWaker,
     stuck_notifier: SessionChatQueueStuckNotifier,
+    input_box_reloader: SessionChatQueueInputBoxReloader,
     gates: Arc<Mutex<HashMap<String, SessionQueueGate>>>,
     composer_holds: crate::session_chat_queue_undelivered::SessionChatQueueComposerHolds,
     /// Sessions with a delivery in flight. The claim in
@@ -359,6 +399,7 @@ impl SessionChatQueueRuntime {
         compacting_refresher: SessionChatQueueCompactingRefresher,
         waker: SessionChatQueueWaker,
         stuck_notifier: SessionChatQueueStuckNotifier,
+        input_box_reloader: SessionChatQueueInputBoxReloader,
     ) -> Self {
         Self {
             paths,
@@ -371,6 +412,7 @@ impl SessionChatQueueRuntime {
             compacting_refresher,
             waker,
             stuck_notifier,
+            input_box_reloader,
             gates: Arc::new(Mutex::new(HashMap::new())),
             composer_holds: Default::default(),
             delivering: Arc::new(Mutex::new(HashSet::new())),
@@ -443,6 +485,7 @@ impl SessionChatQueueRuntime {
         let mut to_wake: Vec<(String, String, String)> = Vec::new();
         let mut to_publish: Vec<(String, String)> = Vec::new();
         let mut to_notify: Vec<(String, String, StuckReport)> = Vec::new();
+        let mut stale: Vec<(String, String, String, String)> = Vec::new();
 
         for (project_id, session_id) in targets {
             let key = session_queue_key(&project_id, &session_id);
@@ -462,7 +505,9 @@ impl SessionChatQueueRuntime {
                 Assessment::HoldAndWake(prompt_id) => {
                     Some(Some((prompt_id.as_str(), WaitReason::Asleep)))
                 }
-                Assessment::Skip | Assessment::Fail { .. } => Some(None),
+                Assessment::Skip | Assessment::Fail { .. } | Assessment::DropStale { .. } => {
+                    Some(None)
+                }
                 // A delivery in flight or about to start may put the row back (a held send), so
                 // its wait clock, the ladder's clock and its words stand until the row is gone.
                 Assessment::Deliver(_) | Assessment::Delivering => None,
@@ -486,6 +531,9 @@ impl SessionChatQueueRuntime {
                 Assessment::Deliver(delivery) => ready.push(delivery),
                 Assessment::Fail { prompt_id, reason } => {
                     blocked.push((project_id, session_id, prompt_id, reason));
+                }
+                Assessment::DropStale { prompt_id, reason } => {
+                    stale.push((project_id, session_id, prompt_id, reason));
                 }
                 Assessment::HoldAndWake(prompt_id) => {
                     to_wake.push((project_id, session_id, prompt_id));
@@ -542,6 +590,24 @@ impl SessionChatQueueRuntime {
             }
             self.reset_gate(&session_queue_key(&project_id, &session_id));
         }
+        for (project_id, session_id, prompt_id, reason) in stale {
+            if crate::session_chat_queue::drop_queued_prompt(
+                &self.paths,
+                &project_id,
+                &session_id,
+                &prompt_id,
+            ) {
+                crate::session_chat_send_diagnostics::record_send_recovery_from_worker(
+                    "sessionChatQueueDroppedStaleReport",
+                    &project_id,
+                    &session_id,
+                    &reason,
+                    &[],
+                );
+                (self.publisher_factory)(&project_id, &session_id)();
+            }
+            self.reset_gate(&session_queue_key(&project_id, &session_id));
+        }
         for (project_id, session_id, prompt_id) in to_wake {
             if crate::session_chat_queue::hold_queued_prompt_for_wake(
                 &self.paths,
@@ -582,6 +648,17 @@ impl SessionChatQueueRuntime {
                 prompt_id: head.id.clone(),
                 startup_send: head.startup_send,
                 model_selection: None,
+                input_box_reload: false,
+            })
+        };
+        let reload = |head: &crate::session_chat_queue::SessionChatQueuedPrompt| {
+            Assessment::Deliver(ReadyDelivery {
+                project_id: project_id.to_string(),
+                session_id: session_id.to_string(),
+                prompt_id: head.id.clone(),
+                startup_send: head.startup_send,
+                model_selection: None,
+                input_box_reload: true,
             })
         };
         let hold = |head: &crate::session_chat_queue::SessionChatQueuedPrompt,
@@ -653,6 +730,7 @@ impl SessionChatQueueRuntime {
                 prompt_id: String::new(),
                 startup_send: false,
                 model_selection: Some(selection.clone()),
+                input_box_reload: false,
             });
         }
         // CDXC:SessionChat 2026-09-09 SEE-ALSO:
@@ -661,6 +739,12 @@ impl SessionChatQueueRuntime {
             self.reset_gate(key);
             return Assessment::Skip;
         };
+        if let Some(reason) = self.stale_report(db, repository, key, head, now) {
+            return Assessment::DropStale {
+                prompt_id: head.id.clone(),
+                reason,
+            };
+        }
         // CDXC:SessionChat 2026-09-25 WHY:
         // A send held for a session that was asleep or still starting (session_chat_send_wake.rs) waits exactly like a new chat's first message: nobody may be viewing the session, so the scheduler refreshes the screen itself and delivers the moment the input box appears. Waiting for the cached reading made a woken session take 40 seconds.
         let draft = crate::agents::session_is_draft(&session);
@@ -700,6 +784,19 @@ impl SessionChatQueueRuntime {
             channel_ready || hermes_gate == Some(crate::hermes_gateway::TypedMessageGate::Ready);
         let composer_ready = channel_ready
             || composer.state == crate::session_chat_composer::SessionChatComposerState::Ready;
+        // CDXC:SessionChat 2026-11-07 WHY: GitHub #479: a message sent while Claude waited on its
+        // question climbed the input-box ladder for twenty minutes (a Ctrl+L and a resize every
+        // half minute, then "the agent's input box hasn't been on screen" quoting the task list
+        // under the question), though the box only comes back once the question is answered. The
+        // row waits for the answer instead; the screen is still read on the startup backoff, which
+        // asks for no repaint while the question shows, so the row leaves once it is answered.
+        if !composer_ready && composer.waits_on_question() {
+            self.reset_gate(key);
+            if self.composer_holds.screen_read_due(key, &head.id, now) {
+                (self.compacting_refresher)(project_id, session_id, composer_agent.as_deref());
+            }
+            return hold(head, WaitReason::Answer);
+        }
         // A "running" row whose daemon died before its agent took the message is woken too.
         if awaiting_startup
             && !composer_ready
@@ -724,14 +821,10 @@ impl SessionChatQueueRuntime {
             if self.composer_holds.screen_read_due(key, &head.id, now) {
                 (self.compacting_refresher)(project_id, session_id, composer_agent.as_deref());
             }
-            // An agent that could not start says so on its row, not as an unreadable box.
-            if let Some(notice) = (self.notice_reader)(project_id, session_id) {
-                if notice.missing_login() {
-                    return hold(head, WaitReason::MissingLogin);
-                }
-                if notice.start_failed() {
-                    return hold(head, WaitReason::StartFailed);
-                }
+            if let Some(reason) =
+                (self.notice_reader)(project_id, session_id).and_then(|n| startup_notice_wait(&n))
+            {
+                return hold(head, reason);
             }
             if draft
                 || composer.screen_tail.is_empty()
@@ -743,6 +836,12 @@ impl SessionChatQueueRuntime {
             // last resort needs every other signal to say idle, since this branch runs before
             // the activity and transcript gates.
             let waited = self.hold_for_input_box(project_id, session_id, &head.id, &composer, now);
+            if waited >= INPUT_BOX_RELOAD_AFTER_MS
+                && self.idle_by_every_signal(key, &session, generated_at)
+                && self.claim_input_box_reload(key, &head.id, now)
+            {
+                return reload(head);
+            }
             if waited >= INPUT_BOX_LAST_RESORT_AFTER_MS
                 && !self.composer_holds.waiting(key, &head.id, now)
                 && self.idle_by_every_signal(key, &session, generated_at)
@@ -785,13 +884,19 @@ impl SessionChatQueueRuntime {
         // Hermes's gateway already said it is idle with nothing waiting on the user, which is what
         // this hook-fed activity stands for (CDXC:HermesGateway 2026-11-05 in hermes_gateway.rs).
         let gateway_idle = hermes_gate == Some(crate::hermes_gateway::TypedMessageGate::Ready);
-        if !gateway_idle && !session_chat_queue_activity_is_deliverable(&session, generated_at) {
+        let question_waits = crate::session_approval::session_awaits_answer(&session)
+            && !question_card_left_standing(&session, &composer);
+        if !gateway_idle
+            && (question_waits
+                || !session_chat_queue_activity_is_deliverable(&session, generated_at))
+        {
             self.reset_gate(key);
-            let reason = if presentation_activity(&session, generated_at) == "working" {
-                WaitReason::Working
-            } else {
-                WaitReason::Answer
-            };
+            let reason =
+                if !question_waits && presentation_activity(&session, generated_at) == "working" {
+                    WaitReason::Working
+                } else {
+                    WaitReason::Answer
+                };
             return hold(head, reason);
         }
         let startup_composer_ready = awaiting_startup && composer_ready;
@@ -894,6 +999,11 @@ impl SessionChatQueueRuntime {
                 (self.compacting_refresher)(project_id, session_id, composer_agent.as_deref());
             }
             // Every gate above has passed, so the agent is idle by every other signal.
+            if waited >= INPUT_BOX_RELOAD_AFTER_MS
+                && self.claim_input_box_reload(key, &head.id, now)
+            {
+                return reload(head);
+            }
             if waited >= INPUT_BOX_LAST_RESORT_AFTER_MS {
                 self.log_last_resort(project_id, session_id, &head.id, &composer);
                 return deliver(head);
@@ -904,6 +1014,17 @@ impl SessionChatQueueRuntime {
     }
 
     async fn deliver(&self, key: String, ready: ReadyDelivery) {
+        if ready.input_box_reload {
+            let prompt_id = ready.prompt_id.clone();
+            if (self.input_box_reloader)(ready.project_id, ready.session_id, ready.prompt_id).await
+            {
+                self.settle_input_box_reload(&key, &prompt_id);
+            }
+            self.composer_holds.clear(&key);
+            self.reset_gate(&key);
+            self.finish_delivery(&key);
+            return;
+        }
         if let Some(selection) = ready.model_selection {
             (self.model_selector)(ready.project_id, ready.session_id, selection).await;
             self.reset_gate(&key);
@@ -1038,6 +1159,98 @@ impl SessionChatQueueRuntime {
             );
         }
         waited
+    }
+
+    /// Why the head row, a "not moving" or "idle" thread report that has waited past
+    /// [`STALE_REPORT_CHECK_AFTER_MS`], no longer holds for its thread, checked at most every
+    /// [`STALE_REPORT_CHECK_EVERY_MS`] (CDXC:Coordinators 2026-11-08 in
+    /// coordinators/stale_report.rs). Blocking: it may read the thread's transcript.
+    fn stale_report(
+        &self,
+        db: &rusqlite::Connection,
+        repository: &DomainRepository<'_>,
+        key: &str,
+        head: &crate::session_chat_queue::SessionChatQueuedPrompt,
+        now: DateTime<Utc>,
+    ) -> Option<String> {
+        let created = chrono::DateTime::parse_from_rfc3339(&head.created_at).ok()?;
+        if now.signed_duration_since(created).num_milliseconds() < STALE_REPORT_CHECK_AFTER_MS {
+            return None;
+        }
+        let due = self.gates.lock().ok().is_some_and(|mut gates| {
+            let check = &mut gates.entry(key.to_string()).or_default().stale_report_check;
+            let due = check
+                .as_ref()
+                .is_none_or(|(prompt_id, next)| prompt_id != &head.id || now >= *next);
+            if due {
+                *check = Some((
+                    head.id.clone(),
+                    now + chrono::Duration::milliseconds(STALE_REPORT_CHECK_EVERY_MS),
+                ));
+            }
+            due
+        });
+        if !due {
+            return None;
+        }
+        let report = crate::coordinators::parse_quiet_report(&head.text)?;
+        let (project_id, session_id) =
+            crate::coordinators::local_thread_of(&report.thread_ref, &self.server_id)?;
+        let thread = crate::coordinators::read_thread(db, &project_id, &session_id)
+            .ok()
+            .flatten();
+        let session = repository
+            .get_session(&project_id, &session_id)
+            .ok()
+            .flatten();
+        let why = crate::coordinators::quiet_report_stale_reason(
+            &report,
+            thread.as_ref(),
+            session.as_ref(),
+            &crate::presentation::now_iso(),
+        )?;
+        Some(format!(
+            "Dropped a queued {} report about thread {} that waited since {}: {why}.",
+            match report.kind {
+                crate::coordinators::QuietReportKind::Stalled => "\"not moving\"",
+                crate::coordinators::QuietReportKind::Idle => "\"idle\"",
+            },
+            report.thread_ref,
+            head.created_at,
+        ))
+    }
+
+    /// Whether the reload step is due for this held row now: not settled yet, and past the wait
+    /// after a passing refusal. Answering yes starts that wait.
+    fn claim_input_box_reload(&self, key: &str, prompt_id: &str, now: DateTime<Utc>) -> bool {
+        self.gates.lock().is_ok_and(|mut gates| {
+            gates
+                .get_mut(key)
+                .and_then(|gate| gate.input_box_hold.as_mut())
+                .filter(|hold| {
+                    hold.prompt_id == prompt_id
+                        && !hold.reload_done
+                        && hold.reload_retry_at.is_none_or(|at| now >= at)
+                })
+                .map(|hold| {
+                    hold.reload_retry_at =
+                        Some(now + chrono::Duration::milliseconds(INPUT_BOX_RELOAD_RETRY_MS));
+                })
+                .is_some()
+        })
+    }
+
+    /// The reload step ran, or was refused for good, for this row: it is not tried again.
+    fn settle_input_box_reload(&self, key: &str, prompt_id: &str) {
+        if let Ok(mut gates) = self.gates.lock() {
+            if let Some(hold) = gates
+                .get_mut(key)
+                .and_then(|gate| gate.input_box_hold.as_mut())
+                .filter(|hold| hold.prompt_id == prompt_id)
+            {
+                hold.reload_done = true;
+            }
+        }
     }
 
     fn notice_confirmed(
@@ -1188,6 +1401,7 @@ impl SessionChatQueueRuntime {
             prompt_id: prompt_id.to_string(),
             startup_send,
             model_selection: None,
+            input_box_reload: false,
         })
     }
 
@@ -1300,6 +1514,26 @@ fn notice_fails_a_row(notice: &crate::session_chat_notice::SessionChatTerminalNo
         && notice.kind != crate::session_chat_notice::SESSION_CHAT_NOTICE_DELIVERY_FAILED
 }
 
+/// What a held startup send waits for when the screen's notice explains its unready input box,
+/// or `None` to leave the row to the starting and input-box checks. An agent that could not start
+/// says so on its row, not as an unreadable box.
+///
+/// CDXC:SessionChat 2026-11-02 WHY: a screen the chat passes keys through to (OMP's tool approval, another agent's own picker) stands in for the input box until the user answers it, the same wait the activity gate calls `Answer` for a queued row. The input-box ladder is for a box that cannot be read: a message sent during an OMP approval said "the agent's input box can't be read yet, asking it to redraw its screen", and after five minutes it would have said the box was gone (live test, 2026-11-02).
+/// CDXC:Coordinators 2026-11-08 WHY: GitHub #502: a coordinator's brief to a new thread on another computer waited behind Claude Code's "Trust this folder?" and was never typed once the user answered it. The prompt has rows the chat answers itself, so it fell to the input-box ladder, whose three-minute last resort went to the send, which refuses while an answerable prompt shows ("Answer it in chat before sending") and so marked the brief Not sent for good. A user on another computer rarely answers within three minutes. A blocking prompt with rows (folder trust, a chooser) is a wait for the user's answer like a passed-through one, and the brief goes once it is answered.
+fn startup_notice_wait(
+    notice: &crate::session_chat_notice::SessionChatTerminalNotice,
+) -> Option<WaitReason> {
+    if notice.missing_login() {
+        Some(WaitReason::MissingLogin)
+    } else if notice.start_failed() {
+        Some(WaitReason::StartFailed)
+    } else if notice.blocks_input() && (notice.passes_keys_through() || notice.is_answerable()) {
+        Some(WaitReason::Answer)
+    } else {
+        None
+    }
+}
+
 /// An account switch or recovery is under way, which owns the session's next input.
 fn account_recovery_waiting(session: &Value) -> bool {
     matches!(
@@ -1345,6 +1579,22 @@ pub(super) fn session_chat_queue_activity_is_deliverable(
         }
         _ => false,
     }
+}
+
+/// CDXC:SessionChat 2026-11-07 WHY: GitHub #479: the queue read the session's activity, and
+/// opening the chat acknowledges a question's attention (activity idle) while the question is
+/// still open (`awaitingAnswer`, CDXC:SessionStatus 2026-10-31 in session_approval.rs), so a queued
+/// message went to the send path and waited on an input box the question kept off screen. A
+/// standing question card now holds the row as waiting for the answer. When the screen shows the
+/// agent's input box instead, the card was left standing (an agent that exited without its hooks
+/// firing): the screen wins, so a stale card cannot hold a row forever. The send path still reads
+/// the screen fresh before typing.
+pub(super) fn question_card_left_standing(
+    session: &Value,
+    composer: &crate::session_chat_composer::SessionChatComposerReadiness,
+) -> bool {
+    composer.state == crate::session_chat_composer::SessionChatComposerState::Ready
+        && crate::session_approval::session_awaits_answer(session)
 }
 
 fn session_text(session: &Value, key: &str) -> Option<String> {
@@ -1537,5 +1787,84 @@ mod tests {
             not_running_head(Some("sleeping"), None),
             NotRunningHead::Wait
         );
+    }
+
+    #[test]
+    fn a_message_sent_during_an_omp_tool_approval_waits_for_the_answer() {
+        // The open approval is a permission card with rows: a send meets the chat's "Answer it in
+        // chat before sending" refusal, as during Claude Code's (`is_answerable`, send.rs).
+        for screen in [
+            include_str!("../session_chat_tests/fixtures/omp-tool-approval-pi.txt"),
+            include_str!("../session_chat_tests/fixtures/omp-tool-approval-box.txt"),
+        ] {
+            let notice = crate::session_chat_notice::classify_session_chat_terminal_notice(
+                Some("omp"),
+                screen,
+            )
+            .expect("the open approval is a notice");
+            assert!(notice.is_answerable());
+        }
+        // With a message typed into it in OMP's terminal it is the card that passes keys through.
+        for screen in [
+            include_str!("../session_chat_tests/fixtures/omp-tool-approval-draft-pi.txt"),
+            include_str!("../session_chat_tests/fixtures/omp-tool-approval-draft-box.txt"),
+        ] {
+            let notice = crate::session_chat_notice::classify_session_chat_terminal_notice(
+                Some("omp"),
+                screen,
+            )
+            .expect("the approval with a draft is a notice");
+            let reason = startup_notice_wait(&notice).expect("the row waits for the approval");
+            // The row says the agent waits for the user, not that its input box is unreadable,
+            // and the input-box ladder (redraws, "send anyway", the five-minute "box gone"
+            // words and the watchdog) leaves it alone.
+            assert_eq!(
+                reason.text(),
+                "Waiting for you to answer the agent's question."
+            );
+            assert!(!reason.is_input_box());
+            assert!(!reason.escalates());
+        }
+    }
+
+    /// A standing question card holds the queue (also once its attention was acknowledged) while
+    /// the screen shows the question, and lets go when the screen shows the input box instead.
+    #[test]
+    fn a_question_card_holds_the_queue_until_the_screen_shows_the_input_box() {
+        let prompt = serde_json::json!({
+            "kind": "question",
+            "questions": [{ "question": "Which one?", "multiSelect": false, "options": [{ "label": "A" }] }],
+        })
+        .to_string();
+        let session = serde_json::json!({
+            "lifecycleState": "running",
+            "providerState": { "lifecycleState": "exists" },
+            "runtimeSettings": { "agentActivity": {
+                "activity": "idle",
+                "isAcknowledged": true,
+                "sessionChatPrompt": prompt,
+            } },
+        });
+        // Seen in the chat: the question's attention was acknowledged, the card still stands.
+        assert!(crate::session_approval::session_awaits_answer(&session));
+        let rule = "─".repeat(76);
+        let input_box = crate::session_chat_composer::session_composer_verdict(
+            Some("claude"),
+            &format!("{rule} Main Coordinator ─\n❯ \n{rule}\n  Opus 5.5 | xhigh\n"),
+        );
+        assert!(question_card_left_standing(&session, &input_box));
+        let picker = crate::session_chat_composer::session_composer_verdict(
+            Some("claude"),
+            include_str!("../../tests/fixtures/claude-question-preview.txt"),
+        );
+        assert!(!question_card_left_standing(&session, &picker));
+        // No card: nothing to outrank.
+        let mut bare = session.clone();
+        bare["runtimeSettings"]["agentActivity"]
+            .as_object_mut()
+            .unwrap()
+            .remove("sessionChatPrompt");
+        assert!(!question_card_left_standing(&bare, &input_box));
+        assert!(!crate::session_approval::session_awaits_answer(&bare));
     }
 }

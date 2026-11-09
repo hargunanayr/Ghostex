@@ -5,8 +5,9 @@
 //! User: "let's please allow picking more cli agents here (should be a dropdown). we should just include a line that can't be removed saying: "Read and adhere to this skill: /ghostex-orchestrator" ... also remove this [First request] and this [Goal]". The Agent field is a dropdown of every launcher an orchestrator can run on (gxserver `COORDINATOR_AGENT_FAMILIES`), the dialog shows the skill line (in the chosen agent's own skill spelling) as a locked first message, and it has no Goal or First request field; the goal stays settable with `ghostex orchestrator set-goal` and Goal & Instructions…. Supersedes the 2026-09-30 WHY that mirrored Claude's New project dialog with an optional goal and first request.
 //! SEE-ALSO: apps/desktop/src/app/new_coordinator_modal_lifecycle.rs (open, create), apps/desktop/src/app/gx_store/create/coordinator.rs (the gxserver calls), server/src/coordinators/role.rs (the skill and the first message), apps/mobile/app/src/screens/sessions-screen/NewCoordinatorSheet.tsx (the phone's same form).
 //!
-//! The Orchestrator playbook row says which playbook orchestrators in the project follow and its
-//! Edit button turns the dialog into the playbook editor (new_coordinator_playbook.rs).
+//! The Playbook overrides row shows the user's overrides (what every coordinator reads after
+//! Ghostex's playbook) and its Edit button turns the dialog into their editor
+//! (new_coordinator_playbook.rs).
 use super::native_modal_kit::*;
 #[path = "new_coordinator_playbook.rs"]
 mod playbook;
@@ -78,10 +79,9 @@ pub(crate) enum NewCoordinatorModalCommand {
         model: Option<String>,
         effort: Option<String>,
     },
-    /// Changes the orchestrator playbook: the project's copy with `project_id`, else the one for
-    /// all projects. The dialog stays open and waits on `reply`.
+    /// Saves the playbook overrides, or moves off the old full copies. The dialog stays open and
+    /// waits on `reply`.
     SavePlaybook {
-        project_id: Option<String>,
         change: PlaybookChange,
         reply: NewCoordinatorPlaybookReply,
     },
@@ -120,6 +120,12 @@ pub(crate) struct GpuiNewCoordinatorModalWindow {
     playbook: Option<OrchestratorPlaybookInfo>,
     playbook_input: Entity<TextareaState>,
     editor: Option<PlaybookEditor>,
+    /// Ghostex's part of the playbook in effect (`/api/readCoordinatorGuide`), once read.
+    playbook_guide: Option<Result<String, String>>,
+    /// The read-only playbook page is open.
+    viewing: bool,
+    /// The read-only playbook page's scroll position.
+    playbook_view_scroll: gpui::ScrollHandle,
     fit: ModalFit,
     focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -133,7 +139,11 @@ impl GpuiNewCoordinatorModalWindow {
         cx: &mut Context<Self>,
     ) -> Self {
         let name_input = cx.new(|cx| InputState::new(window, cx).placeholder(NAME_PLACEHOLDER));
-        let playbook_input = cx.new(|cx| TextareaState::new(window, cx));
+        let playbook_input = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .auto_grow(8, 14)
+                .placeholder(OVERRIDES_PLACEHOLDER)
+        });
         let model_filter =
             cx.new(|cx| InputState::new(window, cx).placeholder(MODEL_FILTER_PLACEHOLDER));
         let subscriptions = vec![
@@ -166,7 +176,7 @@ impl GpuiNewCoordinatorModalWindow {
                     }
                     let value = input.read(cx).value().to_string();
                     if let Some(editor) = this.editor.as_mut() {
-                        editor.drafts[usize::from(editor.project_scope)] = value;
+                        editor.draft = value;
                         cx.notify();
                     }
                 },
@@ -194,6 +204,9 @@ impl GpuiNewCoordinatorModalWindow {
             playbook: config.playbook,
             playbook_input,
             editor: None,
+            playbook_guide: None,
+            viewing: false,
+            playbook_view_scroll: gpui::ScrollHandle::new(),
             fit: ModalFit::fixed(),
             focus_handle: cx.focus_handle(),
             _subscriptions: subscriptions,
@@ -406,8 +419,12 @@ impl GpuiNewCoordinatorModalWindow {
     }
 
     fn on_enter_action(&mut self, action: &Enter, window: &mut Window, cx: &mut Context<Self>) {
+        if self.viewing {
+            cx.stop_propagation();
+            return;
+        }
         if self.editor.is_some() {
-            // Enter is a newline in the playbook; Cmd/Ctrl+Enter saves.
+            // Enter is a newline in the overrides; Cmd/Ctrl+Enter saves.
             let in_text = self
                 .playbook_input
                 .read(cx)
@@ -435,6 +452,10 @@ impl GpuiNewCoordinatorModalWindow {
 
     fn on_escape_action(&mut self, _: &Escape, window: &mut Window, cx: &mut Context<Self>) {
         cx.stop_propagation();
+        if self.viewing {
+            self.close_playbook_view(window, cx);
+            return;
+        }
         if self.editor.is_some() {
             self.close_playbook_editor(window, cx);
             return;
@@ -450,6 +471,13 @@ impl GpuiNewCoordinatorModalWindow {
 
     fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let key = event.keystroke.key.as_str();
+        if self.viewing {
+            if key == "escape" {
+                self.close_playbook_view(window, cx);
+                cx.stop_propagation();
+            }
+            return;
+        }
         if self.editor.is_some() {
             if key == "escape" {
                 self.close_playbook_editor(window, cx);
@@ -545,7 +573,7 @@ impl GpuiNewCoordinatorModalWindow {
             return body
                 .child(modal_error(
                     &p,
-                    "A coordinator runs on Claude, Codex, ZCode, Cursor, Grok, Copilot, Antigravity, Pi, OMP or OpenCode. Add one of them in Settings > Agents first.",
+                    "A coordinator runs on Claude, Codex, ZCode, Cursor, Grok, Copilot, Antigravity, Pi, OMP, OpenCode or DeepSeek Harness. Add one of them in Settings > Agents first.",
                 ))
                 .into_any_element();
         };
@@ -780,6 +808,9 @@ impl GpuiNewCoordinatorModalWindow {
 
     fn render_footer(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = self.palette;
+        if self.viewing {
+            return self.render_playbook_view_footer(cx);
+        }
         if self.editor.is_some() {
             return self.render_playbook_footer(cx);
         }
@@ -818,7 +849,9 @@ impl Render for GpuiNewCoordinatorModalWindow {
             "One agent you talk to about {}. It plans the work, hands each task to a thread (its own agent session, optionally in its own worktree), and reports back when threads finish or need you.",
             self.project_name
         );
-        let content = if self.editor.is_some() {
+        let content = if self.viewing {
+            self.render_playbook_view()
+        } else if self.editor.is_some() {
             self.render_playbook_page(window, cx)
         } else {
             vec![
@@ -830,7 +863,7 @@ impl Render for GpuiNewCoordinatorModalWindow {
         // Rendered on the playbook page too, so a list left open when Edit was pressed hides.
         let menu = self
             .render_open_menu(window, cx)
-            .filter(|_| self.editor.is_none());
+            .filter(|_| self.editor.is_none() && !self.viewing);
         modal_shell(
             &p,
             "ghostex-gpui-new-coordinator-modal",

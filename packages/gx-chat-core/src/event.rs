@@ -93,6 +93,9 @@ pub enum Event {
     /// the first document it sends is current. A host that never sends this keeps every timer
     /// running.
     Visibility { shown: bool },
+    /// The computer the session runs on, as the host knows it (`session/computer.rs`): its name,
+    /// whether it is another computer and whether it is offline. `None` for a host that cannot tell.
+    ComputerChanged(Option<crate::session::computer::SessionComputer>),
 }
 
 /// One session the host's session list knows (the sidebar on the desktop and the web build, the
@@ -134,18 +137,29 @@ pub struct KnownSession {
 
 impl KnownSession {
     /// Whether two lists name the same sessions the same way, so the transcript's cards and pills
-    /// would read the same: everything but the `+` picker's live fields.
+    /// would read the same: everything but the `+` picker's live fields, in any order.
+    ///
+    /// CDXC:SessionChat 2026-11-06 WHY: User: "bro why is the app laggy now??". The list comes in
+    /// the sidebar's order, which moves whenever a session becomes the newest, and comparing it in
+    /// order bumped `session_directory_revision` on every such move. That revision is part of the
+    /// settled prefix's key, so each open chat settled its whole transcript again: 20 seconds of
+    /// the chat host thread on a 14,828-row coordinator chat, over and over while its threads
+    /// worked, and every paste waited behind it. A reordered list names every session as before
+    /// (`host_lists_name_alike`), so it rebuilds nothing.
     pub fn same_names(a: &[KnownSession], b: &[KnownSession]) -> bool {
-        a.len() == b.len()
-            && a.iter().zip(b).all(|(a, b)| {
-                a.global_ref == b.global_ref
-                    && a.project_id == b.project_id
-                    && a.session_id == b.session_id
-                    && a.title == b.title
-                    && a.agent_id == b.agent_id
-                    && a.agent_name == b.agent_name
-                    && a.coordinator == b.coordinator
-            })
+        (a.len() == b.len() && a.iter().zip(b).all(|(a, b)| Self::named_alike(a, b)))
+            || crate::transcript::sent_message::host_lists_name_alike(a, b)
+    }
+
+    /// The fields the transcript names a session by.
+    pub(crate) fn named_alike(a: &KnownSession, b: &KnownSession) -> bool {
+        a.global_ref == b.global_ref
+            && a.project_id == b.project_id
+            && a.session_id == b.session_id
+            && a.title == b.title
+            && a.agent_id == b.agent_id
+            && a.agent_name == b.agent_name
+            && a.coordinator == b.coordinator
     }
 }
 

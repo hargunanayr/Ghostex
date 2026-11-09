@@ -18,21 +18,16 @@ use std::rc::Rc;
 /// User: never show On or Off text beside a toggle in Settings; the switch itself is the state. A view that cannot be turned off shows a locked-on switch instead of an "Always on" caption.
 /// The Settings switch: a 32x20 track with a 6px radius and a 1px edge, a 16px thumb with a 4px
 /// radius. Off: the raised-hover track with a hairline edge and a foreground thumb (dark) or
-/// surface thumb (light). On: a foreground track and a surface thumb.
+/// surface thumb (light). On: the mid-tone `switch_on_track` and a white thumb.
 pub(crate) fn settings_switch(p: &SettingsPalette, checked: bool, disabled: bool) -> AnyElement {
-    let thumb = if checked || p.light {
-        p.surface
-    } else {
+    let thumb = if checked {
+        SWITCH_ON_THUMB
+    } else if !p.light {
         p.foreground
-    };
-    let thumb = if p.glass && !checked && !p.light {
-        p.foreground
-    } else if p.glass && !p.light {
-        glass_checked_thumb(p)
     } else if p.glass {
         p.modal.solid_surface
     } else {
-        thumb
+        p.surface
     };
     div()
         .flex_shrink_0()
@@ -46,7 +41,7 @@ pub(crate) fn settings_switch(p: &SettingsPalette, checked: bool, disabled: bool
             hsla(p.hairline)
         })
         .bg(hsla(if checked {
-            p.foreground
+            switch_on_track(p.foreground, p.light)
         } else {
             p.raised_hover
         }))
@@ -64,12 +59,78 @@ pub(crate) fn settings_switch(p: &SettingsPalette, checked: bool, disabled: bool
         .into_any_element()
 }
 
-/// The thumb of an on switch under dark glass: a light gray on the light track.
+/// A clickable switch plus the press that flips it, so the row that holds it can flip it from a
+/// click anywhere on the row.
 ///
-/// CDXC:Settings 2026-11-06 DECISION:
-/// The on switch drew the theme chrome (`solid_surface`, near-black on the default theme) as its thumb, a black square on the Extensions cards under glass. The user does not want black or near-black fills on the glass design, so the thumb is a light gray that still stands apart from the light track.
-pub(crate) fn glass_checked_thumb(p: &SettingsPalette) -> gpui::Rgba {
-    p.muted
+/// CDXC:SwitchRows 2026-11-06 DECISION:
+/// User: "allow clicking in the center of any toggle bar or on it's title to toggle it (not just the toggle button itself)". `switch_control` and `small_switch_control` return this instead of a bare element, and the shared row builders (`setting_row`, `toggle_field_with`) take it as their control: a row built around a switch toggles from the title, the description and the empty middle, with a pointer cursor and a hover wash (`SwitchRowExt` in the modal kit). The switch stops the click it handled, so pressing the switch itself toggles once.
+pub(crate) struct SwitchControl {
+    element: AnyElement,
+    /// `None` while the switch is disabled: the row then shows no pointer and no hover.
+    press: Option<BoundPress>,
+}
+
+impl SwitchControl {
+    pub(crate) fn new(element: AnyElement, press: Option<BoundPress>) -> Self {
+        Self { element, press }
+    }
+
+    /// The press that flips the switch, when it can be flipped.
+    pub(crate) fn press(&self) -> Option<BoundPress> {
+        self.press.clone()
+    }
+}
+
+impl IntoElement for SwitchControl {
+    type Element = AnyElement;
+
+    fn into_element(self) -> AnyElement {
+        self.element
+    }
+}
+
+/// What a `setting_row` shows in its control lane: any element, or a switch whose press the row
+/// reuses for a click anywhere on it.
+pub(crate) struct RowControl {
+    pub(crate) element: AnyElement,
+    pub(crate) toggle: Option<BoundPress>,
+}
+
+impl From<AnyElement> for RowControl {
+    fn from(element: AnyElement) -> Self {
+        Self {
+            element,
+            toggle: None,
+        }
+    }
+}
+
+impl From<SwitchControl> for RowControl {
+    fn from(switch: SwitchControl) -> Self {
+        Self {
+            toggle: switch.press.clone(),
+            element: switch.element,
+        }
+    }
+}
+
+/// Makes `row` (the element a switch's row builder returned) toggle from a click anywhere on it.
+pub(crate) fn toggle_from_row(
+    p: &SettingsPalette,
+    id: impl Into<ElementId>,
+    row: AnyElement,
+    press: Option<BoundPress>,
+) -> AnyElement {
+    div()
+        .id(id.into())
+        .w_full()
+        .switch_row_press(
+            switch_row_wash(p.foreground),
+            press.is_none(),
+            press.unwrap_or_else(|| Rc::new(|_, _| {})),
+        )
+        .child(row)
+        .into_any_element()
 }
 
 /// A clickable Settings switch, named for the accessibility tree by `label`: its row's visible
@@ -84,25 +145,30 @@ pub(crate) fn switch_control<V: 'static>(
     disabled_reason: Option<SharedString>,
     on_change: impl Fn(&mut V, bool, &mut Window, &mut Context<V>) + 'static,
     cx: &mut Context<V>,
-) -> AnyElement {
+) -> SwitchControl {
     let id: ElementId = id.into();
-    div()
+    let press = (!disabled).then(|| {
+        bind_press(cx, move |this: &mut V, window, cx| {
+            on_change(this, !checked, window, cx);
+        })
+    });
+    let own_press = press.clone();
+    let element = div()
         .id(id.clone())
         .role(gpui::Role::Switch)
         .aria_toggled(a11y_toggled(checked))
         .accessibility_id(id.to_string())
         .aria_label(label)
         .flex_shrink_0()
-        .when(!disabled, |this| {
-            this.cursor_pointer().on_press(cx, move |this, window, cx| {
-                on_change(this, !checked, window, cx);
-            })
+        .when_some(own_press, |this, press| {
+            this.cursor_pointer().on_bound_press(stopping_press(press))
         })
         .when_some(disabled_reason.filter(|_| disabled), |this, reason| {
             this.tooltip(tooltip_text(reason))
         })
         .child(settings_switch(p, checked, disabled))
-        .into_any_element()
+        .into_any_element();
+    SwitchControl::new(element, press)
 }
 
 /// The shadcn button variants Settings uses.
@@ -153,7 +219,7 @@ impl ButtonSize {
 /// The label colour of a button variant.
 fn button_text(p: &SettingsPalette, variant: ButtonVariant) -> gpui::Rgba {
     match variant {
-        ButtonVariant::Primary => p.modal.primary_foreground,
+        ButtonVariant::Primary => p.modal.primary_button_text(),
         ButtonVariant::Destructive | ButtonVariant::DestructiveDialog => p.destructive,
         _ => p.foreground,
     }
@@ -177,6 +243,9 @@ fn button_colors(p: &SettingsPalette, variant: ButtonVariant) -> ButtonFills {
             }
         }
         // `hover:bg-primary/80`.
+        // The kit's main button: a frosted grey in light (CDXC:AppModal 2026-11-08 in
+        // native_modal_kit/palette.rs), `hover:bg-primary/80` in dark.
+        ButtonVariant::Primary if p.modal.light => p.modal.primary_button_fills(),
         ButtonVariant::Primary => ButtonFills {
             rest: p.primary,
             hover: css_fade(p.primary, 0.8),

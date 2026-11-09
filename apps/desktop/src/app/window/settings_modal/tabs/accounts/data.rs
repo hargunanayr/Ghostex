@@ -155,6 +155,16 @@ impl Account {
         text(&self.raw, "selector")
     }
 
+    /// The computer this account was synced from while it isn't signed in here yet (gxserver's
+    /// `syncedFrom`, CDXC:SettingsSync 2026-11-07 in gx-core settings_sync/lists.rs).
+    pub(crate) fn synced_from(&self) -> Option<String> {
+        self.raw
+            .get("syncedFrom")
+            .and_then(Value::as_str)
+            .filter(|from| !from.is_empty())
+            .map(str::to_string)
+    }
+
     pub(crate) fn name(&self) -> String {
         text(&self.raw, "name")
     }
@@ -221,7 +231,11 @@ impl Account {
     /// The windows the detail pane draws as bars: five-hour first, then the others.
     pub(crate) fn usage_bars(&self) -> Vec<UsageWindow> {
         let mut windows = self.headline_windows();
-        windows.sort_by_key(|window| !window.is_five_hour());
+        // gxserver already lists a usage-only account's windows in order (Gemini's 5h, 7d, then
+        // each other Antigravity group's 5h and 7d); sorting would pull every group's 5h together.
+        if !self.usage_only() {
+            windows.sort_by_key(|window| !window.is_five_hour());
+        }
         windows
     }
 
@@ -281,7 +295,12 @@ impl Account {
 
     /// `selector` as a number for sorting (`Number(a.selector)`).
     pub(crate) fn selector_number(&self) -> f64 {
-        self.selector().trim().parse::<f64>().unwrap_or(f64::NAN)
+        // An account waiting for its sign-in here sorts by the number it has on its computer.
+        let selector = match self.selector() {
+            selector if selector.is_empty() => text(&self.raw, "syncedNumber"),
+            selector => selector,
+        };
+        selector.trim().parse::<f64>().unwrap_or(f64::NAN)
     }
 
     /// `accountHeadlineWindows`: Claude shows the two tightest of weekly, five-hour and Fable (in
@@ -289,7 +308,8 @@ impl Account {
     pub(crate) fn headline_windows(&self) -> Vec<UsageWindow> {
         let usage = self.usage();
         if self.usage_only() {
-            // Cursor and Copilot have one month window; Gemini its 5h and 7d.
+            // Cursor and Copilot have one month window; Gemini its 5h and 7d, then each other
+            // Antigravity group's (Claude/GPT 5h and 7d).
             return usage;
         }
         let main: Vec<&UsageWindow> = usage

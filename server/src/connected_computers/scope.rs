@@ -2,6 +2,7 @@
 //! forwards: the endpoints the advertised verbs (`ghostex sessions`, `agents types/list/create/send/
 //! close/reload`, `read-session-chat`, `read-text`, `send-message`/`send-text`/`send-key`,
 //! `interrupt-session-chat`, `answer-session-chat-prompt`, `coordinator start-thread --computer`,
+//! `coordinator promote --computer`, `link add|remove --session <thread on that computer>`,
 //! the session sleep/wake/close actions) and the report checker for threads on another computer
 //! call, and nothing else.
 
@@ -40,6 +41,27 @@ pub(crate) const PEER_ALLOWED_ENDPOINTS: &[&str] = &[
     "/api/sendSessionEnter",
     "/api/watchAgentMessageDelivery",
     "/api/checkAgentSessionWrite",
+    // CDXC:Coordinators 2026-11-07 FIX: `ghostex coordinator promote <ref> --computer <name>`
+    // (Discord: "why orchestrator cannot be promoted to a session in a remote machine from the
+    // desktop app?"). The other computer records the coordinator, installs its own bundled
+    // orchestrator skill and queues the playbook prompt: no more than `queueSessionChatPrompt`
+    // above already lets an agent do, plus the role.
+    "/api/promoteCoordinator",
+    // `ghostex agent-hooks status|install|uninstall --computer <name>`: Ghostex's own session
+    // resume hooks on that computer, which a headless one has no other way to get (issue #431,
+    // CDXC:AgentHooks 2026-11-07 FIX in agent_hooks/peer_start.rs).
+    "/api/readAgentHookStatus",
+    "/api/installAgentHooks",
+    "/api/uninstallAgentHooks",
+    // CDXC:SessionLinks 2026-11-08 FIX: `ghostex link add|remove --session <thread on that
+    // computer>` (issue #497: a coordinator links every thread to its PR). Only the relay on the
+    // coordinator's own computer knows whose thread a session is, so it limits these two to the
+    // coordinator's own threads (thread_scope.rs); the other link verbs stay off.
+    "/api/addSessionLink",
+    "/api/removeSessionLink",
+    // `ghostex chief send --computer <name>` reads that computer's Chief here (`status`); the
+    // handler refuses a peer anything but `status` and `guide` (chief/endpoint.rs).
+    "/api/chief",
     // Settings sync: one exchange trades both computers' synced settings (server/src/settings_sync/).
     "/api/settingsSyncExchange",
 ];

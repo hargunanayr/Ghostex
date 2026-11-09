@@ -443,6 +443,8 @@ impl GhostexGpuiApp {
             .items_center()
             .gap(px(WORKAREA_HEADER_PINNED_GAP))
             .ml(px(4.0))
+            // Approvals put aside with Escape or Close, until answered (notice_modal_host.rs).
+            .children(self.render_approvals_waiting_pill(compact, cx))
             .children(self.render_workarea_header_box_chip(compact, cx))
             .when(shown(HeaderControl::ClaudeCloud), |this| {
                 this.children(self.render_workarea_header_claude_cloud_button(compact, cx))
@@ -450,6 +452,7 @@ impl GhostexGpuiApp {
             .when(shown(HeaderControl::SessionDetails), |this| {
                 this.children(self.render_workarea_header_session_details_button(cx))
             })
+            .children(self.render_workarea_header_share_button(cx))
             // Everything occasional lives behind the trailing ⋯ menu.
             .when(
                 self.titlebar_more_menu_visible() && shown(HeaderControl::MoreMenu),

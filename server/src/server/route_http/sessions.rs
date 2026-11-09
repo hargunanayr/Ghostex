@@ -21,6 +21,7 @@ pub(super) async fn route_sessions_http(
         request_id,
         body_json,
         token_extension_id,
+        caller,
     } = request;
     Ok(match endpoint.path.as_str() {
         "/api/createSession" => handle_domain_http(
@@ -47,6 +48,10 @@ pub(super) async fn route_sessions_http(
                     params.insert("cwd".to_string(), Value::String(folder));
                 }
                 let params = &params;
+                crate::gbots::refuse_bot_project_create(
+                    &repository.resolve_create_session_project(params)?,
+                    params,
+                )?;
                 let created_session = repository.create_session(params, false)?;
                 let session = apply_created_session_identity(repository, &created_session, params)?;
                 let project_id = value_text(&session, "projectId")?;
@@ -68,6 +73,10 @@ pub(super) async fn route_sessions_http(
             request_id,
             &body_json,
             |repository, db, params, _| {
+                // `--path <folder>` is added as a project first (gbots/project.rs).
+                let mut placed = params.clone();
+                crate::gbots::add_create_project_path(&state, db, repository, &mut placed)?;
+                let params = &placed;
                 // A Claude cloud create goes to the repo's main checkout project (claude_cloud/create.rs).
                 let cloud_params = crate::claude_cloud::cloud_create_params(repository, params)?;
                 let params = cloud_params.as_ref().unwrap_or(params);
@@ -85,6 +94,7 @@ pub(super) async fn route_sessions_http(
                     }
                 }
                 let project = repository.resolve_create_session_project(params)?;
+                crate::gbots::refuse_bot_project_create(&project, params)?;
                 // A named account is checked against a current usage reading (launch.rs `requested_account`).
                 if params.contains_key("account") {
                     state.accounts.refresh(&state.paths.home_dir, false);
@@ -471,6 +481,19 @@ pub(super) async fn route_sessions_http(
                     .map(|snapshot| json!({ "snapshot": snapshot }))
             },
         ),
+        // A board card's Mark done on a thread here resolves it as Mark Thread Done does (the chat's
+        // own calls carry the coordinator's ids, so the thread's ride as `thread*`).
+        "/api/coordinatorBoard" if board_card_resolves_thread(&body_json).is_some() => {
+            let (project_id, session_id) =
+                board_card_resolves_thread(&body_json).unwrap_or_default();
+            coordinator_resolve::handle_resolve_coordinator_thread_http(
+                &state,
+                "/api/resolveCoordinatorThread".to_string(),
+                request_id,
+                &json!({ "params": { "projectId": project_id, "sessionId": session_id, "resolved": true } }),
+            )
+            .await
+        }
         "/api/readCoordinator"
         | "/api/readCoordinatorThreads"
         | "/api/listCoordinators"
@@ -700,7 +723,26 @@ pub(super) async fn route_sessions_http(
                 request_id,
                 body_json,
                 token_extension_id,
+                caller,
             })
         }
     })
+}
+
+/// The thread a board card's Mark done names (`op: done`, `resolve: true`, a thread on this
+/// computer): its project and session.
+fn board_card_resolves_thread(body: &Value) -> Option<(String, String)> {
+    let params = body.get("params")?;
+    let text = |key: &str| params.get(key).and_then(Value::as_str).unwrap_or_default();
+    if text("op") != "done"
+        || params.get("resolve").and_then(Value::as_bool) != Some(true)
+        || !text("threadServerId").is_empty()
+        || text("threadSessionId").is_empty()
+    {
+        return None;
+    }
+    Some((
+        text("threadProjectId").to_string(),
+        text("threadSessionId").to_string(),
+    ))
 }

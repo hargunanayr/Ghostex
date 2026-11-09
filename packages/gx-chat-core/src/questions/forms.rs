@@ -39,11 +39,22 @@ pub(crate) fn form<'a>(state: &'a ChatState, id: &str) -> Option<&'a QuestionFor
 
 /// The answers the transcript already carries for this form.
 pub(crate) fn received_answers<'a>(state: &'a ChatState, id: &str) -> Option<&'a Value> {
-    state
+    let in_transcript = state
         .transcript_view
         .page_answers
         .iter()
-        .find(|answers| answers.page_id == id)
+        .find(|answers| answers.page_id == id);
+    received_answers_from(state, id, in_transcript)
+}
+
+/// [`received_answers`], given the answers the transcript carries for `id` (the first of
+/// `page_answers` with its id).
+fn received_answers_from<'a>(
+    state: &'a ChatState,
+    id: &str,
+    in_transcript: Option<&'a crate::transcript::page_answers::PageAnswers>,
+) -> Option<&'a Value> {
+    in_transcript
         .or_else(|| crate::questions::resource_modal::fetched_answers(state, id))
         .map(|answers| &answers.answers)
         .or_else(|| crate::questions::recorded_answers::answers(state, id))
@@ -63,10 +74,8 @@ pub(crate) fn received_answers<'a>(state: &'a ChatState, id: &str) -> Option<&'a
 
 /// Whether the session's resource index records the form answered, also when its answers are
 /// outside the loaded rows or wait in the queue (`questions/open_questions.rs`, `settled_by_index`).
-fn answered_by_index(state: &ChatState, id: &str) -> bool {
-    crate::questions::resource_index::settled_by_index(&state.session.resource_index, "form")
-        .get(id)
-        == Some(&"answered")
+pub(crate) fn answered_by_index(state: &ChatState, id: &str) -> bool {
+    state.session.resource_index.view().form_answered(id)
 }
 
 /// Whether the session's queue holds answers for the form.
@@ -91,10 +100,11 @@ pub(crate) fn queued_in_queue(state: &ChatState, id: &str) -> bool {
 /// A form answered while the agent worked, with "Wait for turn end before sending form answers" on, read Answered in its header while the card under it said "Waiting for the agent to finish its turn…": the pending card's row counted as the transcript carrying the answers. The header reads Queued (or Sending) until a real transcript row, this client's confirmation or the session's resource index records them.
 fn awaiting_delivery(state: &ChatState, id: &str) -> bool {
     if state.questions.form_answer_index.holds(id)
-        || crate::questions::resource_index::answered_in_transcript(
-            &state.session.resource_index,
-            id,
-        )
+        || state
+            .session
+            .resource_index
+            .view()
+            .answered_in_transcript(id)
     {
         return false;
     }
@@ -482,6 +492,23 @@ pub fn rpc_settled(
     match outcome {
         // The saved picks stay until the transcript carries the answers (`sync`).
         RpcOutcome::Ok { result } => {
+            // A Ghostex Collab guest's answers wait for the chat's owner (Ask me): they are not on
+            // their way to the agent, so no echo stands for them and the chat is not working.
+            if let Some(held_id) = result
+                .pointer("/collab/heldId")
+                .and_then(Value::as_str)
+                .filter(|_| result.pointer("/collab/held") == Some(&Value::Bool(true)))
+            {
+                let echo = format!("answers:{id}");
+                state.pending.sends.retain(|entry| entry.id != echo);
+                state.messages.new_composition_identity();
+                if let Some(entry) = state.questions.forms.get_mut(&id) {
+                    entry.sent = Some(sent.answers);
+                    entry.sent_waiting_for_idle = false;
+                    entry.held_for_owner = Some(held_id.to_string());
+                }
+                return Some(Vec::new());
+            }
             let queued_prompt_id = result
                 .get("queuedPromptId")
                 .and_then(Value::as_str)
@@ -590,24 +617,23 @@ pub fn storage_loaded(state: &mut ChatState, id: &str, value: Option<&str>) {
 pub fn sync(state: &mut ChatState) -> Vec<Effect> {
     let mut effects = Vec::new();
     let session_key = state.identity.session_key.clone();
-    let answered: Vec<String> = state
+    let answered: std::collections::HashSet<&str> = state
         .transcript_view
         .page_answers
         .iter()
-        .map(|answers| answers.page_id.clone())
+        .map(|answers| answers.page_id.as_str())
         .chain(
             state
                 .questions
                 .resource_modal
                 .iter()
                 .filter(|modal| modal.answers.is_some())
-                .map(|modal| modal.id.clone()),
+                .map(|modal| modal.id.as_str()),
         )
         .collect();
-    let index = &state.session.resource_index;
+    let index = state.session.resource_index.view();
     for (id, entry) in state.questions.forms.iter_mut() {
-        let in_transcript = answered.contains(id)
-            || crate::questions::resource_index::answered_in_transcript(index, id);
+        let in_transcript = answered.contains(id.as_str()) || index.answered_in_transcript(id);
         if !entry.cleared && in_transcript {
             entry.cleared = true;
             effects.push(Effect::WriteStorage {
@@ -696,6 +722,105 @@ fn notes_from_answers(form: &QuestionForm, answers: &Value) -> String {
         .to_string()
 }
 
+/// Everything [`project`] reads, kept beside the map it built (`document::AssembleCache`).
+///
+/// CDXC:SessionChat 2026-11-09 WHY:
+/// User: "ghostex app gets slower with time until it becomes super slow". Every chat event assembled the document again, and projecting the question forms (every form of the chat written out with its picks, links and state) was a third of an event on the Main Coordinator chat, and the largest part of the document, which was then compared with the last one and dropped value by value. Nothing in the projection reads the clock or the transcript rows, so the map is kept while what it reads is equal and handed to the next document as the same shared map.
+/// The parts of the questions state the kept projections read (the forms, the board's question
+/// rows): not the content scan, the open-questions pill's state or the prompt card's, which move
+/// with every reply and every keystroke in a question card.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct QuestionsInputs {
+    forms: BTreeMap<String, FormState>,
+    form_answer_index: crate::session::answer_echoes::AnswerIndex,
+    inline_answers: crate::questions::inline_answers::InlineAnswersState,
+    later: crate::questions::later::LaterState,
+    recorded_answers: crate::questions::recorded_answers::RecordedAnswers,
+    resource_modal: Option<crate::questions::resource_modal::ResourceModal>,
+}
+
+impl QuestionsInputs {
+    pub(crate) fn of(questions: &crate::state::QuestionsState) -> Self {
+        Self {
+            forms: questions.forms.clone(),
+            form_answer_index: questions.form_answer_index.clone(),
+            inline_answers: questions.inline_answers.clone(),
+            later: questions.later.clone(),
+            recorded_answers: questions.recorded_answers.clone(),
+            resource_modal: questions.resource_modal.clone(),
+        }
+    }
+
+    pub(crate) fn matches(&self, questions: &crate::state::QuestionsState) -> bool {
+        self.forms == questions.forms
+            && self.form_answer_index == questions.form_answer_index
+            && self.inline_answers == questions.inline_answers
+            && self.later == questions.later
+            && self.recorded_answers == questions.recorded_answers
+            && self.resource_modal == questions.resource_modal
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FormsInputs {
+    question_forms: Vec<QuestionForm>,
+    askers: Vec<crate::transcript::open_questions::Asker>,
+    page_answers: Vec<crate::transcript::page_answers::PageAnswers>,
+    questions: QuestionsInputs,
+    queue_prompts: Option<Vec<Value>>,
+    resource_index: crate::questions::resource_index::ResourceIndex,
+    later_question_ids: Vec<String>,
+    removed_question_ids: Vec<String>,
+    collab: Option<Value>,
+    collab_guest: Option<Value>,
+}
+
+impl FormsInputs {
+    fn of(state: &ChatState) -> Self {
+        Self {
+            question_forms: state.transcript_view.question_forms.clone(),
+            askers: state.transcript_view.askers.clone(),
+            page_answers: state.transcript_view.page_answers.clone(),
+            questions: QuestionsInputs::of(&state.questions),
+            queue_prompts: state.session.queue_prompts.clone(),
+            resource_index: state.session.resource_index.clone(),
+            later_question_ids: state.session.later_question_ids.clone(),
+            removed_question_ids: state.session.removed_question_ids.clone(),
+            collab: state.session.collab.clone(),
+            collab_guest: state.session.collab_guest.clone(),
+        }
+    }
+
+    /// Whether `state` holds exactly these inputs, compared where they are, without copies.
+    fn matches(&self, state: &ChatState) -> bool {
+        self.question_forms == state.transcript_view.question_forms
+            && self.askers == state.transcript_view.askers
+            && self.page_answers == state.transcript_view.page_answers
+            && self.questions.matches(&state.questions)
+            && self.queue_prompts == state.session.queue_prompts
+            && self.resource_index == state.session.resource_index
+            && self.later_question_ids == state.session.later_question_ids
+            && self.removed_question_ids == state.session.removed_question_ids
+            && self.collab == state.session.collab
+            && self.collab_guest == state.session.collab_guest
+    }
+}
+
+/// [`project`], reused while its inputs are the ones `kept` was built from.
+pub fn project_kept(
+    state: &ChatState,
+    kept: &mut Option<(FormsInputs, crate::document::SharedForms)>,
+) -> crate::document::SharedForms {
+    if let Some((inputs, forms)) = kept.as_ref() {
+        if inputs.matches(state) {
+            return forms.clone();
+        }
+    }
+    let forms = crate::document::SharedForms::from(project(state));
+    *kept = Some((FormsInputs::of(state), forms.clone()));
+    forms
+}
+
 /// The document's `questionForms`: each form with what the reader picked, or what was sent.
 pub fn project(state: &ChatState) -> BTreeMap<String, Value> {
     let mut projected = project_each(state);
@@ -706,14 +831,28 @@ pub fn project(state: &ChatState) -> BTreeMap<String, Value> {
 fn project_each(state: &ChatState) -> BTreeMap<String, Value> {
     let later = crate::questions::open_questions::later_waiting(state);
     let removed = crate::questions::later::removed_ids(state);
-    let index = &state.session.resource_index;
+    let index = state.session.resource_index.view();
     let on_the_way = crate::questions::open_questions::answers_on_the_way(state);
+    // The transcript's answers by form, the first for each id as `received_answers` finds them:
+    // searched once rather than once per form.
+    let mut in_transcript = std::collections::HashMap::new();
+    for answers in &state.transcript_view.page_answers {
+        in_transcript
+            .entry(answers.page_id.as_str())
+            .or_insert(answers);
+    }
+    let received_answers =
+        |state, id: &str| received_answers_from(state, id, in_transcript.get(id).copied());
     all_forms(state)
         .map(|form| {
             let entry = state.questions.forms.get(&form.id);
             let fallback = FormState::default();
             let entry = entry.unwrap_or(&fallback);
-            let sent = received_answers(state, &form.id).or(entry.sent.as_ref());
+            // A guest's answers the owner still holds, also after the page reloaded.
+            let held = crate::extras::collab::own_held_answers(state, &form.id);
+            let sent = received_answers(state, &form.id)
+                .or(entry.sent.as_ref())
+                .or(held.as_ref());
             let (phase, drafts, notes) = match (sent, entry.send.as_ref()) {
                 (Some(answers), _)
                     if received_answers(state, &form.id).is_some()
@@ -727,8 +866,12 @@ fn project_each(state: &ChatState) -> BTreeMap<String, Value> {
                 }
                 (Some(answers), _) => (
                     // Recorded in the transcript where this client's confirmation missed it.
-                    if crate::questions::resource_index::answered_in_transcript(index, &form.id) {
+                    if index.answered_in_transcript(&form.id) {
                         "answered"
+                    } else if entry.held_for_owner.is_some()
+                        || (entry.sent.is_none() && held.is_some())
+                    {
+                        "held"
                     } else if entry.sent_waiting_for_idle || queued_in_queue(state, &form.id) {
                         "queued"
                     } else {
@@ -780,8 +923,7 @@ fn project_each(state: &ChatState) -> BTreeMap<String, Value> {
                 phase
             };
             let takes_notes = takes_notes(form);
-            let mut value = serde_json::to_value(form).unwrap_or_default();
-            crate::questions::form_links::add_links(&mut value);
+            let mut value = linked_form(form);
             if let Some(object) = value.as_object_mut() {
                 object.insert("state".to_string(), json!(phase));
                 object.insert("canSend".to_string(), json!(phase == "open"));
@@ -815,6 +957,13 @@ fn project_each(state: &ChatState) -> BTreeMap<String, Value> {
                     "sendError".to_string(),
                     json!(entry.error.clone().unwrap_or_default()),
                 );
+                // A guest's held answers say who they wait for (`extras::collab`).
+                if phase == "held" {
+                    object.insert(
+                        "heldFor".to_string(),
+                        json!(crate::extras::collab::owner_name(state)),
+                    );
+                }
                 object.insert(
                     "reconnecting".to_string(),
                     json!(entry
@@ -826,6 +975,40 @@ fn project_each(state: &ChatState) -> BTreeMap<String, Value> {
             (form.id.clone(), value)
         })
         .collect()
+}
+
+thread_local! {
+    /// Each form as the document carries it before its state is added, with the form it was made
+    /// from, by id. The worker drives every open chat on one thread.
+    static LINKED_FORMS: std::cell::RefCell<std::collections::HashMap<String, (QuestionForm, Value)>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// How many forms `LINKED_FORMS` holds before it starts again: a few long chats' worth.
+const LINKED_FORMS_KEPT: usize = 4_096;
+
+/// The form as JSON with its Q-tag links added (`form_links::add_links`), which depends on the
+/// form alone.
+///
+/// CDXC:SessionChat 2026-11-08 WHY:
+/// Every chat event assembles the document again, and this wrote every form of the chat out to
+/// JSON and scanned its text for links each time: on a coordinator chat with ~500 forms it was the
+/// largest part of an idle tick. It is kept per form and reused while the form is equal.
+fn linked_form(form: &QuestionForm) -> Value {
+    LINKED_FORMS.with_borrow_mut(|kept| {
+        if let Some((source, value)) = kept.get(&form.id) {
+            if source == form {
+                return value.clone();
+            }
+        }
+        let mut value = serde_json::to_value(form).unwrap_or_default();
+        crate::questions::form_links::add_links(&mut value);
+        if kept.len() >= LINKED_FORMS_KEPT {
+            kept.clear();
+        }
+        kept.insert(form.id.clone(), (form.clone(), value.clone()));
+        value
+    })
 }
 
 /// `formToggle {form}`: opens an answered form's full view, or collapses it again.
@@ -933,7 +1116,8 @@ mod canceled_tests {
         let (mut state, id) = state_with_form();
         state.session.resource_index = vec![json!({
             "id": id, "kind": "form", "status": "answered", "answersOffset": 300
-        })];
+        })]
+        .into();
         assert!(state.transcript_view.page_answers.is_empty());
         assert!(state.questions.forms[&id].sent.is_none());
         let form = &project(&state)[&id];
@@ -965,7 +1149,8 @@ mod canceled_tests {
         assert_eq!(project(&state)[&id]["state"], "queued");
         assert_eq!(project(&state)[&id]["canSend"], false);
         state.session.resource_index =
-            vec![json!({"id": id, "kind": "form", "status": "answered", "answersOffset": 900})];
+            vec![json!({"id": id, "kind": "form", "status": "answered", "answersOffset": 900})]
+                .into();
         assert_eq!(
             project(&state)[&id]["state"],
             "answered",
@@ -979,7 +1164,7 @@ mod canceled_tests {
     fn an_answer_only_in_the_queue_reads_queued() {
         let (mut state, id) = state_with_form();
         state.session.resource_index =
-            vec![json!({"id": id, "kind": "form", "status": "answered"})];
+            vec![json!({"id": id, "kind": "form", "status": "answered"})].into();
         let form = &state.transcript_view.question_forms[0];
         let text =
             crate::transcript::question_forms::answers_message(form, &json!({"Which?": "A"}));
@@ -1099,6 +1284,80 @@ mod canceled_tests {
         crate::session::answer_echoes::settle(&mut state, &context, &[]);
         assert_eq!(state.pending.sends.len(), 1);
         assert_eq!(state.pending.sends[0].id, format!("answers:{id}"));
+    }
+
+    /// A Ghostex Collab guest's answers the owner holds: no echo, so the chat is not working, and
+    /// the form waits for the owner; then it follows what the owner did.
+    #[test]
+    fn a_guests_held_answers_wait_for_the_owner() {
+        for (outcome, phase) in [
+            ("sent", "sending"),
+            ("declined", "open"),
+            ("edited", "open"),
+        ] {
+            let (mut state, id) = state_with_form();
+            state.session.collab_guest = Some(json!({"viewerId": "v", "name": "Sam"}));
+            state.session.collab =
+                Some(json!({"shared": true, "owner": "Mohamad", "mode": "approve", "held": []}));
+            let context = ChatContext::default();
+            let effects = send(&mut state, &context, &id);
+            let request_id = match &effects[..] {
+                [Effect::SendRpc { request_id, .. }] => *request_id,
+                other => panic!("expected one send, got {other:?}"),
+            };
+            crate::session::answer_echoes::settle(&mut state, &context, &[]);
+            rpc_settled(
+                &mut state,
+                request_id,
+                &RpcOutcome::Ok {
+                    result: json!({"collab": {"held": true, "heldId": "held_1"}}),
+                },
+            );
+            crate::session::answer_echoes::settle(&mut state, &context, &[]);
+            assert!(state.pending.sends.is_empty(), "held answers draw no echo");
+            assert!(!crate::session::working::is_working(&state));
+            let form = &project(&state)[&id];
+            assert_eq!(form["state"], "held");
+            assert_eq!(form["heldFor"], "Mohamad");
+            assert_eq!(form["canSend"], false);
+
+            state.session.collab = Some(json!({
+                "shared": true, "owner": "Mohamad", "mode": "approve", "held": [],
+                "resolved": [{"id": "held_1", "outcome": outcome}],
+            }));
+            crate::extras::collab::settle_held_answers(&mut state);
+            let form = &project(&state)[&id];
+            assert_eq!(form["state"], phase, "after the owner {outcome} it");
+            if phase == "open" {
+                assert!(form["sendError"].as_str().unwrap().contains("Mohamad"));
+                assert_eq!(form["canSend"], true);
+            }
+        }
+    }
+
+    /// A reloaded guest page reads its held answers from the chat's held list.
+    #[test]
+    fn a_reloaded_guest_page_still_waits_for_the_owner() {
+        let (mut state, id) = state_with_form();
+        let form = state.transcript_view.question_forms[0].clone();
+        let text =
+            crate::transcript::question_forms::answers_message(&form, &json!({"Pick?": "Yes"}));
+        state.session.collab_guest = Some(json!({"viewerId": "v2", "name": "Sam"}));
+        state.session.collab = Some(json!({
+            "shared": true, "owner": "Mohamad", "mode": "approve",
+            "held": [{"id": "held_1", "viewerId": "v1", "name": "Sam", "text": text}],
+        }));
+        let projected = &project(&state)[&id];
+        assert_eq!(projected["state"], "held");
+        assert_eq!(projected["canSend"], false);
+        state.session.collab = Some(json!({
+            "shared": true, "owner": "Mohamad", "mode": "approve", "held": [],
+        }));
+        assert_eq!(
+            project(&state)[&id]["state"],
+            "open",
+            "declined: the form opens again"
+        );
     }
 
     #[test]

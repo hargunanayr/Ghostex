@@ -17,15 +17,23 @@ mod open_enum;
 
 pub mod agent_message_delivery;
 pub mod agentbox;
+/// Signed approvals for sensitive actions (GitHub #495); used module-qualified.
+pub mod approval;
 pub mod chat;
+/// Cards a `ghostex` command prints for the chat to draw; used module-qualified.
+pub mod chat_card;
 pub mod client_message;
 /// Cloud Boxes; used module-qualified (`cloud_box::CloudBox`), not glob re-exported, because its
 /// param names (`ListParams`, `BoxParams`) are generic.
 pub mod cloud_box;
+pub mod collab_component;
+pub mod component_signing;
 pub mod coordinator;
 pub mod de;
 pub mod delta;
 pub mod event;
+/// Pairing v2 (GitHub #495): device keys, Pending and the three match words; used module-qualified.
+pub mod pairing;
 pub mod peek;
 pub mod presentation;
 pub mod rpc;
@@ -66,3 +74,12 @@ pub const GXSERVER_REMOTE_PORT: u16 = 58745;
 pub const GXSERVER_EVENTS_PATH: &str = "/api/events";
 /// `stream` query value that restricts an event socket to subscribed session chat frames.
 pub const GXSERVER_EVENTS_STREAM_SESSION_CHAT: &str = "sessionChat";
+/// `stream` query value that restricts an event socket to notification feed changes and the
+/// daemon's start and stop. A client opens it only when `ghostex server endpoint` lists
+/// [`GXSERVER_ENDPOINT_CAPABILITY_NOTIFICATION_STREAM`]; an older daemon would send its whole hub.
+pub const GXSERVER_EVENTS_STREAM_NOTIFICATIONS: &str = "notifications";
+/// The `ghostex server endpoint` capability that promises [`GXSERVER_EVENTS_STREAM_NOTIFICATIONS`].
+pub const GXSERVER_ENDPOINT_CAPABILITY_NOTIFICATION_STREAM: &str = "notificationStream";
+/// The `ghostex server endpoint` capability that promises `/api/registerPushToken` and push
+/// notifications to the phones registered there (finished, needs input, failed, agent starts).
+pub const GXSERVER_ENDPOINT_CAPABILITY_PUSH_NOTIFICATIONS: &str = "pushNotifications";

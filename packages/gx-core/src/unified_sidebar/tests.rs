@@ -69,6 +69,7 @@ fn group(project: &str, path: &str, origin: Option<&str>, sessions: Vec<SessionR
             is_stale: false,
             machine_names: Vec::new(),
             action_target: None,
+            folded_worktrees: Vec::new(),
         }),
         collection_color: None,
         collection_id: None,
@@ -92,6 +93,7 @@ fn settings() -> UnifiedSettings {
     UnifiedSettings {
         working_section: true,
         enable_session_parking: true,
+        pinned_session_order: crate::sidebar_view::PinnedSessionOrder::Manual,
     }
 }
 

@@ -27,6 +27,7 @@ pub(super) async fn route_session_board_http(
         request_id,
         body_json,
         token_extension_id,
+        caller,
     } = request;
     Ok(match endpoint.path.as_str() {
         "/api/completeSession" => respond(
@@ -89,6 +90,7 @@ pub(super) async fn route_session_board_http(
                 request_id,
                 body_json,
                 token_extension_id,
+                caller,
             })
         }
     })

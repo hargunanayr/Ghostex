@@ -57,6 +57,8 @@ pub(super) struct ChatPillBounds {
     pub(super) saved_draft: Rc<Cell<Bounds<Pixels>>>,
     /// The Approvals pill (relayed_approval.rs), which its menu of thread cards opens against.
     approvals: Rc<Cell<Bounds<Pixels>>>,
+    /// The coordinator tips' pill (coordinator_intro.rs).
+    intro: Rc<Cell<Bounds<Pixels>>>,
 }
 
 impl ChatPillBounds {
@@ -70,6 +72,7 @@ impl ChatPillBounds {
             super::questions_list::QUESTIONS_MENU => self.resources.clone(),
             super::saved_draft_pill::SAVED_DRAFT_MENU => self.saved_draft.clone(),
             super::relayed_approval::APPROVALS_MENU => self.approvals.clone(),
+            super::coordinator_intro::INTRO_MENU => self.intro.clone(),
             _ => self.subagents.clone(),
         }
     }
@@ -116,6 +119,14 @@ pub(super) fn inline_dots(dots: &[(gpui::Hsla, String)], p: &ChatAppearance) -> 
     row
 }
 
+/// The dot of a switch pill that is on (Autopilot): green, apart from the status dots' tones.
+const AUTOPILOT_ON_COLOR: u32 = 0x22c55e;
+
+/// The Autopilot pill's menu-toggle key, and its menu's width (unscaled): a small row menu in the
+/// sidebar menu's style (`autopilot_menu`).
+const AUTOPILOT_TRIGGER: &str = "chat-pill-autopilot";
+const AUTOPILOT_MENU_WIDTH: f32 = 280.0;
+
 /// The Stashed pill's id (gx-chat-core extras/chat_pills.rs `stashed_pill`): it opens Saved Prompts
 /// rather than a menu of its own.
 const STASHED_PILL: &str = "stashed";
@@ -136,6 +147,8 @@ fn trigger_id(id: &str) -> &'static str {
         super::resource_modal::RESOURCE_MODAL_MENU => super::resource_modal::RESOURCE_MODAL_TRIGGER,
         super::saved_draft_pill::SAVED_DRAFT_MENU => super::saved_draft_pill::SAVED_DRAFT_TRIGGER,
         super::relayed_approval::APPROVALS_MENU => super::relayed_approval::APPROVALS_TRIGGER,
+        super::coordinator_intro::INTRO_MENU => super::coordinator_intro::INTRO_TRIGGER,
+        ghostex_gx_chat_core::extras::autopilot::AUTOPILOT_PILL => AUTOPILOT_TRIGGER,
         _ => "chat-pill-subagents",
     }
 }
@@ -144,6 +157,9 @@ fn icon(id: &str) -> &'static str {
     match id {
         "threads" => "titlebar/users-group.svg",
         super::coordinator_board::BOARD_MENU => "titlebar/layout-board-split.svg",
+        ghostex_gx_chat_core::extras::coordinator_board::BLOCKED_PILL => {
+            "titlebar/circle-minus-filled.svg"
+        }
         "resources" => "titlebar/stack.svg",
         // The More actions row's own icon for Stash prompt (actions.rs).
         STASHED_PILL => "titlebar/stack-push.svg",
@@ -151,6 +167,8 @@ fn icon(id: &str) -> &'static str {
         "background" => "titlebar/terminal-2.svg",
         SIDE_CHATS_PILL => "titlebar/messages.svg",
         super::relayed_approval::APPROVALS_MENU => "titlebar/shield-check.svg",
+        super::coordinator_intro::INTRO_MENU => "titlebar/bulb.svg",
+        ghostex_gx_chat_core::extras::autopilot::AUTOPILOT_PILL => "titlebar/plane.svg",
         _ => "titlebar/users.svg",
     }
 }
@@ -165,6 +183,7 @@ fn menu_width(id: &str) -> f32 {
             super::saved_draft_pill::SAVED_DRAFT_MENU_WIDTH
         }
         super::relayed_approval::APPROVALS_MENU => super::relayed_approval::APPROVALS_MENU_WIDTH,
+        super::coordinator_intro::INTRO_MENU => super::coordinator_intro::INTRO_MENU_WIDTH,
         _ => 440.0,
     }
 }
@@ -242,6 +261,10 @@ pub(super) fn pill_menu_column(
         .role(gpui::Role::Group)
         .aria_label(label)
         .w_full()
+        // Fills the menu's fixed height and lets a list that marks itself `flex_1().min_h_0()`
+        // shrink and scroll when the content outgrows the window.
+        .flex_1()
+        .min_h_0()
         .flex()
         .flex_col()
         .gap(px(MENU_SECTION_GAP * p.scale))
@@ -422,6 +445,15 @@ impl NativeChatView {
             String::new()
         };
         let dots = (!dots.is_empty()).then(|| inline_dots(&dots, p));
+        // A pill with no label (Blocked) is drawn like the ? pill: its icon and dot, its word in
+        // the tooltip.
+        let label = text(pill, "label");
+        // A switch pill (Autopilot) opens its small menu; its tooltip says where it stands.
+        let switch = pill["switch"].as_bool();
+        let tooltip = match switch {
+            Some(_) => Some(text(pill, "ariaLabel")),
+            None => Some(text(pill, "meta")).filter(|meta| label.is_empty() && !meta.is_empty()),
+        };
         div()
             .id(trigger)
             .relative()
@@ -432,7 +464,7 @@ impl NativeChatView {
             .items_center()
             .flex_shrink_0()
             .gap(px(5.0 * s))
-            .px(px(8.0 * s))
+            .px(px(if label.is_empty() { 7.0 } else { 8.0 } * s))
             .py(px(2.0 * s))
             .rounded_full()
             .border(px(s))
@@ -442,6 +474,11 @@ impl NativeChatView {
             .whitespace_nowrap()
             .text_color(p.card_muted)
             .chat_cursor_pointer()
+            .when_some(tooltip, |pill, tooltip| {
+                pill.tooltip(move |window, cx| {
+                    gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+                })
+            })
             .when(open, |pill| pill.bg(p.foreground.opacity(0.08)))
             .hover(|style| style.bg(p.foreground.opacity(0.06)))
             .child(
@@ -451,7 +488,16 @@ impl NativeChatView {
                     .flex_shrink_0()
                     .text_color(p.card_muted),
             )
-            .child(text(pill, "label"))
+            .when(!label.is_empty(), |pill| pill.child(label))
+            .when(switch == Some(true), |pill| {
+                pill.child(
+                    div()
+                        .size(px(6.0 * s))
+                        .rounded_full()
+                        .flex_shrink_0()
+                        .bg(rgb(AUTOPILOT_ON_COLOR)),
+                )
+            })
             .children(dots)
             .when(!count.is_empty(), |pill| {
                 pill.child(
@@ -461,8 +507,23 @@ impl NativeChatView {
                         .child(count),
                 )
             })
+            .when(switch.is_some(), |pill| {
+                // A right-click opens the same menu, at the pointer.
+                let id = id.clone();
+                pill.on_mouse_down(
+                    gpui::MouseButton::Right,
+                    cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        this.open_autopilot_menu(&id, Some(event.position), window, cx);
+                    }),
+                )
+            })
             .on_click(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
+                if switch.is_some() {
+                    this.open_autopilot_menu(&id, None, window, cx);
+                    return;
+                }
                 if id == "tasks" && this.show_session_details_for_tasks(cx) {
                     return;
                 }
@@ -473,6 +534,14 @@ impl NativeChatView {
                 }
                 if id == super::coordinator_board::BOARD_MENU {
                     this.toggle_coordinator_board(bounds.get(), window, cx);
+                    return;
+                }
+                // Blocked opens the board at its Blocked group (the core's `show_group`).
+                if id == ghostex_gx_chat_core::extras::coordinator_board::BLOCKED_PILL {
+                    this.invoke(
+                        json!({"type": "showCoordinatorBoardGroup", "group": "blocked"}),
+                        cx,
+                    );
                     return;
                 }
                 this.toggle_pill_menu(&id, bounds.get(), window, cx);
@@ -491,6 +560,40 @@ impl NativeChatView {
                     .inset(px(-s)),
             )
             .into_any_element()
+    }
+
+    /// The Autopilot pill's menu: the toggle that fits this chat and "Autopilot settings...", the
+    /// pill's own `menu` rows (gx-chat-core `extras/autopilot.rs` has the user's words), drawn as
+    /// the chat's other row menus are. A click lines it up with the pill above the chat box, a
+    /// right-click opens it at the pointer; the pill itself never toggles.
+    fn open_autopilot_menu(
+        &mut self,
+        id: &str,
+        at: Option<gpui::Point<Pixels>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let trigger = trigger_id(id);
+        if self.chat_menu_toggled_shut(trigger, cx) {
+            return;
+        }
+        let rows = self.snapshot["chatPills"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|pill| pill["id"] == id)
+            .and_then(|pill| pill["menu"].as_array().cloned())
+            .unwrap_or_default();
+        match at {
+            Some(at) => self.show_chat_menu_at(rows, at, AUTOPILOT_MENU_WIDTH, window, cx),
+            None => {
+                let (anchor, side) = self
+                    .pills_strip
+                    .menu_anchor(self.pill_bounds.cell(id).get());
+                self.menu_side = Some(side);
+                self.show_chat_menu(rows, anchor, AUTOPILOT_MENU_WIDTH, window, cx);
+            }
+        }
     }
 
     /// Opens `id`'s menu against its pill, painted at `pill`, or shuts it when it is the one on
@@ -549,6 +652,9 @@ impl NativeChatView {
         if id == super::relayed_approval::APPROVALS_MENU {
             return self.approvals_menu_height();
         }
+        if id == super::coordinator_intro::INTRO_MENU {
+            return self.coordinator_intro_menu_height();
+        }
         if id == "filesLinks" {
             let scale = ChatAppearance::current(&self.snapshot).scale;
             let pane = f32::from(self.bounds.get().size.height) / scale;
@@ -580,6 +686,7 @@ impl NativeChatView {
             super::resource_modal::RESOURCE_MODAL_MENU => self.resource_modal_body(p, window, cx),
             super::saved_draft_pill::SAVED_DRAFT_MENU => self.saved_draft_menu_body(p, cx),
             super::relayed_approval::APPROVALS_MENU => self.approvals_menu_body(p, cx),
+            super::coordinator_intro::INTRO_MENU => self.coordinator_intro_menu_body(p, cx),
             super::coordinator_board::BOARD_MENU => self.coordinator_board_menu_body(p, cx),
             super::coordinator_board::BOARD_COLUMNS_MENU => self.board_columns_body(p, cx),
             super::session_details::SESSION_DETAILS_MENU => {
@@ -617,6 +724,9 @@ impl NativeChatView {
         }
         if trigger == super::resource_modal::RESOURCE_MODAL_TRIGGER {
             self.resource_modal_closed(cx);
+        }
+        if trigger == super::coordinator_intro::INTRO_TRIGGER {
+            self.coordinator_intro_menu_closed(cx);
         }
     }
 }

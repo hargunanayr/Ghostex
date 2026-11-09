@@ -6,7 +6,9 @@ session capability, or a CLI verb that users interact with, update the matching
 section here in the same change.
 
 Each section ends with "Related settings" so the helper can turn an
-explanation into a change with `ghostex settings set`.
+explanation into a change with `ghostex settings set`. It saves through the
+running Ghostex app; on a computer without the app (one that runs only
+Ghostex's server) the server saves it itself.
 
 Context menus share the sidebar's rounded appearance and follow the current
 light or dark theme. Click a submenu to open it, and click the same row again to
@@ -65,9 +67,12 @@ command terminal toggle. **Hide sidebar** and the chat-icon **Toggle Agents Pane
 button beside it (it hides or shows the Agents Panel while the side panel is open,
 even on the "Open a view" picker, the same thing Expand side panel does, and leaves the
 sidebar alone) sit at the top left of the
-sidebar, and move to the start of the header while the sidebar is hidden, so they
-stay in the same spot. The sidebar's top row also moves the window when you drag
-it. When an update is available, a download button
+sidebar, and move to the start of the header while the sidebar is hidden. On a
+Mac, hiding the sidebar also hides the window's red, yellow and green buttons, so
+these two buttons move to the header's left edge; the sidebar that slides in when
+you hover the window's left edge shows the window buttons in its top-left corner.
+In full screen they sit at the left edge too, with no gap for the window buttons.
+The sidebar's top row also moves the window when you drag it. When an update is available, a download button
 appears just before the project name. On Linux the button opens the release
 notes with an **Open download page** button instead of installing the update;
 install the new package the same way you installed Ghostex. Linux downloads come
@@ -78,8 +83,13 @@ executable and open it, and it copies Ghostex into `~/.local/share/ghostex/appim
 and runs it from there, so agents keep running after the window closes; to update,
 open the newer AppImage and it replaces that copy. Without FUSE it stops with
 "Cannot mount AppImage": install the `fuse3` package, or start it with
-`--appimage-extract-and-run`. Windows comes as an installer only; the
-portable zip is no longer published. A portable copy you already unpacked keeps
+`--appimage-extract-and-run`. Windows comes as an installer only, for x64 or
+ARM64. Download it from the website, or install from PowerShell with
+`irm https://ghostex.dev/install.ps1 | iex`: the script picks the installer for
+your PC, downloads it from GitHub, checks it against the SHA-256 digest GitHub
+publishes, refuses to run it if they differ, and runs it. It isn't a browser
+download, so Windows shows no SmartScreen prompt, and it changes no security
+settings. The portable zip is no longer published. A portable copy you already unpacked keeps
 updating in place, keeps all its data in a `GhostexData` folder next to itself and
 runs beside an installed Ghostex without sharing its sessions, settings or
 projects. It uses the agent hooks the installed Ghostex set up (its Settings lists
@@ -157,7 +167,7 @@ by every teammate, and only the team's owners can change them. **Open chat** sho
 and sends nothing. Its arrow opens a menu: Start chat (where you also pick the
 agent and the project), **Link to current session**, which adds the ticket to the
 links of the session you have selected in the sidebar without removing its other
-links (a toast offers **Undo**; it is greyed out with the reason when no session is
+links (a notice in the middle of the view offers **Undo**; it is greyed out with the reason when no session is
 selected, the session is on another computer, or, for a pull request, the session
 already has a different PR), and **Start in cloud**. **Start in cloud** (also its
 own button next to Start chat) lists the clouds Ghostex can start in, Claude Code
@@ -186,7 +196,14 @@ scrolls its header to the middle of the view. Each file's header stays pinned at
 the top while you read it; click a header to fold the file, and tick **Viewed** to
 fold it until it changes again. The toolbar
 switches between Unified and Split, wraps long lines and hides whitespace-only
-changes. To comment for the agent, hover a line and click **+**, or drag across
+changes. The flask button (**Hide test files**) leaves test files out, so you can
+review an agent's change without its tests: files named like `foo_test.go`,
+`button.test.ts`, `user.spec.rb`, `test_parse.py` or `FooTests.swift`, and files in
+`test`, `tests`, `__tests__`, `spec`, `testdata` or `fixtures` folders. A line at
+the top says how many are hidden, with **Show** to bring them back; a commit still
+includes them. The choice is remembered (Settings > Files & Links > File opening >
+**Hide test files in Changes**, `changesHideTestFiles`, off by default) and the
+phone's Changes screen starts the same way. To comment for the agent, hover a line and click **+**, or drag across
 lines and click **Comment**; write the comment and press Cmd+Enter (**Add to
 chat**). Each comment joins the chat box of the session you last clicked in the
 sidebar as a pill, after whatever is already there; when you send, the agent gets
@@ -403,11 +420,20 @@ view from the strip.
   Windows a Reinstall while it runs is done at the next start too.
   Annotate the current page
   with Agentation in the Browser toolbar; GitHub pages disallow that tool.
+  Each element, text or area you pick is captured as a picture along with
+  its note, shown in the note box while you write. Send (the paper plane in
+  the Annotate toolbar) puts the notes and their pictures into the agent
+  session you last clicked in the sidebar: its chat box with the pictures
+  attached, or its terminal with their file paths, or the clipboard when no
+  session can take them. Nothing is sent to the agent until you send it
+  there. Copy still copies the notes as text only. Pictures of images from
+  other sites and of frames from other sites can come out blank.
   When a page shows its content inside a frame, such as a Storybook story,
   the Annotate toolbar opens inside that frame so the content itself can be
   selected. Copying or sending annotations clears them afterwards by default;
   the toolbar's own settings panel (Clear on copy/send) turns that off.
-  HTML files in the Files view use the same Agentation overlay via Annotate.
+  HTML files in the Files view use the same Agentation overlay via Annotate,
+  with the same pictures and Send.
   Markdown files use Files selection comments instead (see Files below).
   A page in the Browser or in a website or extension view (Linear, Jira) can open
   another app through its link, such as Okta Verify, Zoom, Teams or an email link:
@@ -553,8 +579,12 @@ view from the strip.
   list and focuses its search. Escape closes the document search. The filter
   button at the start of the files list's search box shows only HTML, Markdown,
   Excalidraw, image or video files: pick one or several types (All files shows
-  everything again) and the list keeps just those files under the folders that
-  hold them, while typing still narrows them by name. To search the text of every file in the
+  everything again) and typing still narrows them by name. While a type is
+  picked or a name is typed, the list groups the matches by folder: each folder
+  is one row with its path and how many matches it holds, its files sit right
+  under it however deep the folder is, and the folder they all share is named
+  once above the list. Click a folder row to fold or unfold its files; it still
+  takes drops and has the folder's right-click menu. To search the text of every file in the
   project, press Cmd+Shift+F (Ctrl+Shift+F on Windows and Linux) while Files has
   focus, or click the search button at the top of the files list: the sidebar
   turns into a Search view like VS Code's. Results appear as you type, grouped by
@@ -668,17 +698,17 @@ ordered by when they last came back to you (started, sent a message, or a
 finished turn), never by output while an agent works; pinned sessions come
 first, in the order you give them (drag a pinned card above or below another
 pinned card of the same list or project group; the Project sidebar's Pinned
-keeps the same order), and above them a Drafts section holds every session nobody has sent a
+keeps the same order; see Pinned order below), and above them a Drafts section holds every session nobody has sent a
 message to yet (the pencil), newest first, until its first message is sent;
 it opens on its own whenever a new session lands in it.
-Working, Snoozed and Parked fold into shelves at the bottom. Working holds
+Moving, Snoozed and Parked fold into shelves at the bottom. Moving holds
 sessions whose agent works or still runs something in the background, while the
-Working section switch (`unifiedWorkingSection`, on by default, under the
+Moving section switch (`unifiedWorkingSection`, on by default, under the
 Sidebar switch) is on; a session leaves it for the top of the list when it needs
 you. Parked shows only while session parking is on. A snoozed or parked row
 offers Unsnooze or Unpark when you hover it. The phone picks its own layout in
 its Settings > Sessions list (Unified or Project, starting from the computer's
-choice), with its own Group by project and Show Working section switches: Unified
+choice), with its own Group by project and Show Moving section switches: Unified
 there lists every computer's sessions together, Project one computer at a time.
 On the phone, Unified hides the computer tabs: Computers in the menu at the top
 of the Sessions list picks a computer, adds one or opens Manage computers. A
@@ -705,7 +735,7 @@ or right-click a session in a worktree for its own Delete Worktree. Both open th
 same Delete worktree dialog as the Project sidebar.
 A project you hid in the Project sidebar leaves this
 list and its filter too, until you turn on Show Hidden. In the More menu, Sort &
-Filter offers Show Hidden, Group by Project and Working Section here, and Collapse
+Filter offers Show Hidden, Group by Project and Moving Section here, and Collapse
 All folds the project groups while they are on.
 
 The row at the top is a filter bar that shows each pick as a chip with its own X.
@@ -753,6 +783,9 @@ else the same folder name) is one entry with the sessions of every copy mixed
 under it, while two clones of one repository on the same computer stay separate
 projects; a session on another computer shows
 that computer's name, and the project's header names the computers it is on.
+Different folders of one repository (the repository itself and its subfolders,
+like `monorepo` and `monorepo/trading`) are always separate projects, each in
+its own Space, on one computer and across computers.
 New Terminal, Create Agent and the project's ⋯ actions run on the computer a
 session of that project last started on. Spaces and project groups are shared
 by every connected computer: each keeps the same Spaces and groups, a project is
@@ -760,8 +793,17 @@ in the same Space on all of them, and a change made on any of them, on the
 phone too, reaches the others; Ungroup removes a group from every computer. The
 first time, Spaces with the same name on two computers become one and a message
 says so, so name a Space the same on each computer to keep them together.
+A computer that joins later takes the Spaces the others already share: its own
+arrangement only fills in projects no other computer has filed. Taking a project
+out of every Space applies on that computer only; the others keep it where they
+have it.
 Ghostex saves a copy of every computer's Spaces and groups first, in the
-`backups` folder of its state folder. Turn Separate by machine on for a tab per
+`backups` folder of its state folder. If Ghostex 11.0.0's sync moved every
+folder of one repository into a single Space, the update puts them back once,
+from that copy, unless you have rearranged them since. When one sync moves
+three or more projects between Spaces at once (or puts them back like this),
+Settings > Sync lists it under Projects moved by sync, saying which projects
+went where and when. Turn Separate by machine on for a tab per
 computer, each with its own list; the Spaces stay shared, each tab showing its
 computer's projects of them.
 Cards show the project's own icon when it has one, and right-clicking
@@ -805,6 +847,10 @@ matching sessions of every project, by project; the × at their top goes back to
 the project. The right column follows the session you open. On a narrow sidebar
 the left column turns into icons; widen the sidebar to see both columns in
 full. Setting key: `sidebarLayout` (`classic`, `twoColumns`).
+Sleep Inactive and Close Inactive leave sessions with unanswered question cards
+awake, for every agent, as well as sessions that are working, waiting for
+approval or running a background shell. A session's Advanced > Sleep Below
+also skips unanswered question cards, approvals and background shells.
 Click a project header (or the chevron beside it) or a group header to expand
 or collapse it; rename a group from its right-click menu.
 Sessions groups gather some of a project's sessions under a header of their
@@ -987,8 +1033,9 @@ project folder when the work needs its own folder, and Add to Group > New Group
 to group projects together.
 Right-click a Space icon for its menu: Manage (Edit Space, New Space) and
 Sleep. Sleep Inactive sleeps only the Space's sessions that are awake but
-neither working nor waiting on you. Sessions stay where they are, asleep, and
-wake when you open them; the row is greyed out when it has nothing to sleep.
+neither working nor waiting on you; unanswered question cards, approvals and
+background shells keep a session awake. Sessions stay where they are, asleep,
+and wake when you open them; the row is greyed out when it has nothing to sleep.
 The Other button offers the same rows for projects that are in no Space.
 Space icons keep their normal glyph and show amber working-session and blue
 attention-session counts in extra-bold text near the bottom of each icon, including
@@ -1051,7 +1098,10 @@ where they are while you open, change and close views.
   leaving the view. With the sidebar open and a view expanded, hover the sidebar's
   left edge, click a session, or start a new agent, and the Agents Panel floats
   to the right of the sidebar. It is always 520px wide and takes your typing right
-  away. This works on macOS, Windows and Linux.
+  away. This works on macOS, Windows and Linux. On a Mac with **Show the window
+  buttons when the sidebar is collapsed** off (Settings > Interface > Advanced),
+  and in full screen, the floating sidebar runs the window's full height, and with
+  Frame the work area on it floats as a card inside the frame.
 - Panel animations: showing or hiding the sidebar, the side panel, the Agents Panel
   and the bottom or right command pane slides it open or closed; the side panel and a
   right-docked pane slide in from the window's right edge, and the command pane's
@@ -1121,14 +1171,25 @@ where they are while you open, change and close views.
   and Parked keep their own order, so the drop line shows where the session
   will sit in them. Only sections already shown can be dropped onto;
   dragging never adds a heading or moves the list.
+- Pinned order (`pinnedSessionOrder`, Settings > Sidebar & Sessions >
+  Advanced, and in both sidebars' Sort & Filter menu under Pinned order):
+  Manual (drag to rearrange), the default, keeps pinned sessions
+  in the order you drag them into. Drag a pinned session above or below
+  another one in Pinned, also a worktree's session listed in its project or
+  another computer's in a project on several computers; the Unified
+  sidebar's pinned cards keep the same order. Most recently updated puts the
+  pinned session that came back to you last (started, sent a message, or
+  finished a turn) first and turns dragging them off. The phone follows the
+  computer's choice.
 - Sidebar section headings (Pinned, Sessions, Drafts, Parked, and
   Snoozed) show an orange dot when a session is working, a blue dot when
   a session is done, a pink dot when an agent is waiting for an answer, and a
   red dot when an agent is stuck waiting for your approval, including rows
   hidden by a collapsed heading. A collapsed project, a collapsed collection, a
-  Space button and a computer tab show the same red for those sessions. Pending questions use
-  pink instead of blue; multiple dots appear when multiple states are present,
-  including orange and pink when an agent keeps working after asking. Collapsed
+  Space button and a computer tab show the same red for those sessions. Unanswered question
+  cards count as questions for every agent, alongside Ghostex forms and pages with questions.
+  They use pink instead of blue; multiple dots appear when multiple states are
+  present, including orange and pink when an agent keeps working after asking. Collapsed
   headings show their session count at the right edge and a muted gray hollow
   circle after the status dots when they contain the active session. The circle
   disappears when expanded without moving the other dots. Hovering gives the
@@ -1171,7 +1232,13 @@ where they are while you open, change and close views.
   A long build or test whose output is still coming does not count. A
   coordinator's thread is nudged first ("Still working?") and its coordinator is
   told so it can heal it, so a thread gets the dot only 8 minutes after that
-  nudge; its board card shows a red "Not moving" chip too.
+  nudge; its board card shows a red "Not moving" chip too. While this computer
+  is offline (or the agent's API does not answer) the 8 minutes stop: nothing is
+  nudged, reported or marked not moving, and the clock starts again once the
+  network is back. A "not moving" or "idle" report that waited in the
+  coordinator's queue (for example while its input box could not be read) is
+  dropped instead of delivered late when the thread has since moved on,
+  finished, or been closed or marked done.
 - A new session goes straight into Drafts, below Pinned and above Sessions,
   and stays there until its first message is sent or its agent starts
   working, whether it is empty or holds unsent text. Drafts starts collapsed,
@@ -1214,13 +1281,14 @@ where they are while you open, change and close views.
   machine could not connect, and its tab explains why.
 - Every computer has a short name of up to 2 characters, which the sidebar's
   computer pills show instead of the full name: the chips after a project's
-  name, the computer badge on another computer's session, a Unified card's
-  branch line ("main · WN") and, with Group by project on, the Unified
-  sidebar's project headers (one pill per computer that has the project, when
-  it is on more than one or only on another one). Hover a pill or the row for
-  the full name. Set a machine's in Settings > Remote > Remote machines (its
-  dialog's Short name field) and this computer's in the same card
-  (`localMachineShortName`); empty uses one made from the name (the first
+  name, the computer badge on another computer's session and a Unified card's
+  branch line ("main · WN"). Hover a pill or the row for the full name. With
+  Group by project on, the Unified sidebar's project headers draw no pills:
+  hover a project's name to see the computers that have it, full name first
+  ("Windows (WN)"), when it is on more than one or only on another one. Set a
+  machine's in Settings > Remote > Remote machines (its
+  dialog's Short name field) and this computer's in Settings > Remote >
+  Current machine (`localMachineShortName`); empty uses one made from the name (the first
   letters of its first two words, or its first letter and the next consonant,
   so Windows is WN), never the same as another computer's.
 
@@ -1318,7 +1386,8 @@ when you open it.
 - Sleeping frees RAM; Auto Sleep does it after idle minutes. Auto Sleep runs
   on the computer that hosts the sessions, so it keeps working while the app
   window is closed, and it never sleeps a session a Ghostex window or the phone
-  app is showing. Web pages sleep the same way: a browser tab in
+  app is showing, or one with an unanswered question card, form or page.
+  Web pages sleep the same way: a browser tab in
   any project, or a Files, website or extension view, that has been off screen
   for its Browser sleeps after or Project sleeps after time closes to free its memory and
   reloads when you select it again. Tabs playing sound, tabs where you typed
@@ -1494,6 +1563,13 @@ image paste and Ctrl+G rich prompt editor, a prompt queue that sends when the
 agent stops, transcript with thinking, tool, and edit cards, subagent
 transcripts, question and approval cards, rewind, and a note per session (with
 the Session notes extension on).
+On the phone, OMP's **Advisor shared notes** card starts as one row with counts
+by severity. Tap it to read the notes with their severity labels, then tap again
+to fold it. An OMP background job stopped before it finishes has a muted cross
+and name rather than the red failure mark.
+A pasted or attached image shows in the chat box as one chip, such as Image #1,
+on the computer and the phone alike: the cursor and arrow keys step over it, and
+Backspace right after it removes it. What is sent is the image reference itself.
 On the computer, Ghostex saves pasted images at up to 32 MiB; it converts BMP
 and TIFF to PNG and reduces very large pictures when needed. OpenCode reduces large
 images further when sending them to its service. If an image still cannot fit,
@@ -1535,50 +1611,71 @@ it sideways with the mouse wheel or a sideways trackpad swipe (swipe on the
 phone). Clicking one opens the picture viewer, and the arrows step through them
 with the chat's other pictures. The picture is read from the computer the
 session runs on, so it works for remote sessions and on the phone; a file that
-has since been deleted shows a small missing-picture square. This includes a
-picture you pasted or attached in your own message: its read shows it too.
+has since been deleted shows a small missing-picture square. A picture you
+already pasted or attached in your own message stays out of a closed fold's
+thumbnails and its "N images" count; open the fold and the row that read it
+still shows it, so you can see which picture "Read" means.
 Dictate is the microphone button in the chat box (always shown, right next to
 Send) and on the terminal bar, on a Mac, Windows and Linux: press it, talk, and press it
 again to stop. In the chat session you are in, the Dictate hotkey, Option+Ctrl+Space
 (Ctrl+Alt+Space on Windows and Linux), does the same as the chat box's microphone in
 Auto mode: tap it to start and tap again to stop, or hold it for 300 ms or more
-and it stops when you let go (Settings > Voice > Hotkey mode also offers Toggle
+and it stops when you let go (Settings > Dictation > Hotkey mode also offers Toggle
 and Hold). When macOS already uses Option+Ctrl+Space to switch input sources,
 Settings > Hotkeys says so under Dictate and offers Option+Ctrl+D with one
 click; like every hotkey it can be changed there. What you said goes into the chat box (or is typed into that
 session's terminal) and is never sent by itself. Dictate records first and
 transcribes second: your voice is saved as a recording while you talk, and only
-after you stop is it turned into text by the engine you picked for Dictate in
-Settings > Voice: a local model that runs on this computer with no key and no
-internet (Parakeet TDT 0.6B v3, the fastest, for English and 24 European
-languages; Whisper large-v3-turbo for 99 languages; or the small Whisper base
-for slower computers; download, cancel or remove each one there, which shows
-its size on disk), OpenAI's speech-to-text, or xAI's (both need that
-provider's API key, which stays on this computer). A new install picks the xAI
-or OpenAI key when one is saved, and the local model otherwise, then keeps that
-choice until you change it; Dictate never switches engine by itself. Each
-computer has its own engine and models, and the phone changes them for each
-computer in its Settings > Voice. After the text arrives, Dictate fixes it:
-your dictionary's aliases replace words it keeps mishearing (its words, and
-your project names, are also given to the recognizer as hints), filler words
+after you stop is it turned into text by the engine you picked in Settings >
+Dictation: Hex, the recommended engine, or OpenAI's or xAI's speech-to-text
+(both need that provider's API key, which stays on this computer). Hex 3 is the
+free local dictation app from anomalyco/hex (macOS on Apple silicon, Windows and
+Linux): it transcribes with its own models while it runs on that computer, with
+no key and no internet, and the recording never leaves it. Ghostex no longer has
+a speech model of its own; Hex replaced it. To set Hex up, pick Hex as the
+engine and follow its row: Install Hex asks you to confirm (the dialog shows the exact
+command from Hex's own installer: Homebrew's cask on a Mac, Hex's install script on
+Linux and Windows), then your computer's own prompt (Touch ID, Windows Hello or
+your password), and installs Hex 3 for you; a link beside it opens Hex's
+website (anoma.ly/hex) to download it yourself, and a Mac without Homebrew is
+sent there too. If the install fails the row shows the installer's last lines
+and the command to run by hand. An older Hex without Hex 3's local API counts
+as not installed. Then open Hex (Open Hex starts it and checks again by itself),
+allow the microphone and download a model in Hex's
+settings (Parakeet v3 for English and 24 European languages, Whisper for the
+rest); Ghostex finds it by itself and the row becomes a picker of the models
+Hex has ready. Turn on Open at login in Hex so dictation keeps working after a
+restart; when Hex isn't running, the row says "Hex isn't running" with Open Hex
+and Check again buttons.
+A computer that used Ghostex's old built-in model moves to Hex (never to a paid
+engine) and shows a one-time note on Settings > Dictation (Got it hides it) and
+with the next dictation that couldn't be transcribed; its old speech models can
+be deleted from the Old speech models row to free the space. A new install
+picks the xAI or OpenAI key when one is saved, and Hex otherwise, then keeps
+that choice until you change it; Dictate never switches engine by itself. Each
+computer has its own engine, and the phone changes it for each computer in its
+Settings > Voice. The phone has no engine of its own: it records and the
+computer transcribes, so with Hex picked there, the phone's dictation uses Hex
+on that computer. After the text arrives, Dictate fixes it:
+your dictionary's aliases replace words it keeps mishearing (with OpenAI and
+xAI its words, and your project names, are also given to the recognizer as
+hints), filler words
 such as "um" and "uh" are removed from English, and AI polish (on by default,
 Claude Sonnet 5.5 through Claude Code on that computer) fixes punctuation and
 keeps only what you meant when you corrected yourself; without Claude Code, or
 when polish fails, the text goes in unpolished. While polish works, the pill
 above the microphone says Polishing with a Skip button, which types the text
 at once without it. Hover the microphone to see what will transcribe:
-"Dictate · Local, Parakeet v3" (or "OpenAI gpt-4o-transcribe", "xAI speech to
-text") over the hotkey, or what is missing, such as a model not downloaded yet,
-which a click on the microphone starts downloading.
+"Dictate · Hex, Parakeet v3" (or "OpenAI gpt-4o-transcribe", "xAI speech to
+text") over the hotkey, or what is missing, such as Hex not running or no key.
 
-Settings > Voice, under App in the Settings sidebar, holds Dictate, the voice
-agent and the API keys they share, as separate choices. Dictate comes first:
-Engine (Local model, OpenAI or xAI; picking Local with nothing downloaded starts
-the picked model's download there), Local models (each with its languages,
-size and speed, Download with its progress and Cancel, Use, Remove, and Show
-in Finder, Show in Explorer on Windows or Open folder on Linux for gxserver's
-speech-models folder), Language (Auto-detect or one language), Hotkey (with
-Change… to Settings > Hotkeys), Hotkey mode (Auto, Toggle or Hold) and
+Settings > Dictation, under App in the Settings sidebar with Voice Agent right
+below it, holds Dictate. Speech to text comes first: Engine (Hex, where Hex 3
+runs on that computer, OpenAI or xAI), right under it the key the picked cloud
+engine needs (OpenAI API key or xAI API key; the Voice Agent uses the same key,
+and the row says so), the Hex row while Hex is the engine, Language (Auto-detect
+or one language), Hotkey (with Change… to Settings > Hotkeys), Hotkey mode (Auto,
+Toggle or Hold) and
 Microphone (System default or one input device; a device that is unplugged
 falls back to the default). Clean-up follows: the Dictionary (add a word, with
 the ways it gets misheard as aliases separated by commas, remove one with its
@@ -1586,20 +1683,20 @@ the ways it gets misheard as aliases separated by commas, remove one with its
 spacing (adds a space before or after the text when the characters next to the
 caret need one, so text dictated mid-sentence is spaced on both sides but
 never before a comma) and AI polish, with Edit prompt to replace the built-in
-instructions. With a remote machine saved, a Machine picker at the top
-switches Dictate's engine, models and clean-up to that computer, which
-transcribes its sessions; the hotkey mode, the microphone and Insert with
-spacing belong to the computer you are at. Below Dictate, the Voice agent
-section keeps its own provider (xAI Grok Voice or OpenAI GPT Realtime), so
-Dictate can stay local while calls use xAI or OpenAI, and each API key says
-which feature uses it. A problem with the provider or the connection never loses
+instructions, then the Dictation history. With a remote machine saved, a Machine
+picker at the top switches Dictate's engine and clean-up to that computer, which
+transcribes its sessions (its API keys are added on that computer itself); the
+hotkey mode, the microphone and Insert with spacing belong to the computer you
+are at. Settings > Voice Agent keeps the voice agent's own provider (xAI Grok
+Voice or OpenAI GPT Realtime), so Dictate can stay on Hex while calls use xAI
+or OpenAI; the key that provider needs sits right under it, and it is the same
+key Dictation uses. A problem with the provider or the connection never loses
 what you said: when the transcription fails, a small card above the microphone
-says what went wrong and what to do (no key, a refused key, the local model not
-downloaded yet, no internet, too many requests, credit or plan usage, audio the
+says what went wrong and what to do (no key, a refused key, Hex not installed or
+not running, no internet, too many requests, credit or plan usage, audio the
 provider couldn't read), with Add
-key or Check key, which opens that key's field in Settings, Download a model
-(Show download while one downloads), which opens Settings > Voice at
-Dictate's models, and Transcribe again; hover its sentence for the provider's own words when it gave any. In
+key or Check key, which opens that key's field in Settings > Dictation, Set up
+Hex, which opens Settings > Dictation at the engine, and Transcribe again; hover its sentence for the provider's own words when it gave any. In
 the chat box, a small pill right above the microphone shows what Dictate is
 doing: the recording time while you talk, then Transcribing, then Polishing. Its ✕ cancels, and
 so does Esc. A cancelled recording is still
@@ -1607,13 +1704,13 @@ kept: rest the pointer on the microphone (or right-click it) and choose
 Transcribe previous to type the newest recording that has no text yet into the
 chat box. On the terminal bar, press the microphone again while it transcribes
 to cancel, and right-click it for Transcribe previous. Every recording is listed
-in Settings > Voice > Dictation history. On the phone (Android or iPhone), Dictate is the microphone right next to Send in
+in Settings > Dictation > Dictation history. On the phone (Android or iPhone), Dictate is the microphone right next to Send in
 the chat box, which stays there even when other buttons move into More actions; it
 uses the engine (and key) of the computer the chat lives on, keeps the recording on the phone
 until that computer has it, shows Recording, Transcribing and Transcribe again
-in a row above the chat box, and a long press on the microphone
+(or Set up Hex) in a row above the chat box, and a long press on the microphone
 offers Transcribe previous.
-Settings: `dictateHotkeyMode`, `dictateMicrophone`, `dictateInsertSpacing` (this computer's own); Dictate's engine, models, language, dictionary, filler removal and AI polish are saved by each computer's gxserver and changed in Settings > Voice. Hotkey: Dictate (`toggleDictation`).
+Settings: `dictateHotkeyMode`, `dictateMicrophone`, `dictateInsertSpacing` (this computer's own); Dictate's engine, language, dictionary, filler removal and AI polish are saved by each computer's gxserver and changed in Settings > Dictation (`ghostex settings open --tab dictation`). Hotkey: Dictate (`toggleDictation`).
 Read aloud speaks the agent's replies, so you can follow a session while you
 drive or walk. It is experimental and off by default: turn on Settings > About
 > Experimental > Enable Experimental Features, then switch on Read
@@ -1750,7 +1847,8 @@ chat switches to that conversation. Other agents' pickers and menus that take ov
 their terminal (and Codex screens the chat can't read) show that part of the terminal
 in a card instead. While that card is up it has the chat's keyboard: letters, numbers,
 the arrow keys, Enter and Escape go straight to the agent, even if you were typing a
-message. Click Return keyboard to chat on the card to type in the chat box again. On
+message. Click Return keyboard to chat on the card to type in the chat box again: the
+card hides until the agent closes that screen, and nothing is sent to the agent. On
 the phone, the card's key buttons send the keys.
 A new Claude Code install's first-run setup is answered in the chat too: the
 text style, the login method, and Sign in to Claude, where you paste the code the
@@ -1876,6 +1974,11 @@ Default, Plan, Auto review and Always approve, the context meter shows how full
 Grok's context window is, and Fork starts a copy of the conversation in a new
 session. Picking a model in the chat also makes it Grok's default for new
 sessions, because Grok saves every model switch.
+When OMP asks to approve a tool call, the request appears as a card with OMP's
+own choices (Approve, Approve for this session when OMP offers it, Deny); click
+one to answer. Once you start typing in OMP's terminal, OMP turns the request
+into "Deny and send message", and the chat shows that as a terminal card that
+passes your keys to OMP.
 Empryo chats show your messages as you typed them (without the repository map
 Empryo adds for its model), its replies and thinking, and the tools it runs with
 their results, and they can be exported like any other chat. Empryo saves a
@@ -1920,16 +2023,21 @@ the desktop and mobile chats once the block is complete. Source switches to the
 diagram's text and Copy copies it. On desktop, the expand button opens a larger
 view you can zoom and pan. The web chat shows the diagram's source.
 
-Agents can show charts, tables, stat tiles, and short text layouts right in the
-chat, drawn in the chat's own colors on desktop, web, and mobile. For things a
-chart can't show, such as a UI mockup or a small interactive tool, the agent
-writes an HTML page and the chat shows a card for it with a small preview
+Ghostex has three names for what agents show in the chat. **Ghostex visuals**
+(gx visuals) are charts, tables, stat tiles, and short text layouts drawn right
+in the chat, in the chat's own colors on desktop, web, and mobile. A **Ghostex
+form** (gx form) is questions asked as a form in the chat. A **Ghostex page**
+(gx page) is an HTML page the agent publishes, for things a chart can't show,
+such as a UI mockup or a small interactive tool. Ask for them by name ("give me
+a gx page for this", "ask me in a gx form", "show it as gx visuals"); agents
+still understand the older words inline HTML, inline questions and inline
+graphs. For a Ghostex page the chat shows a card with a small preview
 picture of the page, the same on desktop, web, and mobile. Pages share one
 look: a soft dusk backdrop in dark mode (a soft dawn in light) with frosted
 glass cards and choices. The picture is taken
 the first time you open the page in the Ghostex desktop app (and again after you
 answer it); until then the card shows the page's file name. On desktop the card opens
-the page where Settings > Chat > Open chat pages in says: Popup (the default), a
+the page where Settings > Chat > Open Ghostex pages in says: Popup (the default), a
 floating window over the chat; Files, a page tab in the Files view, whose header
 can open it in your browser or close it; or System browser, your default web
 browser. Your answers reach the agent the same way from all three, and the
@@ -1960,8 +2068,8 @@ Agents do this when you ask for `$ghostex-visuals` in your
 prompt; they never use it on their own. Install the skill from Settings >
 Integrations (Ghostex Visuals) or with `ghostex visual install-skill`. Pages
 open in a sandbox and can't reach your computer's files or Ghostex.
-When the agent needs your decisions, it asks them as a form right in the chat
-on desktop, web, and mobile: every question at once, with choices you click
+When the agent needs your decisions, it asks them in a Ghostex form right in
+the chat on desktop, web, and mobile: every question at once, with choices you click
 and a note box for each. Nothing is picked for you (the agent may mark the
 option it recommends), every choice question has an Other / none of these
 choice, and you can leave any question blank or click a choice again to clear
@@ -1969,15 +2077,15 @@ it. A question you leave blank is sent to the agent as skipped, so it moves on
 without asking again, and Skip all (or Ctrl+Shift+Enter, Cmd+Shift+Enter on
 macOS) sends right away with every question marked skipped, even ones you already picked. A
 form with more than one question also ends with an optional notes box
-for anything else you want the agent to know, and every question page ends
+for anything else you want the agent to know, and every Ghostex page with questions ends
 with an "Anything else?" box just above Send, whatever the agent wrote. You
 can paste a picture (a screenshot or a copied image) into any note or text
-box, in a form or a question page: it shows as an Image #1 pill (as a
+box, in a Ghostex form or page: it shows as an Image #1 pill (as a
 thumbnail you can remove in a page's "Anything else?" box) and goes to the
 agent with your answers, so it can open it. Send (or Ctrl+Enter, Cmd+Enter
 on macOS, from anywhere in the form or page) delivers your answers to the agent
 as a message; the chat shows them as a card, and the form then reads Answered.
-Answers from question forms and chat pages send like normal chat messages; a busy
+Answers from Ghostex forms and Ghostex pages send like normal chat messages; a busy
 agent receives them after its current tool call when supported. Turn on **Wait
 for turn end before sending form answers** to queue them until the turn ends.
 A queued card says what it waits for, and Remove takes your answers back so the
@@ -1989,7 +2097,7 @@ them as a form. A block it truly can't read shows "These questions could not be
 shown" with the reason, and once that turn ends Ghostex asks the agent, once, to
 send those questions again in the right shape, so you never have to paste the
 error back; the broken card goes away when the new form arrives. Questions that need a picture,
-such as choosing between two mockups, come as a page instead, where you can
+such as choosing between two mockups, come as a Ghostex page instead, where you can
 also pick an option right at its mockup with the Pick button at the right end of its title. A
 page works the same way: its card reads Answered once you send, and opening it
 again shows what you sent. The desktop's floating page window and the mobile page close once your answers are
@@ -1997,8 +2105,8 @@ sent, and stay open with the error if they could not be; in the Files view or yo
 what you picked and typed is kept, in a form and on a page alike, even when
 you close the page or the chat, switch sessions, or restart. A small "?"
 button sits on the working card just above the chat box, left of the other
-pills (after Scroll to bottom when that shows), while a form or
-question page in the chat is still waiting for your answers (desktop, web and
+pills (after Scroll to bottom when that shows), while a Ghostex form or
+page in the chat is still waiting for your answers (desktop, web and
 mobile): each
 click goes to the next older unanswered one, round again after the oldest, and
 briefly outlines it. A question stops counting once the agent asks the same tag
@@ -2023,9 +2131,13 @@ card that asks a single choice question right away, without Send answers
 answers still wait for Send). Commands:
 `ghostex show <file.html>`
 publishes a page and prints the block that shows its card, which opens where
-Open chat pages in says, and
-`ghostex visual check <file.json>` draws a chart block to an image, or lists a
-question form's questions (and names anything to write the standard way), so the
+Open Ghostex pages in says. Opening a page's HTML file itself (from the Files
+view, a file link in the chat, Open in browser, or the phone) shows it styled
+the same way: it answers to the chat that published that file, or, when no
+agent sent it, opens read-only with a note saying so. Other HTML files open as
+written. And
+`ghostex visual check <file.json>` draws a Ghostex visual to an image, or lists a
+Ghostex form's questions (and names anything to write the standard way), so the
 agent can check it before replying;
 `ghostex visual check <file.html>` opens a page in Chrome at a phone's width
 and a computer's, saves a screenshot of each and lists what does not fit.
@@ -2130,7 +2242,11 @@ queue stay in the list above the input. This also applies when reopening the cha
 or continuing on another device. A message that has waited about a minute says why under it, for
 example that the agent is still working, is waiting for your answer, or that its input box can't
 be read yet; in that last case Ghostex keeps trying on its own and, if it still can't deliver after
-a few minutes, marks the message Not sent with Retry.
+a few minutes, marks the message Not sent with Retry. When the agent is idle and its input box still
+hasn't come back after about four minutes, Ghostex reloads the agent on its own conversation, as
+Full Reload does, and the message goes in once the new input box is ready. It does not reload an
+agent that is in the middle of a turn, is waiting for an answer, shows background tasks, or was
+already restarted automatically in the last ten minutes.
 When a chat message cannot be sent, it stays in the thread with a card saying why.
 Retry sends it again, Fix it restarts the agent on its conversation and then
 sends it, and Terminal view shows what the agent is showing. The session gets a
@@ -2193,6 +2309,10 @@ agent's choices as numbered rows: press a row's number or click it. Cmd+Enter
 Esc picks No, or closes a dialog that has no No row. Show terminal output opens
 what the agent printed above its question. In narrow chats, notice cards hide
 Show terminal output; Open terminal remains available.
+If a pick on a dialog card doesn't go through (the card says the agent's dialog
+changed), the card gets a **Dismiss** button: close it and answer the agent in
+the terminal with Open terminal. Messages you send while that dialog is still
+open on the agent's screen wait until it's answered.
 Ghostex trusts each project and worktree folder for you before it starts an
 agent there, so sessions never stop at the agent's own "Do you trust this
 folder?" question. It marks the folder trusted the way the agent would if you
@@ -2342,7 +2462,7 @@ While the agent is working, its thinking shows as a closed "Thinking…" card wi
 
 Show thinking in grey (Settings > Interface > Text, off by default) shows the agent's thinking in grey and its replies in the full text colour, so the two are easy to tell apart (`sessionChatMutedThinking`); the phone has the same switch in its Settings > Chat.
 
-Tool call cards (Settings > Chat, a preview, off by default) show each run of tool calls between two pieces of the agent's text as one card: its header stacks the tools' icons and says "Using 3 tools" while they run and "Used 6 tools" with any failures and the time once done, and each call reads like a sentence that changes tense when it ends ("Reading main.rs", then "Read main.rs · 92 lines · 30ms"), with its result and time on the right. A failed call says what failed with the reason underneath, and calls to apps such as Linear, GitHub or Notion show the app's logo. The card folds to one line as soon as the agent writes again; click (or tap) it to open it again, and click a call to see its command and output (`chatToolCallCards`). The phone has its own switch for it in its Settings > Chat.
+Tool call cards (Settings > Chat, a preview, off by default) show each run of tool calls between two pieces of the agent's text as one card: its header stacks the tools' icons and says "Used 6 tools" with any failures and the time once done, and each call reads like a sentence that changes tense when it ends ("Reading main.rs", then "Read main.rs · 92 lines · 30ms"), with its result and time on the right. A failed call says what failed with the reason underneath, and calls to apps such as Linear, GitHub or Notion show the app's logo. The card stays one line while its calls run and after: while a call runs, that line says what it is doing in its own words ("Reading main.rs") with "+2 more" for the card's other calls, and once they are done it says "Used 6 tools". It never opens or folds by itself: click (or tap) it to see every call, and it opens on its own only when a call in it waits for your approval. Click a call to see its command and output (`chatToolCallCards`). The phone has its own switch for it in its Settings > Chat.
 
 Marked handovers: coordinators and their threads begin each part of
 the message they hand back with a marker. What happened comes first: ✅ Done, 🚀 Shipped,
@@ -2369,7 +2489,7 @@ Settings: `markedHandovers`, `markedHandoversStyle` (`labels`, `rule`,
 
 Tell agents about Ghostex (Settings > Chat, on by default) gives every agent
 session Ghostex starts a short note that it runs in Ghostex: Ghostex can show
-pages, question forms, charts and graphs in the chat, open pages the agent
+Ghostex pages, Ghostex forms and Ghostex visuals in the chat, open pages the agent
 builds in its own browser, run other agents and install Ghostex skills. The
 agent uses it only when you ask for one of those things, and then reads the
 details from `ghostex agent-guide`. It reaches Claude Code, Codex, ZCode, Pi
@@ -2451,7 +2571,7 @@ reply the agent gave to that prompt, including the ones it wrote after a
 background task finished. While the agent is still working, that turn's work
 shows open under Active work, with the running command visible; close it with a
 click, and it folds into the reply once the turn finishes. Any message that holds
-an HTML page, a question form or a chart is always shown in full under its prompt,
+a Ghostex page, a Ghostex form or Ghostex visuals is always shown in full under its prompt,
 never folded, so you can scroll up through every page. Messages to and from other
 agents (a coordinator's thread reports, messages from other sessions) open no
 turn of their own: they fold into the "Agent reply" of your own prompt, so the
@@ -2558,7 +2678,8 @@ used first. Picking a model or a reasoning level (Low, Medium, or High) types
 Hermes' own `/model <model> --reasoning <level>` into the session, with
 `--provider` added for a model from another provider. Every Hermes
 pick applies to that session only and never changes the bot's config. If Hermes
-refuses the model, the picker shows its reason. A new Hermes chat gets the
+refuses the model, the picker shows its reason under Not applied; hover a long
+reason to read all of it. A new Hermes chat gets the
 picker once its first message is sent; until then the pill shows the model with
 Change it in the CLI, and you switch by typing `/model` in the terminal.
 
@@ -2570,9 +2691,20 @@ up as `openai-codex`); new models appear in the picker within a couple of minute
 Picking a model or a level types Pi's own `/model <provider>/<id>` and
 `/thinking <level>`, or OMP's `/switch <provider>/<id>:<level>`, into the
 session. Every Pi and OMP pick applies to that session only and leaves the
-agent's default alone. If the agent refuses a level, the picker shows its reason.
+agent's default alone. If the agent refuses a level, the picker shows its reason
+under Not applied; hover a long reason to read all of it.
 Until Ghostex has read the agent's model list, the pill shows the model with
 Change it in the CLI.
+
+A Pi or OMP chat learns which conversation is its own from Ghostex's Pi or OMP
+extension, which Install hooks adds in Settings > Agents. If the agent runs in
+its terminal but the chat stays empty, after about 20 seconds the chat says why
+and offers Install and restart (adds the extension and starts the agent again in
+a new conversation), or Restart when the extension is installed but the running
+agent didn't load it, plus Open terminal, where your messages did arrive.
+Ghostex finds a `pi`, `omp` or other agent installed with npm even when only
+your shell's startup files put it on PATH: in nvm's default Node, fnm's default,
+the npm `prefix` set in `~/.npmrc`, `~/.npm-global`, bun and pnpm.
 
 In an Empryo chat the picker lists the models `empryo --list-models` shows for
 every provider Empryo has ready, grouped by provider and keyed `provider/model`
@@ -2598,6 +2730,9 @@ Tap the info icon on the highlighted model to read what it is for. The bottom
 buttons work as on the computer; long-press one (Claude only) to apply the change
 to this session alone. In a session that has started, the phone's picker shows
 only that agent's models.
+When a model change holds messages, the phone shows a card above the chat box
+with how many are waiting, why, and what releases them. **Pick model** opens the
+same model sheet; **Details** shows the diagnostic behind the plain explanation.
 
 Picking a model from another agent's tab does not change the running session,
 which cannot switch agents. It opens Handoff / Export on Handoff to an agent with
@@ -2689,7 +2824,11 @@ switches a session on them. Cursor and Gemini sign in in the browser; Copilot
 shows a code to type on GitHub's page. Cursor and Copilot show their plan's use
 of the billing month, labelled Mo (with Cursor's Auto and API split and extra
 usage spend, and Copilot's chat and premium requests, on the account's page);
-Gemini shows the 5h and 7d limits of the Google AI plan. Their usage shows in
+Gemini shows the 5h and 7d limits of the Google AI plan as Antigravity (agy's
+`/usage`) counts them: the Gemini models' limits, and Claude/GPT 5h and 7d for
+the Claude and GPT models agy runs; the sidebar shows whichever is more used.
+Ghostex shows what is used, agy's `/usage` what is left (74% used is agy's
+26.00%). Their usage shows in
 the sidebar, on the account's page, and under Other usage in a chat's Accounts &
 limits panel on the computer and the phone; clicking one in the sidebar opens
 Settings > Accounts. Their ⋯ menu holds Sign in again, Turn off and Remove….
@@ -2719,6 +2858,9 @@ not even at a usage limit. Keep such a profile in `~/.claude-profiles/<name>`
 Install hook for that agent in Settings > Agents. Ghostex's skills live in
 `~/.agents/skills`, which Codex profiles read on their own; for a Claude
 profile, link its `skills` folder to `~/.claude/skills` to use them.
+A custom agent that starts Claude Code or Codex through Wally
+(`wally claude-code -m <model>` or `wally codex -m <model>`) takes no account
+either: Wally runs it on its own key and model.
 The ⋯ menu at the top of Settings > Accounts holds Refresh accounts, How
 accounts work, and each account tool, Claude Swap (cswap) and Codex Swap (xswap),
 with its version, Update (when a newer release is out, otherwise Check for
@@ -2727,14 +2869,18 @@ shared conversations. Ghostex runs the update with the tool that installed it
 (uv or pipx for cswap; Homebrew, Cargo or the installer script for xswap); for
 one installed some other way those items are off, so update it the way you
 installed it.
-On Windows, Ghostex installs its own build of Claude Swap, because the released
-one can't share conversation history between accounts there yet. Install and
+For now Ghostex installs its own build of Claude Swap on every computer: the
+released Claude Swap 1.0.0 plus two fixes that are waiting to be released (sessions
+on an account whose sign-in on the computer was lost start on that account's own
+saved login instead of stopping at "Login expired", and on Windows no stuck
+`git.exe` processes are left behind). Its version ends in `+ghostex`. Install and
 Update in Settings > Accounts use it, and Ghostex moves any other Claude Swap on
-the computer to it on its own. Running Claude sessions keep the installed Claude
-Swap in use, so an update, reinstall or uninstall is prepared at once and applied
-on its own as soon as they have all closed (after a restart of the computer at the
-latest); until then the Claude Swap line says so, offers no buttons, and new
-sessions keep working.
+the computer to it on its own. Once those fixes are released, Ghostex goes back to
+the regular Claude Swap the same way.
+On Windows, running Claude sessions keep the installed Claude Swap in use, so an
+update, reinstall or uninstall is prepared at once and applied on its own as soon
+as they have all closed (after a restart of the computer at the latest); until
+then the Claude Swap line says so, offers no buttons, and new sessions keep working.
 Before sending a session's first message, use the model menu's Switch Agent CLI
 to change between Claude and Codex. The new agent uses its New sessions start
 on rule, just like the sidebar agent button, while the terminal and your
@@ -2810,7 +2956,14 @@ When a Claude or Codex turn ends on a lost connection or a server error (such as
 Ghostex resumes the turn by itself once the network is back, after 5s, 15s, 1m,
 2m and 5m, then on the slower schedule; the card's Retry now and Stop retrying
 buttons override it, and Retry after temporary errors in Settings > Accounts
-turns it off.
+turns it off. If all five quick retries fail, Ghostex stops retrying without
+getting past the error, or retrying is switched off while the error stands, the
+bell gets one Failed notification for that error, and only one even if the agent
+reported the same error itself, until you send the agent a new message (from the
+chat, or by typing it in the agent's terminal) or it works normally for a minute;
+Ghostex's own retry messages do not count as new. When Ghostex moves the session
+to another account by itself, that is still the same error; picking another
+account yourself starts over. A usage limit and Stop retrying never send one.
 A sleeping session whose account is already at its limit wakes on another
 account that has room. When every account set to Automatically is full, the
 session's chat shows "7d limit reached on every account" (or whichever limit
@@ -2982,7 +3135,8 @@ inactive projects. The appearance override and light palette apply to Ghostex on
 
 Terminal background (Settings, Terminal) is Black / white by default: pure black
 behind dark terminals and pure white behind light ones. Choose Follow theme to use
-the theme's background color instead, or Custom color to pick your own for dark mode.
+the theme's background color instead, or Custom color to pick your own for both
+dark and light mode. A theme preset (Settings > Interface > Presets) sets Follow theme.
 
 Terminals are see-through only while the window is: set Transparency to Dark only
 or Always (Settings, Interface, Transparency; it starts Off on Windows and Dark only on
@@ -3120,13 +3274,28 @@ version, Max Mode, auto-run, worktree, plus the branch, lines changed, and pull
 request). Removing the hooks restores your own command. The Hermes Agent hooks
 cover every Hermes profile as well as the default one, so each bot's sessions
 report their status and fill their chat; a profile you add later gets them the
-next time Ghostex starts.
+next time Ghostex starts. On a computer where an agent's hooks are not
+installed (for example a Linux computer that runs only Ghostex's server),
+Ghostex follows Claude Code, Codex and OpenCode from the session files and
+events they write themselves, so their sessions still go from working to
+finished; questions and approvals show their cards only with the hooks. To
+install the hooks there, use Settings > Agents with that computer picked. From a terminal, `ghostex agent-hooks status`,
+`ghostex agent-hooks install <agent>` (or `--all`) and `ghostex agent-hooks
+uninstall <agent>` (or `--all`) do what the Session resume hooks card does; add
+`--computer <name>` to run them on a connected computer.
 Agent approvals ("accept all") is a
 per-machine default with per-project overrides. Actions (Settings > Actions)
 are saved terminal commands or browser URLs shown on project headers and in
 the header’s Quick Actions button, which shows the name and icon of the Action
 you used last and runs it again on click (its caret opens the full list; it
 reads Start until an Action exists); Global Actions apply to every project.
+The caret's list shows the project's own Actions first and then, under a
+**Global** heading, every Global Action (the heading is left out when there are
+none); a click on a Global Action runs it in the project you are in, a Terminal
+one in that project's folder. Only the project's own Actions become the
+button's one-click Action and the Start Action 1-5 hotkeys. To show a Global
+Action on every project's row too, turn on its **Show on the project's sidebar
+row** in Settings > Actions.
 On the phone, a project's Actions menu lists that project's Actions and then
 the Global Actions. A Global Terminal Action runs as a normal session in the
 project whose menu you opened, in that project's folder, and you open its
@@ -3288,13 +3457,15 @@ version of the Projects features in Cursor and Claude Code.
   phone, open the same menu from the project's agent button and pick **New
   Coordinator…** at its top (tap its (i) for the same). Name it, pick its agent
   from the Agent dropdown (Claude, Codex, ZCode, Cursor, Grok, Copilot,
-  Antigravity, Pi, OMP or OpenCode, whichever you have set up), its model where the agent
+  Antigravity, Pi, OMP, OpenCode or DeepSeek Harness, whichever you have set up), its model where the agent
   lets Ghostex choose one (Opus 5.5 on Claude; otherwise each agent starts on its
   own default) and its effort: Low, Medium, High or XHigh, High by default (an agent without
   XHigh offers its levels from Low up to its highest). Cursor and ZCode coordinators take no
   effort choice (Cursor's effort is part of its model). An OpenCode coordinator lists every model
   your OpenCode has (search the list), starting on OpenCode's default, and its effort is that
-  model's variant; Ghostex switches OpenCode to them before its first message. Use a very good
+  model's variant; Ghostex switches OpenCode to them before its first message. A DeepSeek Harness
+  coordinator takes no model or effort choice: it starts on the model your DeepSeek Harness is set
+  to. Use a very good
   model: the coordinator
   is the agent you talk to all day, and the main way Ghostex itself is built.
   Its first message is always "Read and adhere to this skill:
@@ -3410,13 +3581,22 @@ version of the Projects features in Cursor and Claude Code.
 - **The coordinator's board**: a "Board" pill beside Workers shows the
   coordinator's lines of work, grouped by who has the ball: **Backlog**
   (folded at the top), **To do** (nobody is on it yet: parked, up next, or
-  held for a release), **Needs you**, **Blocked**, **Moving**, **Done** (today
-  only), and last **Removed** (folded). A group with nothing in it is left
-  out. The pill counts what needs you, what is blocked and what is moving,
-  each in its colour. Each line of work is a card with two lines: its title
+  held for a release), **Needs you**, **Blocked** (needs your attention now to
+  unblock it: a stuck thread only you can heal, an expired token, a release
+  step only you can fix), **On hold** (waiting on something outside: a
+  sign-up, a release, another thread, a vendor, a CI run that isn't the
+  coordinator's), **In progress**, **Done** (today only), and last **Removed**
+  (folded). A group with nothing in it is left
+  out. The pill counts what needs you (pink) and what is in progress (amber);
+  while anything is blocked, a **Blocked** pill beside it shows how many with
+  a red dot, and clicking it opens the board at Blocked (to the left of
+  Board, next to the ? pill, as an icon with its dot and count). On hold has
+  no pill: nothing in it needs you. Each line of work is
+  a card with two lines: its title
   (with a button showing its agent's icon that opens a thread), then the
   work it is linked to as chips you can click, with how long ago it moved at
-  the right: its open PR (with a dot for its checks: green, amber while they
+  the right (hover the card and a ⋯ takes its place): the tag you gave it
+  first, then its open PR (with a dot for its checks: green, amber while they
   run, red when they fail), open issue or Linear ticket, its branch when it
   has no PR, and the release it is held for. Long chips are shortened (hover
   for the whole text) and the rest are counted as "+N". A card that waits on
@@ -3424,13 +3604,26 @@ version of the Projects features in Cursor and Claude Code.
   thread (or, for an approval the coordinator's chat can answer, the
   thread's own buttons: hover one to see what it answers), and one-click answers for something the coordinator asks you (your
   click sends it "B4: Yes"); a card with no links shows the coordinator's
-  note for it. Click a card to put it in the chat box as a pill (the board's
-  icon and the card's title), so you can comment on it; in a sent message,
-  click that pill to open the board at the card. Click a question's card to
-  jump to the question. Threads
-  place themselves: working is Moving, waiting on a question or an approval
-  is Needs you, asleep or finished is To do, resolved today is Done, and a
-  finished thread's open PR moves it to Blocked when its checks fail, Moving
+  note for it. Click a card to open it in place: it shows its whole title,
+  its latest line (a thread's report or what it is on, an item's note), all
+  its chips, and a **Mention** button (its link chip opens the link and its
+  agent button the thread); clicking another card opens that one instead, and
+  clicking the open card closes it. **Mention** (or Option-click on a card)
+  puts the card in the chat box as a pill (the board's icon and the card's
+  title), so you can comment on it; in a sent message, click that pill to
+  open the board at the card. Right-click a card, or click its ⋯, for its
+  menu: Open, **Mention in chat**, **Tags** (the same tags as the sidebar's
+  sessions, in their colours; a thread's tag is its session's, so its
+  sidebar row shows it too), **Mark done** (a thread's is Mark Thread Done)
+  and **Remove from board** (**Restore to board** under Removed). Cards are
+  moved only by dragging one onto another group (onto Done marks it done,
+  onto Removed removes it); usually the coordinator places them. On the
+  phone, tap a card to open it and long-press it for the same menu. Click a
+  question's card to jump to the question. Threads
+  place themselves: working is In progress, waiting on a question or an approval
+  is Needs you, asleep or finished is To do, resolved today is Done, still
+  not moving after Ghostex nudged it is Blocked, and a finished thread's open
+  PR moves it to To do when its checks fail or changes are asked, In progress
   while they run, and Needs you when it waits on your review. Your
   unanswered questions in the coordinator's chat join Needs you by
   themselves and leave it the moment you answer them (also typed in the chat
@@ -3445,21 +3638,22 @@ version of the Projects features in Cursor and Claude Code.
   cards per group with "N more", and a thread nobody has touched for 3 days
   leaves it unless the coordinator put it there. To take a card off the
   board, hover it and click the × on its corner twice (it turns red after
-  the first click; on the phone, long-press the card and tap the ×): the card
-  moves to Removed, where **Restore** puts it back. Removing never closes or
+  the first click), or pick Remove from board in its menu (on the phone,
+  long-press the card): the card moves to Removed, where **Restore** puts it back. Removing never closes or
   resolves a thread, a thread that works or waits on you again comes back by
   itself, and removed cards are deleted after 7 days. The board opens two
   ways: as a list beside the chat (a floating card when the chat is narrow),
   or as columns over the chat, one per group, with Done as a slim rail at
   the right edge that opens its column when clicked. The switch at the top
   of either view picks the other, and the Board pill opens that view from
-  then on (Settings > Chat > **Coordinator board opens as**). The phone
-  shows the list as a sheet. The coordinator places what is not a thread
+  then on (Settings > Chat > **Coordinator board opens as**). The columns open
+  cards, show menus and take drags the same way. The phone shows the list as
+  a sheet. The coordinator places what is not a thread
   itself, such as help text held for a release, a sign-in only you can do,
   or the next release; from a terminal: `ghostex coordinator board` prints
   the board, and `board add "<title>" [--group <group>] [--release <name>]
   [--link <url>] [--answers "Yes,No"]`, `board move <B7|thread> <group>
-  [--note "<why>"]`, `board note`, `board done`, `board drop` (to Removed)
+  [--note "<why>"]` (groups include `on-hold`), `board note`, `board done`, `board drop` (to Removed)
   and `board restore` change it.
 - **Reports come back by themselves**: when a thread finishes a turn, Ghostex
   sends its final message to the coordinator (a "Message from" card in its
@@ -3475,7 +3669,10 @@ version of the Projects features in Cursor and Claude Code.
   it to, for example "run this on Omarchy". The thread uses that computer's
   project with the same name (or the one you name), its agents and its
   folders, sits under the coordinator in the sidebar with the computer's name
-  after its title in reports, and reports back like any thread. While the
+  after its title in reports, and reports back like any thread. A thread there
+  that shows no new output for 8 minutes is nudged and reported to its
+  coordinator like a thread on this computer, and one whose turn ended without
+  that computer saying so is reported finished from its transcript. While the
   computer is not connected, its reports wait; you can still mark it done. From a terminal: `ghostex
   coordinator start-thread --computer <name> --title "<title>" --task "<task>"
   [--project-id <id>]`.
@@ -3498,58 +3695,95 @@ version of the Projects features in Cursor and Claude Code.
   running them in parallel matters, the coordinator gives a thread its own git
   worktree and branch, so parallel threads never edit the same checkout. A coordinator's
   threads trust the project's own folder and the worktrees Ghostex makes for
-  them, so they start without stopping at the agent's folder-trust question.
+  them, so they start without stopping at the agent's folder-trust question. A
+  thread started on a connected computer with its own worktree is trusted there
+  the same way.
 - **Goal, standing instructions and memory**: every thread's brief carries the
-  coordinator's goal, its standing instructions (rules such as which branch to
-  target or how to verify work) and its memory notes. When you state a lasting
-  preference, the coordinator proposes the exact wording and saves it as a
-  note every later thread receives once you confirm; ask it
+  coordinator's goal and its standing instructions (rules such as which branch
+  to target or how to verify work). Memory notes are the coordinator's own:
+  when you state a lasting preference, it proposes the exact wording and saves
+  it once you confirm, and when it briefs a thread it passes on only the notes
+  that matter for that task, worded for the thread. Rules every thread in a
+  project must follow belong in the project's AGENTS.md. Ask the coordinator
   to change the goal or the instructions the same way. To edit them yourself,
   right-click the coordinator and choose **Goal & Instructions…** (the one-line
   goal and the standing instructions) or **Memory…** (every note, with a button
   to remove one and a field to add one); on the phone, long-press it. Save
   applies to threads it starts from then on; Cancel leaves everything as it was.
-- **Coordinator playbook**: the playbook every coordinator follows (how it
-  talks to you, starts and briefs threads, and reports back) is editable, so
-  you can change how your coordinators work instead of telling each one.
-  Edit it for all projects in **Settings > Chat > Coordinator playbook**
-  (Edit…), and give a project its own in **Settings > Projects** (pick the
-  project, then Coordinator playbook, Edit…); a project's playbook also covers
-  all of its worktrees. The New Coordinator dialog says which playbook its
-  coordinators follow, and its **Edit** button changes either one. The editor
-  opens with the playbook in use; **Reset to Default** (bottom left, click it
-  twice to confirm) goes back to Ghostex's playbook, or for a project to the
-  one for all projects, and saving text that matches the default keeps no
-  edited copy. The switch on each row turns an edited playbook off without
-  losing it. Every coordinator, existing ones too, follows the change from
-  its next guide read, with nothing to do on your side: when a Ghostex update
-  or an edit changes its playbook, the next message it gets (yours, a
+- **Playbook overrides**: every coordinator follows Ghostex's playbook (how it
+  talks to you, starts and briefs threads, and reports back), which Ghostex
+  keeps up to date with each release. To change how your coordinators work,
+  write **playbook overrides**: your own instructions for every coordinator,
+  one per line, such as "Never push without asking" or "Ignore the board
+  rules". Coordinators read them after Ghostex's playbook, and they take
+  precedence over it: the playbook is written for everyone, the overrides are
+  yours. Ghostex's playbook itself is never edited, so its updates keep
+  arriving. Edit them in **Settings > Chat > Playbook overrides** (Edit…), from
+  the **Playbook overrides** row of the New Coordinator dialog (Edit), or by
+  right-clicking a coordinator and choosing **Playbook overrides…**. To read
+  the playbook your coordinators follow, click **View playbook** (in Settings,
+  in the New Coordinator dialog and in the right-click editor): it shows
+  Ghostex's playbook with the reply format you chose, read-only, then your
+  overrides in their own box marked as yours, with **Edit overrides** to
+  change them. It is the same text `ghostex coordinator guide` prints. The
+  overrides are one text for every coordinator on that computer; there is no
+  per-project playbook. Every coordinator, existing ones too, follows a change
+  from its next message, with nothing to do on your side: when a Ghostex update
+  or your overrides change its playbook, the next message it gets (yours, a
   thread's report, a queued one) carries one line under it telling it to run
   `ghostex coordinator guide` and follow it from then on. That line comes once
   per change and not at all once it has read the new guide, and an idle
   coordinator is not woken for it. `ghostex coordinator status` says it too.
-  When Ghostex ships a new playbook after you edited yours,
-  the editor says so: Reset to Default takes the new one, or ask an agent to
-  merge it into your copy. Each coordinator's own goal and standing
-  instructions (Goal & Instructions…) stay separate. From a terminal:
-  `ghostex coordinator playbook [--this-project | --project-id <id>] [--text |
-  --default]` shows it, and `ghostex coordinator set-playbook (--body-file
-  <path> | --reset | --off | --on) [--this-project | --project-id <id>]` changes
-  it.
+  If you edited a full copy of the playbook in Ghostex 11.0 or earlier, it
+  stays in use (without Ghostex's updates) until you move off it: the overrides
+  editor says so, and **Use Ghostex's Playbook** (click it twice to confirm)
+  saves your old copy as a Markdown file and moves every coordinator to
+  Ghostex's playbook; copy what you still want from it into the overrides.
+  Each coordinator's own goal and standing instructions (Goal &
+  Instructions…) stay separate. From a terminal: `ghostex coordinator playbook
+  --overrides` prints the overrides, `ghostex coordinator playbook
+  --set-overrides "<text>"` (or `--body-file <path>`) saves them and
+  `--clear-overrides` removes them; `ghostex coordinator set-playbook
+  --use-ghostex` moves off an old copy.
+- **How to use coordinators**: every coordinator's chat has a **How to use** pill
+  (a light bulb) in the pills above its chat box, on new coordinators, older ones
+  and sessions made coordinators alike. Click or tap it for the tips, each in its
+  own card with a line you can type; clicking that line puts it in the chat box
+  (nothing is sent). The tips: keep one coordinator per project and give it
+  everything; ask for a gx page per topic and pick (gx visuals for numbers); ask
+  it to dig deeper on a point before you pick; paste a screenshot instead of
+  describing; let it start threads, on any agent or computer; answer with one
+  click (a gx form or the answer links), or later from the ? pill, or by tag
+  ("Q12: yes"); run several lines of work at once on the Board; say a rule once
+  and it becomes a note it passes on to the threads that need it; read the end of each reply, where
+  Needs you comes last and threads' approvals show; and on a Mac, let threads
+  test in real windows with SpaceO and cua-driver. Tick **Don't show again** in
+  the tips to remove the pill from every coordinator on that computer's Ghostex
+  (the phone and every window follow); this Help keeps the tips. Only you see
+  them: the coordinator's own first message is unchanged.
 - **Just ask**: "run these three as separate threads", "use worktrees", "give me
   a status of every thread", "use a cheaper model for threads", "don't merge
   anything without asking" all work in plain words.
 - **A session that is not a thread**: ask the coordinator for "a separate session I
   can chat to directly" and it creates one that sits in the sidebar on its own and
   reports to nobody; "unlink that thread" turns an existing thread into one.
+- **Telling a thread apart at launch**: a thread's agent starts with
+  `GHOSTEX_COORDINATOR_ROLE=thread` and `GHOSTEX_COORDINATOR_SESSION=<its coordinator's
+  ref>` (such as `S1:P1abc:G1abc`) in its environment, and a coordinator's own agent with
+  `GHOSTEX_COORDINATOR_ROLE=coordinator`; a session you start yourself has neither. A launch
+  wrapper (an agent command in Settings > Agents) can read them, for example to start
+  threads with fewer MCP servers. They are set each time the session's terminal starts: a
+  restarted thread keeps them, an unlinked one loses them at its next start. A thread on
+  another computer (`start-thread --computer`) does not get them yet.
 
-Coordinators run on Claude, Codex, ZCode or Empryo; threads can be any configured
+Coordinators run on Claude, Codex, ZCode, Empryo, Cursor, Grok, Copilot, Antigravity, Pi,
+OMP, OpenCode or DeepSeek Harness; threads can be any configured
 agent. An Empryo coordinator runs as the Empryo agent `ghostex-coordinator`: Ghostex
 keeps its playbook in `~/.empryo/agents/ghostex-coordinator.md` and switches the
 session to it with `/agent ghostex-coordinator` before anything else, so leave that
 file in place. From a terminal or another agent: `ghostex coordinator create --title <name>
 [--model <m>] [--effort <e>] [--goal <text>] [--task <first request>]`, `ghostex coordinator
-promote <session> [--goal <text>]` (make an existing session a coordinator), `ghostex coordinator status`,
+promote <session> [--goal <text>] [--computer <name>]` (make an existing session a coordinator; in versions after 10.49.0 this works on a connected computer's session too, and so does the sidebar's Advanced > Make Coordinator on its rows: that computer installs the coordinator skill and keeps the coordinator), `ghostex coordinator status`,
 `ghostex coordinator options` (the agents, models and efforts a coordinator can use),
 `ghostex coordinator start-thread --title <title> --task <brief> [--worktree]
 [--agent <id>] [--model <m>] [--effort <e>] [--account <number|email>]` (`--account`, in versions after 10.45.0, starts a Claude or Codex thread on that saved account instead of the Account for new sessions rule; one that needs signing in is refused), `ghostex coordinator resolve
@@ -3562,8 +3796,145 @@ for the user to chat to directly instead of one of its threads; 10.24.0 or later
 coordinator set-goal|set-instructions`, `ghostex coordinator edit [--goal=<text>]
 [--instructions=<text>] [--notes-json=<json list>]` (the goal, instructions and whole
 note list in one call, as the editors save), and `ghostex coordinator guide` (the
-coordinator's own playbook). `ghostex coordinator --help` lists every flag. `ghostex orchestrator …`
+coordinator's own playbook, ending with your playbook overrides). `ghostex coordinator --help` lists every flag. `ghostex orchestrator …`
 is an alias that runs the same commands.
+
+## Main Hub (beta extension, off by default)
+
+Main Hub is a beta extension, off until you turn it on in **Settings >
+Extensions > Main Hub**. Only you can switch it, not an agent. While it is off,
+your home folder's project (if you have one) is an ordinary project and nothing
+here applies.
+
+Turned on, the project at your home folder (`~`, `C:\Users\<name>` on
+Windows) becomes **Main Hub**, with the Ghostex flower on its header: the home
+for chats that don't belong to a project. If you already had a project there, it
+becomes Main Hub as it is, with its sessions, history and settings. Rest the
+pointer on its header and a card beside the sidebar says what it is.
+
+**Chief of Staff**, pinned first under Main Hub, is one agent per computer you
+can ask about anything: any session, agent, project or computer, and Ghostex
+itself ("what's stuck?", "how do I pair my phone?").
+
+- **Main Hub's header**: click it to fold or unfold, like any project. Right-click
+  for Main Hub's settings (Show on All Spaces, Ask Before New Chat, the folders
+  agents can't read) above the project's own menu (Move to Space, New Terminal
+  and the rest). It sits at the top of the Space it is in, or of every Space with
+  **Show Main Hub on all Spaces** (Settings > Agents > Home folder).
+- **First open**: before Chief of Staff runs, its row says "Pick an agent"; click
+  it and pick the agent it runs on.
+- **What Chief of Staff does**: it reads every session's chat and screen,
+  messages, interrupts and types into any session, and answers other agents'
+  questions and permission prompts, without asking you each time. Work in a
+  project goes to that project's coordinator, and work on another computer to
+  that computer's Chief of Staff. Collab, pairing, Easy Connect, connecting
+  computers, Autopilot's limits, GBots, security settings and installing things
+  stay yours.
+- **New Chat keeps your old chat**: right-click the Chief of Staff row for New
+  Chat (Ghostex asks first; tick Don't ask again to stop asking). The old chat
+  stays in Main Hub, asleep and named after the day it started. Change Agent
+  moves it to another agent the same way. On the phone, a long press on the row
+  offers New Chat and Change Agent.
+- **Your secret folders stay out of reach**: agents Ghostex starts in your home
+  folder can't read the folders listed in **Folders agents can't read in your
+  home folder** (Settings > Agents > Home folder): `.ssh`, `.aws`, `.gnupg`,
+  `.config/gh`, `.netrc`, keychains, password stores, browser profiles, agent
+  logins and the like. Claude Code's file tools are held to it, but its shell
+  commands are not; Codex is held to it for everything it runs; other agents are
+  not.
+- **Several computers**: with computers combined, every computer's home is one
+  Main Hub, each computer's Chief of Staff pinned at the top and other
+  computers' chats marked with their computer's name.
+- **Turning it off again** hides Main Hub and Chief of Staff, puts Chief of
+  Staff's agent to sleep and takes away its control over your other agents; its
+  chat and memory are kept for when you turn it back on.
+
+`ghostex chief status`, `ghostex chief guide`, `ghostex chief new-chat`,
+`ghostex chief set-agent <agent-id>`, `ghostex chief send [--computer <name>]
+"<text>"` (they say Main Hub is turned off while it is). Settings:
+`mainHubHidden`, `chiefShowOnAllSpaces`, `chiefConfirmNewChat`,
+`homeSecretFolders`.
+
+## Autopilot (keep sessions going while you are away)
+
+Autopilot keeps your agent sessions moving while you are away, until you turn it
+off. Turn it on in **Settings > Autopilot** (on the phone too: Settings ›
+Autopilot, per computer), from the **Autopilot** pill in any coordinator's chat
+(above its chat box, beside Board), or with `ghostex autopilot on`. While it is
+on, Ghostex looks at every session it covers as soon as an agent finishes a
+turn, and sweeps all of them every 2 minutes (1 to 10 minutes on the page). It
+then:
+
+- **Carries on** a session that stopped while its background job finished, that
+  stopped mid-task right after saying what it does next, or whose turn was cut
+  off (it was put to sleep or restarted mid-turn).
+- **Interrupts and carries on** a session stuck on a hung command (no output for
+  8 minutes; a coordinator's thread after its coordinator's nudge), telling the
+  agent not to run it the same way again.
+- **Reloads** a session that still shows nothing a few minutes later, on its own
+  conversation, and leaves it for you if that does not help either.
+- **Moves a session at a usage limit** to the ready account with the most room
+  when its own account policy would wait, and sends "." so it carries on.
+- **Restarts a session whose terminal ended** when Ghostex's own restarts gave
+  up, and **skips Codex's update prompt** when it holds a session.
+- **Answers questions for you** when **Answer questions for me** is on (off by
+  default): after you leave a question unanswered for 5, 10 or 15 minutes, it
+  picks each question's recommended choice, for an agent's own question and for
+  a question form in its chat alike.
+- **Answers approval cards** when **Answer approval cards** is on (off by
+  default; while it is off only your click answers them): permission prompts,
+  Connectors cards and folder trust, within its tier. **Heal** answers none,
+  **Heal and decide** approves only what is on its allow list (reads, builds,
+  tests, edits and local commits inside the project), and **Everything** (the
+  default) approves anything that crosses no hard limit.
+
+**Hard limits it may cross** are each a switch, off until you turn it on: push
+a branch, finish a release you asked for, push main, merge pull requests,
+delete outside the project, post publicly. A prompt that would cross one you
+left off, or that asks for a sign-in, 2FA, an identity check or a payment
+(never done), is declined: the agent is told to carry on without it, and the
+log notes it for you.
+
+**The supervisor** is an agent that wakes only for judgment calls: a question
+with no recommended choice, or a session the rules could not keep moving. It
+starts the first time it is needed, in an **Autopilot** project in your
+sidebar, on the **Supervisor model** you pick (Claude Opus 5.5 at medium or
+Codex GPT 6.1 Sol at high; the other one when that agent has no account with
+room), and you can read its chat to see why it did each thing. It keeps notes
+(one running file, and one per session) that every wake reads first, so it
+never starts from scratch, and it acts only through Ghostex: it answers a
+question, tells a session how to carry on, or leaves it for you with a note. It
+never approves a prompt itself.
+
+Which sessions: **Every session** (coordinators and threads included), only
+**Projects I pick** (their switches show on the page, worktrees included), or
+only **Sessions I pick**. Each session's chat shows an **Autopilot** pill while
+Autopilot is on (on the phone too): tap it to leave that session out (it reads
+**Autopilot off**) or put it back. Right-click a project in the sidebar and use
+**Advanced > Autopilot** to take the project and its worktrees out, or put them
+back. A session you stop yourself is left alone for 30 minutes. Each kind of
+action has an hourly limit per session, so nothing loops.
+
+**Offline**: Ghostex checks that this computer can reach the internet and each
+agent's API (Claude's, Codex's, or the proxy your environment sets), not with a
+ping. While it can't, Autopilot sends nothing and wakes no supervisor, since
+nothing could reach the agent: its pill reads **Offline: waiting for the
+network**, and the log gets one line when the network goes and one when it is
+back. It carries on within a few seconds of the network returning. Coordinators
+work the same way: Ghostex holds its nudges and reports to them while offline
+(`ghostex coordinator status` says so), and each coordinator whose threads were
+working gets one line when it is back. Messages you or a coordinator send on
+purpose still go out.
+
+At the bottom of the page, **Summary** counts what it did since it went on and
+**Log** lists every decision, newest first: the session, what it saw, what it
+did, and when (kept 30 days).
+
+CLI: `ghostex autopilot` (status and summary), `ghostex autopilot on|off`,
+`ghostex autopilot log [--last <n>]`, `ghostex autopilot project <project-id>
+on|off`, `ghostex autopilot session <project-id> <session-id> on|off`, and
+`ghostex autopilot decide <project-id> <session-id> --answer <pick> | --message
+<text> | --leave <note>` (what the supervisor runs).
 
 ## Project board (Kanban)
 
@@ -3768,6 +4139,55 @@ build.
 
 Setting: `botAutomationsHidden` (on by default, which keeps the feed hidden).
 
+## GBots (bots on your own Claude Code and Codex)
+
+GBots are long-lived bots that run on your own Claude Code or Codex and can
+start and steer agent sessions on any of your computers. Turn GBots on in
+Settings > Extensions, under Planning and automation (off by default). Turning
+it on downloads the GBots runtime once (about 50 MB) on the computer GBots runs
+on; the GBots card shows the download, any error with a Retry button, and then
+Running on <computer>. GBots runs on macOS and Linux.
+
+- **The Bots space**: GBots use the Bots space, opened from the button in the
+  Space row or the sidebar's top row (a robot while it shows GBots). With both
+  Bots (Hermes) and GBots on, the GBots card's **Bots space shows** picks
+  Hermes or GBots.
+- **New bot**: the New bot row at the top of the Bots space asks for a name,
+  what the bot runs on (Claude Code or Codex) and its instructions.
+- **Bot rows**: each bot has a row with a periwinkle letter tile and a dot:
+  green while it waits, blue while it works, grey while GBots is not running.
+  Its conversations sit under it; **+** (or New conversation) starts another.
+- **Chatting**: a conversation opens in the chat like any session. Messages
+  go to the bot; Stop stops its turn. Every turn runs on the Claude or Codex
+  accounts saved in Settings > Accounts (through Claude Swap and Codex Swap),
+  picked the way new sessions pick them, so a bot moves to another account
+  when one reaches its limit.
+- **Sessions on other computers**: every bot can use the `ghostex` CLI, so you
+  can ask it to start, message, read and steer agent sessions on this computer
+  or any connected one (for example "start a Codex thread in my app project
+  and tell me what it finds"). The sessions it starts show in your sidebar
+  with a card saying which bot sent the task.
+- **Apps and tools**: bots get what Claude and Codex sessions get from
+  Connectors: every app connected in Settings > Connectors for the bot's
+  workspace (Composio's apps such as Gmail, Google Calendar, Slack, Notion,
+  GitHub and Linear, and Executor's when it is on) and the workspace's `gh`
+  and `gws` sign-ins. Reads run at once; anything that would send, post,
+  create, edit or delete follows the workspace's Ask/Allow/Never rules, and
+  Ask shows the approval card in the bot's conversation. Connect an app the
+  same way as for sessions (Settings > About > Experimental > Enable
+  Experimental Features, then Settings > Connectors, or `ghostex connectors
+  sign-in` and `ghostex connectors connect <app>`); the bot's next turn has
+  it. GBots' own apps screen is not part of Ghostex.
+- **One GBots computer**: all bots, their conversations and the accounts they
+  use live on one computer. Pick it with **Runs on** on the GBots card (this
+  computer by default; it lists your connected remote machines). Choosing
+  another computer starts GBots there; bots made on the old computer stay on
+  it, since moving bots between computers is not available yet.
+
+Settings: `gbotsEnabled` (off by default), `botsSpaceSource` (`hermes` or
+`gbots`), `gbotsComputer`. CLI: `ghostex gbots status`, `ghostex gbots list`,
+`ghostex gbots create <name> [--instructions <text>] [--agent claude|codex]`.
+
 ## Voice agent
 
 Talk to your agents out loud. On a Mac, Windows or Linux, the headset button in
@@ -3805,7 +4225,7 @@ connected to (Settings > Remote > Remote machines), named with their computer
 ("Sidebar fix on Omarchy"): it can read them, send them prompts, answer their
 question cards and approvals, stop them, show them and start agents and
 coordinators in that computer's projects. Drafting into a chat on another
-computer and answering question forms there are not available; it says so. A
+computer and answering Ghostex forms there are not available; it says so. A
 computer whose Agent access is off (in Settings > Remote > Remote machines, on
 either computer) stays out of reach, and the agent tells you why. While the
 conversation is open it tells you when a session finishes its turn or starts
@@ -3815,13 +4235,16 @@ doing, live captions of both sides and the tools it runs, with Mute, a small
 talk button beside it and Hang up; while the agent speaks, a Stop talking pill
 shows above the buttons (talking over it also stops it in a Regular call). Drag the panel by its top
 bar to put it anywhere in the window (it stays there until you quit Ghostex),
-and scroll it to read back the conversation. Click the voice name ("Grok ·
-Eve") to pick another voice: Grok switches right away when it can, and GPT
+and drag any of its edges or corners to make it bigger or smaller (Ghostex
+remembers the size). The captions keep scrolling to the newest line; scroll up
+to read back the conversation, and the down-arrow button at the bottom right
+takes you back to the newest line. Click the voice name ("Grok ·
+Eve") to pick another voice: the list opens on the voice you use now. Grok switches right away when it can, and GPT
 Realtime keeps a call's voice once it has spoken, so the new voice starts with
 your next conversation (the panel says which). The small speed button right of
 the voice name ("1×") opens a menu of speeds (1×, 1.2×, 1.4×, 1.6×, 1.8×, 2×)
 that make it talk faster without changing its pitch, at once, even
-mid-sentence. Calls come in two modes, chosen in Settings > Voice > Call
+mid-sentence. Calls come in two modes, chosen in Settings > Voice Agent > Call
 mode or with the gear beside the speed button. Regular (the default) is
 hands-free: the agent listens all call and you can talk over it; on Grok you
 pay for the whole time the call is connected, quiet and muted time included
@@ -3860,7 +4283,7 @@ switch your window to it; asking to see it does. If the session is closed
 during the call, the strip says Closed and the call goes on. A call about one
 session doesn't offer or replace the remembered last conversation. For a
 session on another computer you are connected to, the call runs on that
-computer with its own voice key (add one in Settings > Voice on that
+computer with its own voice key (add one in Settings > Voice Agent on that
 computer); the strip says which computer. A call stays on the computer it
 started on, so picking a session of another computer while a call is open asks
 whether to keep the call or hang up and call, on the computer and the phone
@@ -3878,21 +4301,21 @@ sentence where things stood and carries on from there, or press Start fresh (or
 just start talking) to begin a new topic. You can also say "pick up where we
 left off" at any time. Once it continues, the panel shows "Remembering last
 conversation"; click it to read the whole summary. Forget on the card, or the
-Forget button in Settings > Voice > Memory, deletes the summary for the
+Forget button in Settings > Voice Agent > Memory, deletes the summary for the
 desktop and the phone. The summary is written by a small text model of the same
 provider, with the same key, right after a conversation ends.
 
 It needs an API key: pick xAI Grok Voice (the default) or OpenAI GPT Realtime
-in Settings > Voice, pick a voice, and paste the provider's key there
+in Settings > Voice Agent, pick a voice, and paste the provider's key there
 (xAI keys come from console.x.ai, OpenAI keys from platform.openai.com). The
 key is checked with the provider before it is saved, kept encrypted on this
 computer and never shown again. If a saved key can't be read anymore,
-Settings > Voice says so on its row: paste it again. The provider bills your account while a
+Settings > Voice Agent says so on its row: paste it again. The provider bills your account while a
 conversation is open. When the provider refuses a conversation (for example
 xAI answering "payment required" because an X subscription's included usage
 is used up for the moment), the panel shows the provider's own reason.
 
-Settings > Voice > Dictation history lists every recording you made with
+Settings > Dictation > Dictation history lists every recording you made with
 Dictate, on the computer or the phone, newest first and grouped by day, with
 its text, "This transcription was dismissed" with Recover for one you
 cancelled, or why it failed with Try again. Hover a row to Play it, Download
@@ -3939,15 +4362,15 @@ speaks. The call mode is also in the phone's Settings > Voice agent. They save t
 with the same voice at the same speed and in the same mode. It shows
 the same "Last conversation" card with Continue, Start fresh and Forget.
 
-The voice agent is a built-in extension, on by default; its settings are the
-Voice agent section of Settings > Voice, under App in the Settings sidebar.
+The voice agent is a built-in extension, on by default; its settings are
+Settings > Voice Agent, under App in the Settings sidebar right below Dictation.
 Turn it off with its switch on Settings > Extensions (the Voice
 agent card) and the headset and its arrow leave the top
 of the window, the voice agent hotkeys stop working and leave Settings >
 Hotkeys, a call that is running ends, and the phone app hides its headset,
-Voice call about this chat and Voice Call for that computer. Dictate keeps
-working: Settings > Voice then shows Dictate, the xAI and OpenAI keys Dictate
-can use and the Dictation history. Turn it back on and everything returns, with your voice
+Voice call about this chat and Voice Call for that computer, and Settings >
+Voice Agent leaves the sidebar. Dictate keeps working: Settings > Dictation
+still shows the key its engine needs and the Dictation history. Turn it back on and everything returns, with your voice
 settings as you left them.
 
 Settings: `voiceAgentHidden` (off by default, which keeps the voice agent on), `voiceAgentProvider`, `voiceAgentXaiVoice`, `voiceAgentOpenaiVoice`, `voiceAgentSpeed`, `voiceAgentCallMode`; the Memory row (`voiceAgentMemory`) forgets the remembered conversation. Hotkeys: Toggle Voice Agent, Voice Call About This Session, Hold to Talk (`holdToTalk`).
@@ -3958,16 +4381,36 @@ Ghostex is a client/server system: gxserver runs on each computer and owns its
 sessions, so any client can control agents on any machine.
 
 - **From a phone**: sidebar More Options > Mobile & Remote (Settings >
-  Remote, which has four tabs: Easy Connect, Tailscale, Remote machines (the
-  computers this one connects to) and Advanced; each tab shows its status, such
-  as Running or how many machines are connected, and the page reopens on the
-  last tab). Easy Connect installs the Tailcat helper, turns on SSH access with
-  one admin prompt, and gives a pairing QR code: under Connect a phone, click
+  Remote). At the top, above the tabs, the Current machine card shows the
+  computer you're on: its name (set by the system, the one phones and other
+  computers show), its short name and SSH access, which Easy Connect and
+  Tailscale need; Turn on SSH access asks for an admin password once, or
+  follow the macOS, Windows or Linux steps to do it by hand. Under it are four
+  tabs: Easy Connect, Tailscale, Remote machines (the computers this one
+  connects to) and Advanced; each tab shows its status, such as Running or how
+  many machines are connected, and the page reopens on the last tab. While SSH
+  access is off, the Easy Connect and Tailscale tabs say so with a link that
+  jumps to it. Easy Connect installs the Tailcat helper and gives a pairing QR
+  code: under Connect a phone, click
   the hidden QR to open it in a popup (Settings never shows the code until you ask)
-  and scan it with the Ghostex mobile app (Android ships today). If the phone can't scan it, click Copy as text under the QR and paste the code in the phone's Scan code screen (Paste a pairing code). A Tailscale path is offered for tailnets; its code sits behind the same click-to-show QR and Copy as text.
+  and scan it with the Ghostex mobile app. If the phone can't scan it, click
+  Copy Easy Connect code under the QR and paste it in the phone's Scan code
+  screen (Paste an Easy Connect code). The Easy Connect code works once, for
+  five minutes. A Tailscale path is offered for tailnets; its code sits behind
+  the same click-to-show QR and Copy as text.
   The phone's own camera can scan the code too: the QR is a ghostex.dev link,
-  so with an up-to-date Ghostex app installed the camera opens the app and it
-  pairs straight away, on Android and iPhone.
+  so with an up-to-date Ghostex app installed the camera opens the app straight
+  into pairing, on Android and iPhone.
+  Scanning doesn't pair the phone by itself. The phone waits, and three words
+  show on the phone, in the Show QR popup and under Paired devices (on the
+  computer and on phones already paired). Check that both screens show the same
+  three words, then approve the request on the computer or a paired phone with
+  Touch ID, Windows Hello, your system password or the phone's Face ID or
+  fingerprint. If the words differ, or you aren't pairing a phone right now,
+  tap Deny. A code lasts five minutes, works once, and only the Show QR popup
+  makes one; no agent or command can get it. The phone's sign-in key lets it
+  open terminals and run Ghostex there, but not forward your SSH agent or
+  windows.
   Without the app, the link opens a ghostex.dev page that says how to install
   it. An older phone app can't read the new code with its own scanner: update
   the app first.
@@ -3977,6 +4420,14 @@ sessions, so any client can control agents on any machine.
   built yourself is signed differently) and install the latest release's APK;
   if it still fails, `adb install ghostex-android.apk` from a computer shows
   the real reason.
+  To look around with no computer and no account, open the phone app and tap
+  **Try a demo computer**. On the Connect your computer screen, open the card
+  of that name and tap **Open demo**. The Sessions list opens for **Demo
+  computer**, with sample projects (Atlas API, Side project, Wander). A chat
+  answers with a reply saved in the app, the terminal is a script (`ls`,
+  `pwd`, `git status`, `help`), and Web Preview shows a page saved in the app.
+  Nothing is sent over the network, and voice is off. Remove it in Settings >
+  Demo computer > Remove demo computer. Pairing a real computer is separate.
   The phone app keeps itself up to date: most releases download in the
   background and apply the next time the app starts, or right away with
   Restart to update in the phone's Settings > Updates, which also shows the
@@ -3999,17 +4450,48 @@ sessions, so any client can control agents on any machine.
   Sessions search. Tapping an open session opens it; tapping a closed one (shown
   with a hollow dot) brings it back on its computer and opens it. Closed
   sessions appear once that computer runs an up-to-date Ghostex.
-  Paired devices are listed and can be removed. Each phone paired with an
-  up-to-date app gets its own access key, so removing it cuts that phone off
-  even if it kept a copy of anything it saw. Turn on Only paired devices can
-  connect (below the list) to let in only paired phones: a removed phone then
-  can't even reach the computer through Easy Connect, and a new phone can
-  still pair while the Show QR popup is open (paired phones reconnect once
-  when the popup opens and about a minute after it closes). A phone paired by
-  an older app is named there; pair it again to keep it in. Another computer
-  that connects with an Easy Connect code needs its key listed: run
-  `tailcat genkey --client --key=client-default` on it and add the key it
-  prints under Advanced > Allowed client keys. On the phone, open Web Preview
+  A phone that signs in over Tailscale, the local network or SSH (not Easy
+  Connect) pairs once too: the first time it signs in after the update it shows
+  three words and the computer lists it as waiting, marked signs in over SSH.
+  Approve it on the computer (Touch ID) or on a phone already paired (Face ID)
+  only when the words match. Until then, answering an agent, Stop and typing
+  from that phone wait for approval on the computer; chat messages and reading
+  work as before. If you deny it, Ask again on the phone asks once more.
+  Removing it under Paired devices puts it back to asking. Computers you reach
+  over SSH don't pair again; the first connection shows one Approval needed
+  card to let the two computers' agents reach each other, however often the
+  computers reconnect or restart while it waits (it waits a day). Approve asks
+  for Touch ID (Windows Hello, polkit) once, and the computer then stays
+  approved for 30 days; Ghostex never opens that prompt on its own. With the
+  computer's Agent access off it never asks.
+  Paired devices are listed and can be removed with one tap, on the computer or
+  on any paired phone (the phone's Edit machine lists the computer's devices).
+  Each phone pairs with its own device key, kept in its Secure Enclave or
+  Android Keystore, and gets an access token tied to that key, so removing it
+  cuts that phone off at once: its sign-in key, its token and its right to
+  approve go together. Phones paired before Ghostex 11.1.0 no longer connect
+  and are listed as "pair it again": scan a new code from the phone, or remove
+  them. Only paired devices can connect, always: a removed phone can't even
+  reach the computer through Easy Connect, and a new phone gets in only while
+  the Show QR popup is open or it waits for approval (paired phones reconnect
+  once when the popup opens and about a minute after it closes).
+  Another computer connects the same way: on this computer click Show QR, then
+  Copy Easy Connect code, and paste it as the Easy Connect code in Add a machine
+  (Settings > Remote > Remote machines) on the other one. When you click Add machine, both
+  computers show three words; check they match and approve the request here.
+  Then the other computer can reach this one through Easy Connect, and still
+  signs in with this computer's SSH username and password. To re-pair a
+  computer paired before 11.1.0, open it there and paste a new code the same
+  way.
+  Easy Connect meets the phone on a relay. Relay (below Paired devices) picks
+  which: Ghostex relay (the default) has phones try Ghostex's own relay first
+  and Tailscale's public relays second; Public relays only uses Tailscale's;
+  Custom takes the hostname of a relay you run (Tailscale's derper). Phones
+  paired earlier keep working whichever you pick, and an up-to-date phone app
+  learns the new address on its next connection. When the chosen relay is
+  down, the pairing QR and phones use the public relays. Computers that
+  connect with an Easy Connect code keep using the public relays.
+  On the phone, open Web Preview
   from the machine menu and enter a website address or a port such as `3000`
   immediately, or choose a listening port from the list. The address bar stays
   editable while browsing. The Desktop site button in its toolbar loads the
@@ -4031,19 +4513,154 @@ sessions, so any client can control agents on any machine.
   attached to an iPhone or iPad, Cmd+V pastes too. Pasting several lines into
   a program that hasn't turned on safe paste first asks "Paste potentially
   unsafe text?", as the desktop does.
-  To read a project's docs on the phone, long-press the project and choose
-  Files, or choose Files from a session's ⋯ menu. It lists the project's Markdown
-  and HTML files from the same folders the desktop Files view shows, with search
-  and the most recently changed files on top; very deep folders list down to
-  eight levels. Files open in a reader on the
-  phone, and Reload picks up an agent's latest edit. HTML pages include the
-  Agentation annotation tool (the pen button hides it); its copy button puts
+  To browse a project's files on the phone, long-press the project and choose
+  **Files**, or choose Files from a session's ⋯ menu. It is a read-only browser of
+  the whole project: tap folders to open them, search by name across the project,
+  or use **Filter by file type** (All files, Markdown, HTML, Excalidraw, Image,
+  Video). Recently changed Markdown and HTML files stay at the top. The Files
+  menu offers **Refresh** and **Show Hidden Files**, remembered on the phone.
+  Markdown and HTML open as pages; other text up to 2 MB opens as numbered
+  source. Pictures, binary files and files over 2 MB opened from Files show their
+  name, size and why they cannot be previewed, with Copy Full Path and Share….
+  Hold a file or folder for **Copy Full Path**; a file also offers **Share…**,
+  which fetches a copy from the computer and opens the iPhone's share sheet.
+  If Files was opened from an agent session, **Add to Session Context** puts the
+  file's text into that session's chat draft, or into its terminal input without
+  pressing Enter: it is not sent until you send it yourself.
+  **Reload** in an open file picks up an agent's latest edit. HTML pages include
+  the Agentation annotation tool (the pen button hides it); its copy button puts
   your notes on the phone's clipboard, ready to paste into a session.
   Tapping a link to a file on the computer in a chat or terminal opens it in
   the same reader: Markdown, HTML, text and code files, and pictures (other
   files show their path, copied, since the phone cannot preview them).
   A picture opens at the screen's width and scrolls down like a page; pinch to
   zoom, and double-tap to switch between that and its actual size.
+
+  On iPhone, the terminal's four-square **Command pad** button opens nine keys:
+  arrows around Enter, plus Esc, Ctrl+C, Tab and Upload. Upload asks first for
+  **Photo Library** or **Choose File**, as **Send & Attach File** in the
+  terminal menu does; the round upload button, when the pad is off, asks the
+  same. Hold an arrow to repeat it. Hold the round pad button and drag to move
+  the pad; let go to snap it to
+  the nearer side edge at that height. The phone remembers its place, separately
+  for laptop mode. The buttons around the keys open **Keys**, **Agent hotkeys**,
+  the **Text editor**, or show and hide the keyboard. Keys and Agent hotkeys take
+  the keyboard's place; tap their button again to go back. Agent hotkeys is
+  dimmed when the session's agent has none; a tap on it then shows "This
+  session's agent has no agent hotkeys" beside the pad button for a few seconds
+  and opens nothing. If the pad and
+  keyboard cannot fit together, opening the pad lowers the keyboard and closing
+  it brings the keyboard back; bringing the keyboard up closes the pad instead.
+  A layer that leaves no room for the pad has a **Close** button to return to it.
+  In **Settings > Keyboard**, Command pad turns the pad button on or off,
+  **Pad keys** changes the nine keys, **Extra keys layout** changes the Keys
+  layer's two rows and custom actions, and **Agent hotkeys** edits the shortcuts
+  for Codex, Claude Code and Pi. **Key vibration** (on by default) turns off the
+  short vibration of the pad and layer keys, also when you pick up or drop the
+  pad. Tap a modifier for the next key, or hold it to lock it until tapped again;
+  closing the pad clears armed modifiers.
+
+  The pad's pen opens a multiline **Text editor** above the keyboard. Return
+  adds a new line; the up-arrow puts the draft into the terminal and clears the
+  editor, without pressing Enter. With the editor empty, its send button sends
+  Enter. Where the open pad has no room beside the editor (a phone held
+  sideways), the pad closes and the editor has its own **Close** button, which
+  works like the pen. Each session keeps its draft however the editor closes,
+  also when the keyboard goes away or you switch sessions, until it is sent;
+  drafts are not kept when the app restarts.
+
+  On the iPhone Duo, half folding it like a laptop keeps terminal output above
+  the fold, whether or not the keyboard is up. The keyboard, or the Keys or Agent
+  layer in its place, sits below; the text editor sits above the fold. The pad
+  uses its own saved position in the upper half, reaching below the fold only
+  when the upper half cannot fit the open pad. In a chat the transcript and the
+  chat box end above the fold as well, the chat box lifting above it while the
+  keyboard is up and the lower half staying empty while it is down. The
+  Sessions list, Files, the Link to pickers, and in Settings the Licences and
+  terminal palette lists run on below the fold: a row that scrolls out of the
+  upper half at the fold appears at once below it, and no row sits on the fold.
+  The other Settings pages, the Unified list, Notifications and Usage end above
+  the fold and leave the lower half empty, as every list does while the
+  keyboard is up or its rows fit above the fold; sheets and dialogs keep their
+  controls clear of it.
+
+  On the iPhone Duo's inner display, tap **Panes** in a session's header (or in
+  its More options) to open the panes stored for how the phone is held
+  (upright, across or half folded like a laptop): the session on screen takes
+  the first session pane, and Files, Usage and the other pane types come back
+  with the divider. A pane that showed another session does not bring it back
+  but opens **New pane**, as Panes does when none are stored; panes then open
+  once you pick there. Pick another
+  session on the same computer (those of the project beside it come first),
+  **New terminal in** the project, or **Web
+  Preview**, **Files**, **Git Changes**, **Agents**, **Usage** or **Attention**.
+  Tap a pane's title to change its type; the last session pane cannot change to
+  another type. In a session pane beside another session pane, **Session** in
+  that menu opens New pane there: a pick replaces its session, and closing it
+  keeps the session. Tap a pane to make it active, drag its title onto the other pane
+  to swap them, or drag the divider with the keyboard down to resize them.
+  Upright they stack; across and in laptop mode they stand side by side, with
+  layouts remembered for each arrangement. A session can show Chat in its pane,
+  but only one pane shows Chat at a time; a chat in a pane has a compact chat
+  box: the field, then one row with the model, **More actions**, Dictate and
+  Send. Session note, Attach and Terminal View are under More actions; the
+  permission mode, Copy Report, the pill strip and the status line show only in
+  the full chat view. While a chat pane is active and the keyboard is up, the
+  terminal's keyboard button stands at its usual place and hides the keyboard.
+  Closing a pane, or tapping Panes while two are open, goes
+  back to one pane, not closing its session; **New pane** itself closes alone,
+  by its close button or Panes, and keeps the panes you had. This holds in every arrangement:
+  none opens panes by itself until you tap Panes again, and each keeps its own
+  panes for then.
+  Files and Git Changes keep the project they were opened for, and Usage keeps
+  its computer; Web Preview and Agents follow the selected session's computer.
+  Files opens a picked file full screen; Git Changes stays read-only. Agents
+  lists sessions and their status; Usage shows the saved, enabled Claude and
+  Codex accounts' meters, or says when usage is unavailable rather than showing
+  zero. Attention is the same Notifications list: tapping a session row opens it
+  beside the list and marks its notifications read on its computer, except its
+  failure rows; an **Ended** row opens its sheet with **Remove** and, when
+  available, **Restore** instead. A question opens its chat at the question full
+  screen, and Back returns to the panes. Folding the phone opens the active pane's
+  content full screen; for Agents that is the Sessions list.
+
+  On the same inner display, **Show as tiles** in the Sessions header switches
+  from the list to the **session wall** (the side bar offers Show as list and
+  Show as tiles when the header is there). Each tile has the session's name,
+  agent, status in words and a small preview of its latest terminal lines, or
+  **No preview** if they cannot be read. Tap to open the session as from its
+  list row, or hold for the same menu. The choice is remembered, but the outer
+  display and other phones use the list.
+
+  On the iPhone Duo's outer display, **Waiting for you** above the Sessions list
+  brings waiting sessions to the top, longest wait first, within the list's
+  filter and search. Tap a card's heading to open its session, or answer an
+  approval or a single-choice question on the card. **Open Question** takes
+  questions needing several choices, several answers or written text into the
+  session; an approval without an answer card says to answer in the session.
+  Other waiting cards show the last screen lines and **Short replies**: a tap
+  sends the reply to that session immediately. Edit their text and order in
+  **Settings > Short Replies**. When nothing waits, the list says so; turning the
+  folded phone across with its camera at the bottom hides this section.
+
+  The project's **Actions…** menu on the phone lists **Project Actions**, then
+  that computer's **Global Actions**, when available; a project with only
+  Global Actions still offers the menu. In the Unified list, hold a session and
+  choose Actions… for its computer and project instead. A terminal action
+  starts there and opens its session; a browser action opens a localhost address
+  in Web Preview and another address in the phone's browser. If the computer
+  refuses a start, the list shows the action's name and the computer's reason.
+
+  A bottom sheet in chat or the connection setup can be closed by dragging its
+  grabber down and letting go far enough down, or flicking it down; a shorter
+  drag returns it to its place. Drag the grabber, not the list inside it, to
+  close it.
+
+  The phone's **Settings > Licences** lists the open-source software the iPhone
+  app includes, with each component's version and licence. Search by name and
+  tap a component to read its licence texts in full. The list is bundled with
+  the app, so it needs no connection to your computer; a read failure says why
+  and offers **Retry**.
 - **From another computer**: Settings > Remote > Remote machines > Add a
   machine with SSH details or an Easy Connect code, then Install / Connect
   gxserver on it. What you type in that dialog (except the password) stays
@@ -4056,8 +4673,12 @@ sessions, so any client can control agents on any machine.
   same on this computer, while the connection is up (`ghostex computers` lists
   them; agents add `--computer <name>` to `ghostex sessions`, `ghostex agents
   create` and `ghostex coordinator start-thread`). They can start, message,
-  read, sleep, wake and close sessions there, nothing else, and both computers
-  need Ghostex 10.44 or later. Connecting is the permission: an agent that can
+  read, sleep, wake and close sessions there and install its session resume
+  hooks (`ghostex agent-hooks install --all --computer <name>`), nothing else,
+  and both computers need Ghostex 10.44 or later. An agent started there from
+  another computer gets its missing resume hook installed first, so a
+  coordinator's threads on a computer that runs only gxserver report back like
+  threads here. Connecting is the permission: an agent that can
   type into a session on the other computer can run commands there, as you
   could. Turn **Agent access** off in the machine's Edit dialog to stop agents
   on either computer from using the other.
@@ -4069,6 +4690,13 @@ sessions, so any client can control agents on any machine.
   editor its own Ghostex has, so if Code says that computer doesn't have it yet,
   open the VS Code view on that computer once (or update Ghostex there) and retry.
   Folder links in remote chats also browse the remote folder in VS Code.
+  A file link in a remote chat opens in Files for any file in the project, not
+  only the Docs folders. A link to a text file outside the project (an agent's
+  log or scratch file in a temporary folder, say) opens in Files too, read-only,
+  when that session's own chat links to it: logs, code, config and JSON up to
+  2 MB. A binary or larger file says so; open it in the VS Code view instead.
+  Both computers need this Ghostex version. On the phone a chat's file link
+  already opens text files anywhere on the computer in the file viewer.
   A remote project's Open Folder (its right-click menu, Quick Access) opens the
   project in the Files view. Open In with VS Code, VS Code Insiders, VSCodium,
   Cursor, Windsurf, Trae or Antigravity opens the remote folder over Remote-SSH,
@@ -4081,6 +4709,30 @@ sessions, so any client can control agents on any machine.
   why, with Reconnect and Remote Settings buttons. Ghostex keeps retrying a
   dropped connection, but a rejected username or password is not retried (so
   the account is not locked out); saving a new SSH password reconnects it.
+  A machine you reach through Easy Connect from before 11.1 that the other
+  computer turns away shows Pair this computer again and is not retried: on
+  the other computer open Settings > Remote and copy its Easy Connect code,
+  then paste it into this machine's Easy Connect code (Settings > Remote,
+  Edit) and Save, or use Pair in the pair-again notice.
+  A computer that asks for a verification code (2FA) on every sign-in can't be
+  signed in to by Ghostex itself. On macOS or Linux, open Advanced in the
+  machine's Edit dialog and turn on **Reuse an existing SSH connection**, give
+  that host `ControlMaster auto` and a `ControlPath` in a folder only you can
+  change (for example `~/.ssh/sockets`, `chmod 700`) in your `~/.ssh/config`,
+  and sign in once in a terminal with `ssh <user>@<host>`. Ghostex then runs its
+  commands and its tunnel over that signed-in connection and never tries a
+  login of its own. After the connection closes, sign in in a terminal again;
+  the machine says "No SSH connection to <user>@<host> is open" until you do.
+  A chat whose computer is off or asleep says so in a card above the chat box,
+  for example "Windows PC is offline · last seen 2h ago", with Retry; its
+  sessions' computer badge in the sidebar turns red. A message you send then
+  waits on this computer and goes out by itself when that computer is back,
+  even if Ghostex was closed in between; it shows "Will send when Windows PC is
+  back" with Cancel, which puts it back in the chat box. After a day it comes
+  back to the chat box with a note. On the phone the message waits on another
+  of your computers that is connected to the one that is off. If a message gets
+  no answer for 10 seconds, Ghostex checks the computer at once and the card
+  says it "isn't answering · checking…".
   To update Ghostex on a remote machine without going to its screen, look at
   its tile in Settings > Remote or its tab in the sidebar: a connected machine
   shows the Ghostex version it runs, and when a newer one is out its tab shows
@@ -4111,8 +4763,10 @@ sessions, so any client can control agents on any machine.
   Browser Use and SpaceO, each in its own section with its skills (never on
   Linux or Windows). Their
   Accessibility and Screen Recording permissions can only be allowed by someone
-  at that Mac, so until then the row says so. Turning agents on, their defaults
-  and resume hooks are set on each computer itself. On the phone, a computer's
+  at that Mac, so until then the row says so. The Session resume hooks card
+  below the list shows that machine's hooks, with Install all and Uninstall all
+  running there, so a computer that runs only gxserver gets its hooks from
+  here. Turning agents on and their defaults are set on each computer itself. On the phone, a computer's
   Edit screen (swipe left on its card in Machines, then Edit) shows the same
   Agent CLIs and Skills and tools with Install and Update. When that machine
   (or this computer) runs Windows, both pages recommend Developer Mode (Windows
@@ -4130,15 +4784,26 @@ sessions, so any client can control agents on any machine.
   video, the interface scale and zoom stay on each computer), Agent defaults
   (the default agent, how new sessions open, the title agent, Accept all, each
   agent's default model and effort), Sounds and notifications, Keybindings
-  (between computers of the same system) and Coordinator (coordinator settings
-  and edited playbooks, a project's own matched by repository) are off by
-  default. Each switch is this computer's own: something syncs between two
+  (between computers of the same system), Coordinator (coordinator settings
+  and your playbook overrides), Agents, Skills
+  and Accounts are off by default. Agents keeps which agents are on in
+  Settings > Agents, their names, commands and flags, and their order; an
+  agent a computer doesn't have shows Not installed here with Install CLI, and
+  Install all missing installs them all (nothing installs until you click).
+  Skills keeps your own skills in `~/.agents/skills` and the Ghostex skills you
+  installed; a skill over 512 KB stays on its computer, and a skill removed on
+  one computer is put aside in Ghostex's backups folder on the others.
+  Accounts keeps the Claude and Codex account list (names, numbers, Use this
+  account, the sidebar pins) but never the logins: Claude and Codex sign one
+  of two computers out when they share a login, so an account that arrives
+  shows Sign in on this computer and Ghostex never uses it there until you do.
+  Each switch is this computer's own: something syncs between two
   computers when it is on in both. Turning one on never overrides what another
   computer already synced; this computer's values only fill in what nobody
   synced yet. The Ghostex app saves synced settings, so they reach a computer
   while its app is open. When two computers changed the same thing apart, the
   later change wins on both, and the computer whose change lost shows a
-  "Changed on …" note with Undo (the Sync page lists recent ones too). Your
+  "Changed on …" notice in the middle of the window with Undo (the Sync page lists recent ones too). Your
   computers lists each one with its last sync: Remove stops syncing with it,
   Add back lets it sync again. The Ghostex phone app keeps a copy too and
   passes changes on to each computer it connects to, so two computers that
@@ -4147,7 +4812,8 @@ sessions, so any client can control agents on any machine.
   lists the phone, and Remove stops it there. Sign-ins and secrets never sync.
   Settings:
   `syncSpaces` (on by default), `syncAppearance`, `syncAgentDefaults`,
-  `syncSoundsAndNotifications`, `syncKeybindings`, `syncCoordinator`.
+  `syncSoundsAndNotifications`, `syncKeybindings`, `syncCoordinator`,
+  `syncAgents`, `syncSkills`, `syncAccounts`.
 - **Web app**: the desktop's sidebar (with its session, group and project
   actions, the Git menu and Quick Access), chat and terminal running in a
   browser and talking to gxserver; remote machines, Settings and the commit
@@ -4282,7 +4948,12 @@ choice in a new chat and in New Thread shows once you've connected a provider
   Connect signs in in your browser. Boat's Connect asks for your Boat email,
   opens Boat's page and shows a 6-digit code to type there. Paste Key takes an
   API key instead. Free plans and trials work; Settings shows their limits
-  (Instabox free: one box at a time; Boat trial: boxes stop after 2 hours).
+  (Instabox free: one box at a time, and a paused or stopped one counts, so
+  delete it in Your boxes to start another; a box that failed before Instabox
+  made it doesn't count. Boat trial: boxes stop after 2 hours). When Instabox
+  says its limit is reached, the message names the sandbox holding the slot:
+  delete a Ghostex box in Your boxes, or one made outside Ghostex at
+  dashboard.instabox.sh or with `instabox rm <name>`.
 - **Start one**: in a new chat pick Cloud Box in the bar's where part (or the
   Cloud Box chip on a project's row in New Thread's project list); the choice is
   remembered per project. The bar's last part then picks what the box starts from:
@@ -4319,7 +4990,10 @@ choice in a new chat and in New Thread shows once you've connected a provider
   a Claude account approves a one-year box token once in your browser, so
   Claude on this computer stays signed in (claude.ai connectors and Remote
   Control don't work on a box). A Codex account is allowed as it is: each box
-  gets a fresh copy of its login and sends refreshed sign-ins back.
+  gets a fresh copy of its login and sends refreshed sign-ins back. Logins and
+  the secrets you send wait on the box in a private folder that only the box's
+  user can read and that no snapshot saves; this works on Instabox too, whose
+  boxes run Ghostex as an ordinary user rather than root.
 - **Cost and stopping**: Settings > Cloud Boxes shows this month's spend per
   provider and in total. The Monthly cap warns at 80% and starts no new box at
   100%; running boxes keep running. A box with no agent working and no
@@ -4365,6 +5039,34 @@ terminal in any terminal; the ids are the box's own, from `ghostex cloud show`),
 `ghostex agentbox status`, `ghostex agentbox list`,
 `ghostex create-agent <agent> --project-id <id> --run-on docker`.
 
+## Ghostex Collab (share a chat through a link)
+
+Ghostex Collab shares one chat with someone through a link that opens it in their browser: no app, no account. Collab is an extension: the Ghostex you download doesn't contain it until you install it. Install it in Settings > Extensions (Built-in, Sharing, Collab, Install); installing asks for Touch ID (Windows Hello, or your system password on Linux; on the phone, its fingerprint or face check) so only you can turn it on, and Ghostex then downloads the Collab component. Until then, Share in a chat's header (and the phone's Share pill) opens a popover that says Collab isn't installed, with Install right there: after Touch ID it shows the download's progress and then Ready to share. Don't show Share in that popover hides Share until you install Collab (Settings > Extensions, Collab, Show Share in chats brings it back). Settings > Collab appears once it is installed. Uninstall, in Settings > Extensions or Settings > Collab, never asks: it ends every share and removes Collab from the computer. When an app update brings a newer Collab, Settings > Updates and the Updates menu offer it. Then press Share in a chat's header (on the phone, the Share pill above the chat box) and Create link: the popover's band turns to Live and shows the link (`https://share.ghostex.dev/s/…/#…`) and an eight-digit code to give with it, each with Copy. Before Create link, the Link lasts chip picks how long this link lives (and becomes the default for new links). The person who opens the link types their name and the code, and then follows the chat live (the agent's replies, tool rows and cards as you see them) and can write in it and paste pictures; everyone in the chat sees who is watching and who is typing. You get a notification when someone joins, and the popover lists who is watching, with Remove.
+
+Turning Collab on, Create link (and Show, to see a link and code again later), turning on Send for a chat, and sending a guest's message each ask for your approval: Touch ID on a Mac (or your Mac's password), Windows Hello on Windows, your system password on Linux, or Face ID or your fingerprint on the phone. An agent or a script can ask for these, but nothing happens until you approve on your computer or phone. Turning Collab off, Stop sharing, Remove and Decline never ask.
+
+What their message does is up to you, per chat, under Guest messages in the Share popover: Ask me (the default) holds it as a "Message from <name>" card above your chat box, with its pictures, and Decline, Edit (puts it in your chat box to change and send yourself) and Send (with your approval); Send, turned on for one chat with your approval, passes their messages straight to the agent; View only turns their chat box off. A guest's message always reaches the agent labelled with their name. A guest can answer the agent's questions (its forms, quick picks and Ghostex pages); their answers go to the chat the same way their messages do, so under Ask me they wait for you too. A guest can never answer permission prompts, stop the agent, change its model, or see any other chat, file, terminal or setting: Ghostex only lets their link reach that one chat, and only the pictures, pages and HTML files that chat shows or that they sent themselves; any other file stays on your computer.
+
+A link ends after an hour by default (Settings > Collab, or the Link lasts chip in the Share popover, sets 1 hour, 4 hours, 24 hours or Until I stop it for new links). Until I stop it makes a link that never runs out: it needs the same approval as any link, and the popover says it stays live until you stop it. Stop sharing ends a link at once (it asks first and names who gets disconnected), as does deleting the chat; sharing again makes a new link. When a guest's message waits for you, the popover says so and Review next to their name takes you to its card above the chat box. A guest always needs the code. Remove next to a guest's name closes their page and keeps that browser out of the chat. Settings > Collab also sets Your name (what guests see for you), what new shares start with (Ask me or View only, and how long the link lasts), lists every chat shared right now with Stop sharing and Stop all, and keeps the Guest messages log: every message guests sent and what you did with it, and who joined, left or was removed. Uninstalling Collab ends every share. The phone has the same Share sheet, cards and Settings › Collab for each computer. The chat runs on your computer, so a guest can only follow it while your computer is on and Ghostex is running.
+
+The link's traffic goes through Ghostex's share relay, locked end to end with the key after the `#` in the link, so the relay can't read the chat. The relay also serves the page your guest opens, and that page reads the key, so each Ghostex version trusts one exact page: before sharing, Ghostex downloads the page from the relay and checks every file against the version it was built with, and again every hour; if the relay serves anything else, sharing pauses and Settings > Collab says why. The page also checks its own code before it runs. What this can't prove is the page one guest's browser got: a relay that served the right page to your computer and a changed one to a guest would not be caught. The relay's address can't be changed from Ghostex's settings or API.
+
+## Security log (Settings > Security)
+
+Ghostex keeps a security log of every sensitive action on your computer: pairing a phone (and failed pairing attempts), showing a pairing code, Easy Connect changes (on or off, its allow-list, ports and relay), sharing a chat in Collab or changing how a share works, letting a connected computer's agents in, Autopilot answering an approval or being allowed to do more, adding a GBots bot, a playbook, skill or agent command arriving by settings sync, and any attempt to change a setting only you can change. Each entry says what happened, who asked (this computer's app or an agent, naming the session it says it runs in, a paired phone, another computer, Autopilot), when, and how it ended. Each one also shows in the notification bell and as a notification on your paired phones, so you see it when it happens; clicking it opens Settings > Security.
+
+Settings > Security lists the entries, newest first. Every entry is chained to the one before it, so if something edits or removes an entry after Ghostex wrote it, the page says "The security log was changed" and where. `ghostex security log` shows the same list in a terminal (`--last <n>`, `--json`) and exits with code 2 when the log was changed.
+
+Agents and the `ghostex` CLI can't change settings that only you may change (Remote, Accounts, keys and tokens), even through `ghostex actions`; the attempt is refused and logged. Easy Connect serves only SSH and Ghostex itself, never other ports. Private file links never open keys (such as `~/.ssh`), Ghostex's own data, or a project's hidden files like `.env`.
+
+After updating to 11.1, Ghostex shows a one-time notice: Ghostex went through a big security audit and every phone and computer now gets its own key, so each one pairs once. The notice lists your devices, one row each, with a status (Needs pairing, Waiting for you, Paired, Nothing to do); click one to pair it. A phone on Easy Connect: its page shows the Easy Connect code (scan it, or Copy Easy Connect code and paste it on the phone), then the phone's three words to approve. A phone that signs in over Tailscale, your network or SSH: open Ghostex on it, then approve its words. A computer on Easy Connect: on that computer open Settings > Remote > Easy Connect > Show QR > Copy Easy Connect code, paste it on the computer's page here, and approve it there when its words match. Computers you reach over SSH need nothing. Remind me later brings the notice back tomorrow (twice at most); Settings > Remote keeps a Pair again line until every device is done.
+
+## Approvals (sensitive changes need your Touch ID, Windows Hello or phone)
+
+Agents can only ask for changes that let someone in from outside or hand out access; only you can allow them. When an agent (or the `ghostex` CLI in a terminal) asks to turn on Easy Connect, open a port or let a new device in through it, change its relay, connect another computer for agents, let Autopilot answer permission prompts or change its limits, turn on GBots or add a bot, or change a setting that loosens security (the Sync page's, for example), the change waits and an "Approval needed" notice opens in the middle of the Ghostex window on your computer, saying who asked and on which computer, with Deny and Approve. Enter never approves; Escape, Close or the corner X put it aside, still waiting, behind an "Approvals waiting" pill in the work area header: click the pill (or wait for the next notice) to bring it back. When several wait, they show one at a time ("1 of 3"). Agents can message, start sessions in, type into, stop and answer the permission prompts of sessions in any project without asking, as can the `ghostex` CLI and agents on your connected computers (within what you let that computer do). Approve asks for Touch ID or your Mac password on macOS, Windows Hello on Windows, or your system password (polkit) on Linux; a plain click is never enough, because agents can click. On the phone, open the computer in Machines, then Approvals, and approve with Face ID, your fingerprint or the screen lock (the first time, approve adding the phone on the computer). When you make one of these changes yourself in Ghostex, including a Remote, Accounts, Secrets, Sync or Connectors setting in the Settings window, the same prompt shows right away, and nothing is saved if you cancel it. Adding, editing, hiding or removing a computer that this one connects to (Settings > Remote, Remote machines), saving its SSH password, and changing this computer's short name never ask: they let no one in. An approval is good for that one change only and lapses after 10 minutes unanswered (a connected computer's request waits a day, as one card whoever asks); a connected computer, once approved, stays connected for 30 days. Starting an agent with approvals off ("accept all") when your own setting for that agent doesn't asks every time. Starting a Cloud Box, letting Cloud Boxes use one of your agent logins, and changing what a project's boxes get ask when an agent does them, and so does connecting this computer to a team backend (the last step of `ghostex team deploy`).
+
+Some things only you can do, in Settings, and agents can't even ask for them: installing an extension or turning one on and giving it permissions (Settings > Extensions), adding, changing or removing a secret provider (Settings > Secrets), joining a team, making invites, the team's Linear keys and its Slack flow (Settings > Workspaces), and the settings that loosen security: Agent approvals accept all, Workspaces, Cloud Boxes' Start boxes from your phone, Trust project folders automatically, Connectors, the custom commands Ghostex runs (Custom Title Command, Global worktree command, Custom editor command), Paste protection and Bot automations. An agent asked to do one of these explains it and points you to the page. This includes the `ghostex` CLI in your own terminal, which Ghostex can't tell apart from an agent. Turning things off never asks. Every request, approval and denial is in Settings > Security's log. Each session now gets its own key to Ghostex that ends with the session, and the shared key file only gives agent-level access. The keys that approve are kept in macOS Keychain, Windows Credential Manager or the Linux Secret Service; on Windows and Linux other programs running as you can read those, so the protection there is weaker than on macOS. The CLI waits for your answer (`--no-wait` returns at once).
+
 ## Secrets (passwords, API keys and 1Password)
 
 When an agent needs a password, an API key or a token from you, it asks in a
@@ -4385,7 +5087,7 @@ one (a name and the 1Password account, such as my.1password.com) and removes
 one. It needs the 1Password CLI (`op`, from 1Password or `brew install
 1password-cli`) with "Integrate with 1Password CLI" turned on in 1Password's
 Developer settings; each account shows whether `op` is signed in to it.
-Ghostex keeps only the account name, never a key. With an account added you
+Ghostex keeps only the account name, never a key. Only you add, change or remove an account, here; agents and the CLI are refused. With an account added you
 can paste a 1Password reference (`op://vault/item/field`, from an item field's
 Copy Secret Reference) instead of a key: in a secret request card, and in the
 voice agent's xAI and OpenAI key fields, where the key is then read from
@@ -4393,12 +5095,19 @@ voice agent's xAI and OpenAI key fields, where the key is then read from
 read. "Check a reference" on the same page tries a reference and says only
 whether it worked.
 
+Only you answer a secret request, and only you can have Ghostex read a
+1Password reference: from Ghostex on your computer or your paired phone. An
+agent, a script using the token file, the browser version (`ghostex web`) and
+another computer's agents are refused, for the card, for "Check a reference"
+and for a reference pasted into a voice key.
+
 Settings page: Secrets (`ghostex settings open --tab secrets`). CLI:
 `ghostex secret request --label text --reason text`,
 `ghostex secret providers list`,
 `ghostex secret providers add --name Personal --account my.1password.com`,
-`ghostex secret providers remove <id>`,
-`ghostex secret providers check --provider <id> --reference op://vault/item/field`.
+`ghostex secret providers remove <id>` and
+`ghostex secret providers check --provider <id> --reference op://vault/item/field`
+(all three refused from the CLI: do them in Settings > Secrets).
 
 ## Notifications and status
 
@@ -4406,34 +5115,38 @@ Ghostex tells you when an agent needs you: a completion sound when a session
 finishes, an attention state on the session card, system notifications
 (macOS banners, Windows toasts, and Linux desktop notifications; clicking one on
 macOS or Windows opens the session), menu bar badges with running and done counts (click one to jump to the
-session), terminal bell detection, and push notifications on the mobile app.
+session), and terminal bell detection. The phone app has no push notifications
+yet: it plays the attention sound while it is open, and on Android an ongoing
+notification lists your sessions, but an iPhone with the app in the background
+or closed gets no alert.
 Claude progress updates do not trigger completion notifications while Claude
 reports background work still running. Completion notifications arrive when
 Claude finishes after that work completes; requests for your input or permission
 still get your attention.
 Pi, OMP and Amp sessions ring the same way: a finished turn marks the session
 done (for Pi and OMP after any automatic retry or queued follow-up), stopping it
-with Esc or a provider error does not, and a question or confirmation a Pi or OMP
-extension asks marks the session as waiting for you.
-While an agent has questions in its chat that you have not answered (question
-forms and question pages, from any turn), the session shows the pink question dot
+with Esc does not, a provider error shows as a Failed notification, and a
+question or confirmation a Pi or OMP extension asks marks the session as waiting
+for you.
+While an agent has questions in its chat that you have not answered (Ghostex
+forms and Ghostex pages with questions, from any turn), the session shows the pink question dot
 in the sidebar, the phone's session list and `ghostex sessions` ("answer
-requested"), also while the agent keeps working. A turn that asks new questions
-sends one notification, labelled Needs input with how many it asked. The dot stays
-while you look at the session and goes away once every question is answered (from
-the form, the page, Voice mode, or typed in the chat as "Q12: yes"), or the agent
-withdraws or asks them again.
+requested"), also while the agent keeps working. On the computer, a turn that
+asks new questions sends one notification, labelled Needs input with how many it
+asked. The dot stays while you look at the session and goes away once every
+question is answered (from the form, the page, Voice mode, or typed in the chat as
+"Q12: yes"), or the agent withdraws or asks them again.
 Voice mode can read these questions to you and answer them by their tag ("answer
 Q335 with the first option").
-A question form or question page you want to answer another time can be put off
+A Ghostex form or page you want to answer another time can be put off
 with For later on its card: it stops counting as unanswered (no pink dot, no count
 on the chat's ? pill, no notification) but stays answerable, and Back to
 unanswered on the card undoes it. Answering it ends For later by itself. The
 choice is kept by Ghostex, so the computer, the web page and the phone agree.
 The ? pill on the chat's working row opens Chat Resources, a list of the chat's
-generated content: question forms, HTML pages (with or without questions) and charts,
+generated content: Ghostex forms, Ghostex pages (with or without questions) and Ghostex visuals,
 each row marked by its icon. A small dropdown at the top right, on the header's
-line, picks what it shows: All, Html, Q&A or Charts, with their counts. Questions
+line, picks what it shows: All, Pages, Forms or Visuals, with their counts. Questions
 sit in folding sections (Unanswered, For later, Answered, Withdrawn), pages that
 ask nothing under Pages and charts under Charts, newest first, each with its
 title, tags and time; click a row to jump to it.
@@ -4452,11 +5165,13 @@ off by default. Enable it under Settings > Notifications > Sounds to also hear a
 short sound when copying from a terminal, a chat message, the chat composer
 (including its right-click Copy menu), a copy button, or a menu (`copySound`).
 
-The Notifications bell sits in the sidebar's top row, just before the sidebar
+On the computer, the Notifications bell sits in the sidebar's top row, just before the sidebar
 menu button, and shows how many notifications are unread; the badge turns red while a
 permission or approval request waits for your answer. Click it to open the Notifications
 panel: one row per session, newest first, saying whether the agent finished a
-turn or needs your input, with the last thing it said. Click a row to jump to
+turn, needs your input or failed, with the last thing it said. A Not sent row stays
+until you deal with it, so a session can also show a newer row next to it (for
+example Not sent and Failed). Click a row to jump to
 that session and mark it read; hover a row to dismiss it; the header has Next
 unread, Mark all read, and Clear all. Hover a header button to see its configured
 hotkey when one is available. Hotkeys: Cmd+I opens the panel,
@@ -4474,6 +5189,18 @@ Scripts and agent hooks can post their own rows with
 `ghostex notify --title <text> [--body <text>]`.
 A banked Claude or Codex usage reset that is about to expire shows as a red
 row; it opens that account's usage dropdown instead of a session.
+A Failed row (in the same red; an unread one turns the bell's badge red) means
+the agent's run ended on an error Ghostex can tell apart from a finished or
+stopped turn: Claude Code, OpenClaude, Empryo, Grok or Kimi reporting a failed
+turn, a Pi, OMP, Amp, Cursor or Mastra run that ended with an error, a Copilot
+error it could not recover from, a program reporting a failure, or automatic
+retry ending without success. A connection or server error that Ghostex retries
+by itself becomes a Failed row only once the quick retries have failed or
+retrying ends, and a usage limit, an agent that just exited, and stopping an
+agent with Esc or Stop never do. Codex errors that only show on its screen while
+Continue automatically is off, ZCode and agents with no failure signal are not
+covered, and nothing is sent while Ghostex waits for the network to come back or
+for something on the agent's screen to let a retry through.
 The bell also covers your remote computers: its count includes unread
 notifications from every connected remote computer, and with a remote computer
 in the sidebar the panel has All, This computer, and Remote tabs, each with its
@@ -4483,6 +5210,74 @@ or clearing it updates that computer's own list. Mark all read and Clear all act
 on the open tab, while Next unread goes through every computer. While a remote
 computer is offline its notifications are hidden and left out of the count, and
 the panel says so until it reconnects.
+
+In the phone app, tap the bell in the Sessions header (or its side bar) for
+**Notifications**: what needs you now on every enabled computer, one row per
+session. **Needs you** lists the sessions waiting for an approval, an answer or
+a reply, the longest wait first, and the bell's number counts only these; it
+reads like **3?** while it includes the last known state of a computer the
+phone cannot reach. **Done** lists finished sessions you have not opened since,
+**Failed** the ones that ended with an error or hold a message that was not
+sent, and account notices come last. A row names the agent, project and
+session, not the agent's message. Tap a row to open its session and mark its
+notifications read on its computer, except an error: that stays under Failed
+until the computer reports it fixed or you hold the row and choose **Mark as
+Done**. A question opens the chat at its question card when that session has
+Chat. A Done or Failed row reads **Ended** when its computer confirms the
+session has closed. Tap it for **Remove**, which takes it off this phone's list
+only, or **Restore** when the computer can restore it; Restore brings it back as
+a new session. The ⋯ menu has **Clear Done**, which marks the Done rows read on
+their computers. A computer that is offline keeps its last known rows;
+one that needs an update says so. iPhone and Android show the same list. On
+Android the ongoing notification lists your sessions in the same order (Needs
+you, then Done and Failed, then working ones), counts the ones that need you as
+the bell does, and tapping a row there opens the session as the list does.
+
+The iPhone's **Settings > Notifications** has a master Notifications switch,
+**Finished**, **Waiting for you** (questions too), **Ended with an error**, and
+**Attention notification sound**. The first answered iOS permission prompt
+turns the notification switches on if allowed and leaves them off if denied;
+after a denial, **Open iOS Settings** leads to the system controls.
+An alert names the agent and project, such as **Codex · My project**, with
+**Finished**, **Waiting for you**, **Has a question** or **Ended with an error**
+under it, never prompt, reply or session-title text. Stopping an agent yourself
+does not send an error alert, and the session you are looking at makes no alert
+or attention sound in the running app; it still shows in the bell while it
+needs you. Alerts and the attention sound share a limit of one per session every
+20 seconds and eight per minute. Without push, notifications arrive only while
+iOS lets Ghostex run, not once it pauses the app; opening the app shows in the
+bell what needs you, what finished and what failed, without a burst of old
+alerts.
+
+A computer that supports push and has accepted this iPhone can also notify
+while Ghostex is closed or paused, through the Expo Push Service. iOS decides
+when to deliver a push, so it can be late or missing. The same notification
+switches apply; an unreachable computer keeps its previous choices until it
+accepts them on a later connection, for example when you open Ghostex again.
+Tap an alert to open its session; a question goes to its question card when
+Chat is available.
+
+The iPhone's **Settings > Live Activity > Show Live Activity** controls one
+card on the Lock Screen and the counts in the Dynamic Island. It starts with
+Ghostex open while agents work or wait, lists waiting agents first, then working
+agents and briefly those that just finished, with their agent, project, state
+and time, not conversation text. Tap a row to open its session; a question
+opens at its question card. It ends 15 minutes after Ghostex first notices that
+no agent is working or waiting, or when you turn it off; while iOS keeps the app
+suspended, it ends the next time Ghostex runs. If a computer needs a newer
+Ghostex, the settings page names it and no Live Activity starts until it is
+updated. Updates arrive while the app is open, and can also arrive when iOS
+wakes it for a push; background updates are not guaranteed. Older content says
+**Not current** rather than claiming to be live.
+
+Add the **Ghostex** Home Screen widget with the iPhone's widget picker: small
+shows working and waiting counts and **Needs you** when an agent waits; medium
+adds up to three agents; large adds up to eight and the selected computer's
+Claude and Codex usage bars when available. StandBy uses the small widget.
+The widget shows the app's last saved update, with **Updated** and its time,
+not a continuous connection; opening Ghostex refreshes it, and a background
+wake for a push can refresh it too. It contains agent, project, state and time,
+never prompt, reply or session-title text. Tap the widget to open Ghostex.
 
 Ghostex combines two sources to know whether a session is working, waiting for
 you, or done, and there is no setting for it. Its own detection reads each
@@ -4494,7 +5289,12 @@ waiting for, its message and progress, and waiting or finished as soon as the
 program says so; when the two disagree the more urgent one wins, and running
 subagents still keep a session working. With the program's own status, working
 shows the orange dot, waiting for permission, an answer or a sign-in shows the blue
-dot, finished shows the blue dot until you look, and a failure shows a red dot.
+dot, finished shows the blue dot until you look, and a failure shows a red dot and
+a Failed notification. OMP's tool approvals and questions come from OMP's hooks the
+way Claude Code's do, not from its own status: each approval dialog OMP shows and
+each question notifies you once, an approval shows the red approval dot until you
+answer it, and the session shows working while the approved tool runs. An OMP
+session that was already running when Ghostex updated shows them after OMP restarts.
 An agent that goes from working back to idle also counts as finished, unless
 you stopped it with Escape or the chat's Stop button. Hover the session to read
 the program's one-line message (and its progress when it reports one); on the
@@ -4506,13 +5306,40 @@ belongs to once that notification exists.
 With Show debug UI controls on, the Program status mismatches log on the
 Debugging page records each time detection and a program's report disagree.
 
+Ghostex plays a sound and shows a notification (on the computer and, with push on,
+on the phone) only when something needs you. A coordinator's thread finishing its
+work never alerts: it reports to its coordinator. A coordinator alerts only when it
+needs you: it asks you something, ends with a 🛑 Blocked or ❓ Needs you section, or
+gets a red dot; a coordinator that just finished stays quiet. A red dot always
+alerts: an approval only you can grant, a session that is not moving, a session
+Ghostex could not restart, and a session that is blocked because every account is
+out of usage or it stopped on an API, sign-in or similar error Ghostex couldn't get
+past (hover the dot to read why). The exception is a red dot Ghostex is fixing
+itself: while Autopilot covers the session, a session that is not moving alerts only
+once Autopilot leaves it for you, and an approval it answers (Everything, with
+approvals on) never alerts; an automatic switch to an account with room or a quick
+retry that gets through never makes the session blocked at all. Other sessions
+still alert when they finish, as set by Alert me for. The Notifications bell keeps
+a row for every finished session; one that did not alert is already marked read.
+
+To hear and see alerts only when you are needed, set Alert me for under Settings >
+Notifications to Needs you only (`attentionAlertsFor`, `all` by default). The
+agent finished sound and the system notification then come only when an agent
+asks you something, waits for your permission or approval, shows a connector
+card, or ends its message with a 🛑 Blocked or ❓ Needs you section. The Notifications
+bell and the sidebar dots still show every finished session. The phone app has
+its own Alert me for under Settings > Notifications, with the same choices, for
+its attention sound and its Finished notifications. `ghostex sessions
+--json --full` shows `handoverNeedsYou` under `attention` for a finished turn
+that ended with Blocked or Needs you.
+
 A session's pane can also get a coloured outline when its agent finishes work or
 needs you, until you look at it: turn on Finished-work border under Settings >
 Notifications (off by default) and pick its colour from the swatch beside the
 switch (`showFinishedWorkBorder`, `finishedWorkBorderColor`).
 
 Related settings: `completionSound`, `actionCompletionSound`, `copySound`,
-`showMacOSAttentionNotifications`, `resetExpirySystemNotifications`,
+`showMacOSAttentionNotifications`, `attentionAlertsFor`, `resetExpirySystemNotifications`,
 `showFinishedWorkBorder`, `finishedWorkBorderColor`,
 `showNotificationOnTerminalBell` (Settings > Notifications),
 `notificationsTitlebarButtonHidden`.
@@ -4621,9 +5448,18 @@ Commits take only the staged changes; with nothing staged they take every
 change. List and Tree below the files switch between file names with their
 folder and a folder tree, and the choice is remembered. The Changes view (see
 Views) shows the same changes beside the chat with a commit bar of its own. Add Worktree on a project header creates a git
-worktree as its own project so a second agent works on a branch without
-touching the main checkout; worktrees can be renamed, merged back, and
-deleted from the sidebar. When a worktree's folder is deleted, the sessions that
+worktree so a second agent works on a branch without touching the main
+checkout. Its sessions run in the worktree's folder (Files, Changes, Commit and
+the diff counts use the worktree, and several sessions can share one worktree),
+and the Project sidebar lists them among the project's own sessions, each with
+the worktree's branch after its title. Right-click such a session for Rename
+Worktree and Delete Worktree, or use the project's ⋯ menu, whose Delete
+Worktree lists the project's worktrees. To give each worktree its own entry
+under its project instead, turn off Settings > Sidebar & Sessions > Advanced >
+Worktree sessions show in their project (`worktreeSessionsInProject`, on by
+default); the phone follows it, and nothing is lost either way. The Unified
+sidebar always lists worktree sessions under their repository. Worktrees can be
+renamed, merged back, and deleted from the sidebar. When a worktree's folder is deleted, the sessions that
 worked in it continue in the project's folder with the same conversation, so a
 finished session or thread still opens and can be messaged.
 
@@ -4642,7 +5478,7 @@ base branch you pick in the last part, the project's current branch first),
 **Cloud Box** (once Cloud Boxes is set up). With This folder the last part just
 shows the folder's branch. With a worktree picked, sending the first message
 creates it (Add Worktree's folder and setup command) and starts the chat there;
-the sidebar shows the worktree under its project with the chat inside. The
+the sidebar shows the chat under its project, with the worktree's branch on its row. The
 branch is named for you from the message: `spx-123-fix-copy-link` when it names
 a ticket, issue or PR (`SPX-123`, `#123`, `owner/repo#123` or their links, using
 the title when Ghostex already knows it), else its first words. If the worktree
@@ -4766,7 +5602,10 @@ a quoted (`>`) line or a fenced block counts for nothing, neither link nor
 suggestion. A ticket linked that way before 2026-10-27 left the list unless you
 pinned it (or comes back under Suggested when the agent's own reply named it). An
 agent adds one it works on with `ghostex link add <url|#123|ABC-123>` from its own
-terminal. A PR or issue link of the project's own repos that you or the session's
+terminal. A coordinator links (and unlinks) its threads on another computer the same
+way, `ghostex link add <url> --session <thread's ref>`, but only threads it started there
+itself; no other session can change links on another computer. A PR or issue link of the
+project's own repos that you or the session's
 agent only wrote in the chat is offered under Suggested too. A coordinator's own
 replies suggest nothing (they mostly repeat its threads' reports); there only the PR
 and issue links you write yourself are suggested. Suggested shows the five
@@ -4879,8 +5718,11 @@ Convex CLI login (`npx convex login`) to create the project, deploy Ghostex's
 functions and make them the team's owner; it prints the Slack and Linear webhook
 URLs, and the Slack signing secret and Linear webhook secret go into the Convex
 project's environment variables (`SLACK_SIGNING_SECRET`, `LINEAR_WEBHOOK_SECRET`).
-`ghostex team invite` makes a one-time invite link (valid for a week), and each
-teammate runs `ghostex team join <link>`. So that a Slack request reaches you, link
+Its last step connects this workspace to the new project and asks for your
+approval (Touch ID or your phone) first. Settings > Workspaces makes a one-time
+invite link (valid for a week), and each teammate joins with it there; joining,
+invites, the team's Linear keys and its Slack flow are done only in Settings, not
+by agents or the CLI. So that a Slack request reaches you, link
 your Slack user once: send @Ghostex any message in Slack, and its private reply
 gives the exact command, `ghostex team identity --slack-user U012ABC --slack-code
 gxl_…`, with a one-time code that works for 30 minutes (Ghostex needs it to know
@@ -4922,27 +5764,25 @@ for the result). Setup: create the Slack app from `ghostex team slack-manifest`
 (an app made from an older manifest needs the `channels:read` and `groups:read`
 scopes added and the app reinstalled before the Issues view can show channel names),
 store its token and signing secret with `ghostex team slack-connect` (read from
-stdin, on the computer that deployed the team), then set the flow with `ghostex team flow set
---working-channel <channel ID> --watch-only <IDs> --default-run cloud|local
---linear-team <KEY> --qc-owner <Slack member ID> --instructions-file <path>` and
-map each channel to its repo with `ghostex team flow map <channel ID> --repo
-owner/name` (add `--linear-project <name>` to put the tickets Ghostex creates from
-that channel into a Linear project). The team instructions file is added to every session started from
-Slack. Settings > Workspaces has all of this too: the **Slack** row's **Copy app
-manifest**, whether the bot token and signing secret are stored (with the
-`slack-connect` command to copy), and the workspace's **Team flow** section for the
-working channel, watch-only channels, repos for new work, where new work runs, the
-default Linear team and the team instructions. **Never work without a ticket** is
+stdin, on the computer that deployed the team), then set the flow in Settings >
+Workspaces: the **Slack** row's **Copy app manifest**, whether the bot token and
+signing secret are stored (with the `slack-connect` command to copy), and the
+workspace's **Team flow** section for the working channel, watch-only channels,
+repos for new work (and a Linear project for the tickets each channel's work
+creates), where new work runs, the default Linear team and the team instructions.
+Only you change the flow there; `ghostex team flow show` reads it, and agents and
+the CLI can't change it. The team instructions are added to every session started
+from Slack. **Never work without a ticket** is
 always on. Only the team's owners can change the team flow; members see it
 read-only.
 
 Slack commands find and create Linear tickets with the team's Linear key. Only the
 team's owners set it: paste it in **Linear for the team** under the Work workspace
-in Settings > Workspaces (members see whether it is set and who set it), or run
-`ghostex team linear-connect` and paste it (`--remove` removes it). Tickets created
+in Settings > Workspaces (members see whether it is set and who set it); agents and
+the CLI can't set it. Tickets created
 with it show the key's owner as their creator in Linear. To be the creator of the
 tickets you request from Slack yourself, turn on **Create my Slack tickets with my
-own Linear key** (or `ghostex team own-linear-key on`): Ghostex stores the
+own Linear key** there: Ghostex stores the
 workspace's own Linear key (its **Linear API key** row) in the team's Convex project
 for you, keeps it up to date when you change that key, and removes it when you turn
 the switch off or leave the team; everything else still uses the team's key. The
@@ -4958,8 +5798,8 @@ docs directory), Settings > Projects > Linear API key, `hideProjectHeaderDiffSta
 status|linear-key|source|tracker|create-ticket|start|cleanup` (old name `ghostex
 work-mode`; `create-ticket` and `start` take `--source <ticket command ID>`),
 `ghostex link-session`. Team
-backend: `ghostex team deploy|join|invite|identity|status|ping|leave`. Slack:
-`ghostex team flow|slack-manifest|slack-connect|linear-connect|own-linear-key`,
+backend: `ghostex team deploy|identity|status|ping|leave`. Slack:
+`ghostex team flow show|slack-manifest|slack-connect`,
 `ghostex slack post`.
 
 ## Extensions, Open In, and integrations
@@ -5086,8 +5926,13 @@ backend: `ghostex team deploy|join|invite|identity|status|ping|leave`. Slack:
   `lazygit`): when it is missing, opening the extension says so, and on a Mac with
   Homebrew its **Install with Homebrew** button runs `brew install <command>` in a
   new terminal; open the extension again once it finishes. Terminal-pane extensions
-  run only for local projects. CLI: `ghostex extensions list`, `ghostex extensions
-  install <id>`, `ghostex extensions state <id> --set pinned=true`.
+  run only for local projects. Only you install extensions, in Settings >
+  Extensions, which shows what each one may do first; agents and the CLI can't
+  install one, turn one on or give it a permission. To install one you made or downloaded
+  yourself, use **Install from folder…** at the top of Get more: pick its folder,
+  then tick each permission you give it (nothing is ticked at first; it gets nothing
+  you leave unticked) and Install. CLI: `ghostex extensions list`,
+  `ghostex extensions state <id> --set pinned=true`.
 - **Claude** is a built-in extension, off by default: turn it on with its switch
   in Settings > Extensions (Features) to use claude.ai inside Ghostex.
   It adds a Claude button (grey, like its neighbours) to the sidebar's top row, next to the Issues button.
@@ -5162,6 +6007,9 @@ backend: `ghostex team deploy|join|invite|identity|status|ping|leave`. Slack:
   installs Trycua's cua-driver skill (`cua-driver skills install`), which
   teaches agents the driver's own commands and which both Ghostex skills read
   first; if that skill is missing, the row shows an Install skill button.
+  If cua.ai does not answer on your network (Mac, Linux or Windows), the installer (and the update and
+  uninstaller) is fetched from Trycua's GitHub repository instead, with no
+  action needed; the driver itself always downloads from GitHub releases.
   Once it is installed, its
   row shows an update button when a newer release is out (on a Mac), or a
   check mark when it is up to date (click it to check again), a reinstall
@@ -5212,8 +6060,11 @@ backend: `ghostex team deploy|join|invite|identity|status|ping|leave`. Slack:
   Commands: `ghostex spaceo install-skill`, `spaceo doctor`.
 - Settings > Integrations > Tools lists the tools Ghostex can install for you
   when something you set up needs them: Node.js and npm, uv, Homebrew (Mac),
-  System tools (curl, certificates, unzip and git on Linux), Beads, and the
-  GitHub and GitLab CLIs. Each Install button installs with one click and its
+  System tools (curl, certificates, unzip and git on Linux), Beads, the
+  GitHub and GitLab CLIs, and Hex (the dictation app Dictate's Hex engine uses:
+  on a Mac Ghostex downloads Hex.app from Hex's release service, checks its
+  checksum and Hex's code signature and puts it in Applications, replacing an
+  older Hex there; on Linux and Windows it runs Hex's own installer). Each Install button installs with one click and its
   tooltip says exactly how. When you already have a tool (for example Node.js
   from nvm or Homebrew), Ghostex uses yours and shows it as installed by you;
   otherwise it downloads the official release, checks its checksum and keeps
@@ -5403,18 +6254,38 @@ list, with a count beside it) shows everything this computer uses that Ghostex
 can update, as a grid of cards: Ghostex itself, your remote machines' Ghostex,
 the agent CLIs you have turned on or used in the last week, Claude Swap and
 Codex Swap, Fast Computer & Browser Use (cua-driver) and SpaceO, the tools
-Ghostex installed (Node, uv and the like), your extensions, the VS Code view's
+Ghostex installed (Node, uv and the like), Hex when it is installed or Dictate
+is set to use it (with Install when it is missing; Hex installs or updates only
+when you click, never by itself), your extensions, the VS Code view's
 code-server while that view is on, and the Chromium runtime (CEF). Each card
 shows the installed and newest versions, one word for its state (Failed,
 Needs you, Updating, Major), what the update does (for example "4 sessions
 restart on it when idle") and an Update button; a failed update keeps its error
-on the card with Retry, and an update Ghostex can't finish for you (an
+on the card with Retry and Dismiss, and an update Ghostex can't finish for you (an
 extension asking for new permissions) says Needs you with Review…, which opens
 the page where you approve it. Everything already current, and the agents
 whose version Ghostex can't read (such as Cursor, with Run its updater), sit in
 one Up to date card below. The filter at the top shows only Ghostex, Agents,
 Tools or Extensions. Check now reads every version again (otherwise every half
 hour).
+
+**Every connected computer.** With remote machines connected, the page is
+grouped by computer: this computer first, then each remote machine (headless
+Linux boxes too), each with its own cards, Up to date pills and Not installed
+part, and that machine's Ghostex at the top of its group. Update, Retry,
+Dismiss and Update automatically on another computer's card run on that
+computer. A computer that isn't connected shows "Offline"; one whose Ghostex is
+too old to list its updates shows "Update Ghostex on <name> to see its
+updates" (update its Ghostex from its card or Settings > Remote, then its list
+appears).
+
+**Not installed.** Under each computer's updates, a quieter Not installed part
+lists the agent CLIs, Claude Swap or Codex Swap and the tools Ghostex can
+install there but that aren't installed yet. Click one to install it on that
+computer, the same way Settings > Agents, Accounts or Integrations > Tools would
+(an agent CLI with the first install method that works there). Nothing in Not
+installed ever installs by itself or through Update all, and it is never counted
+in the ↑ button. A failed install stays in the list with its reason and Retry.
 
 **Update all** runs every update the page lists, each the way its own Settings
 row does (an agent CLI the way it was installed, Claude Swap through uv or
@@ -5436,13 +6307,23 @@ many updates need you: Ghostex, the agents you use, Claude Swap, Codex Swap,
 Fast Computer & Browser Use and SpaceO when installed, the VS Code view when it
 is on, the Chromium runtime, and anything whose update failed. Click it for a
 short list with **Update all** and **Open Updates…**; other updates (tools,
-extensions, remote machines) are counted only on the page.
+extensions, remote machines) are counted only on the page. The count includes
+every connected computer's updates; an item from another computer names it
+("Claude Code · Linux box"). Click an item in the
+list to update it (or Retry a failed one); the list stays open and the item
+shows a spinner while it updates, and the ↑ button shows a spinner while any
+update runs. When an update fails the button turns red and stays red until you
+dismiss the failure: the item shows a red icon (point at it to see why it
+failed) and an × that dismisses it. Dismiss on the item's card in Settings >
+Updates does the same; a dismissed failure stays hidden in every window until
+that item's next update. An item only the page can finish (Needs you) opens
+Settings > Updates.
 
 ## Appearance and app
 
 Theme colours, colourfulness, the work area frame, window glass, and active pane outline live on the
 Interface page in Settings, right below General (`ghostex settings open --tab theme`).
-It has Text, Interface scale, Colours and Transparency sections, with Advanced controls and links
+It has Text, Interface scale, Presets, Colours and Transparency sections, with Advanced controls and links
 to related settings on General; a search for a row inside More opens it.
 Text: App font lists the fonts installed on this computer, with a search field and
 each name drawn in its own font; monospaced fonts sit at the end of the list. The
@@ -5466,7 +6347,33 @@ size Scale gave it, Scale no longer applies, and the keys change only the area y
 are in (in a terminal, only that terminal until it restarts). If you had changed one
 of those sizes before Interface scale existed, the switch starts on, so nothing
 changes size. The Terminal page's Font size row links here.
-Settings: `interfaceScalePercent`, `interfaceScaleAreasSeparately`, `agentManagerZoomPercent`, `sessionChatZoomPercent`, `filesZoomPercent`, `terminalFontSize`.
+On Linux, the whole app first takes its size from your desktop's display scale
+(GNOME, KDE, Hyprland and COSMIC included), so the header, menus, dialogs and web
+pages match your other apps, and Interface scale applies on top. Display scale,
+under Scale areas separately (Linux only), shows the scale Ghostex found and lets
+you pick a fixed one from 100% to 300% if it gets it wrong; it takes effect when
+Ghostex restarts. The first time Ghostex finds a display scale above 100% on
+COSMIC while Interface scale is raised, it offers once to set Interface scale back
+to 100%.
+Settings: `interfaceScalePercent`, `interfaceScaleAreasSeparately`, `linuxDisplayScale`, `agentManagerZoomPercent`, `sessionChatZoomPercent`, `filesZoomPercent`, `terminalFontSize`.
+Presets, right above Colours, are twenty theme cards in one row that scrolls
+sideways (swipe sideways, hold Shift and turn the wheel, or drag with a finger); a
+thin line separates families: Catppuccin (Mocha, Macchiato, Frappé, Latte), Dracula
+and Alucard, Solarized, Tokyo Night (Night, Storm, Moon, Day), Nord, Kanagawa (Wave,
+Dragon, Lotus), Everforest, and Gruvbox (Material); a moon or sun marks dark and
+light ones, and the picked card is brought into view when the page opens. Use Tab or Shift+Tab to focus a card, then Enter or Space to
+choose it. Clicking one or choosing it with the keyboard makes Ghostex look like
+that theme in one step: it switches Appearance to the preset's mode, sets that mode's colour to a custom colour
+and Colourfulness to Full so the work area, chat and terminals show the theme's own
+background, picks the theme's terminal palette, and sets Terminal background to
+Follow theme. The same family's preset for the other mode comes along: a light preset
+always brings its dark partner, a dark preset brings its light partner unless you
+picked a light colour yourself since opening Settings (Nord has no light partner).
+Chat theme, Terminal theme, transparency, fonts and text strength stay as they are,
+and every value stays editable afterwards; a card shows as picked while the settings
+still match it. Solarized Dark's work area is a shade redder than the theme's
+#002b36, the nearest the dark work area can draw. The palettes come from the themes'
+own projects (licences in the app's third-party notices).
 Colours: Appearance, three preview cards (System, Light, or Dark; System is the
 default and follows the operating system appearance); Dark mode colour and Light
 mode colour, each a row of sixteen small colour squares (Graphite, the default,
@@ -5478,20 +6385,22 @@ custom colour, which opens a colour picker (with HEX, R, G and B boxes) right at
 the square; and Colourfulness, a fine-grained slider from Subtle to Full (Soft is the default;
 the name of the nearest of Subtle, Soft, Balanced, Rich, Vivid and Full shows beside it)
 that sets how much of the colour shows in the sidebar and work area at once, with a small
-sidebar and work area preview. Past Vivid, dark mode fades toward the colour you picked
+sidebar and work area preview. Past Vivid, the colour fades toward the colour you picked
 itself and is exactly that colour at Full, so a flat theme such as Monokai Pro Machine
-(#273136) can colour the whole window; a colour too light for the sidebar's text is
-deepened just enough to stay readable, and light mode stays at Vivid past that point. Colourfulness also sets how deep a custom colour
+(#273136) can colour the whole window; in dark mode a colour too light for the
+sidebar's text is deepened just enough to stay readable, and in light mode a colour too
+dark for the dark text is lightened just enough. Colourfulness also sets how deep a custom colour
 is; it has no control of its own. More colour options can set the sidebar and
 work area colourfulness separately, and show the active pane outline and its
 colour.
-A preset never overwrites the custom values, so picking the + square again
-restores them.
-Frame the work area (macOS, off by default) shows the work area as a card inside the
+Picking a colour square never overwrites the custom values, so picking the + square again
+restores them (a theme preset does set them).
+Frame the work area (macOS; in the page's Advanced section; on by default for a new install, while a computer that already had settings keeps its choice) shows the work area as a card inside the
 window: a thin margin all around it, a hairline border and, without window glass, a light
 shadow. It stays on with the sidebar hidden and in full screen, web pages in the work area
 follow the card's rounded corners, and the sidebar is at least 196pt wide while it is on.
 Off keeps the work area edge to edge (`workAreaFrame`).
+Under it, Show the window buttons when the sidebar is collapsed (macOS, on by default) keeps the red, yellow and green window buttons in the window's top left while the sidebar is collapsed; off hides them until you open the floating sidebar, which then carries them in its top row (`showWindowButtonsWhenSidebarCollapsed`). Full screen keeps its own title bar either way.
 The chosen theme colors the
 sidebar and window chrome, the sidebar's dropdown menus, and the chat view
 background (chat keeps following its own Chat theme setting, so a light chat in a
@@ -5502,6 +6411,28 @@ saved themes are preserved, and a saved dark contrast or tint that differs from
 the default starts on the custom colour. The accent color (status highlights,
 accent text, advanced-setting markers) has no setting of its own: it follows the
 dark theme's tint hue, and a neutral tint keeps the sky-blue accent.
+
+On the phone, **Settings > Interface > Presets** offers the Catppuccin,
+Dracula, Solarized, Tokyo Night, Nord, Kanagawa, Everforest and Gruvbox Material
+families. Tapping a preset sets the app colours, colourfulness, terminal
+palette and terminal background together; you can change each afterwards.
+**Colours** has Appearance (System, Light, Dark), Dark mode colour, Light mode
+colour and Colourfulness from Subtle to Full; **Set the sidebar and work area
+separately** gives each its own slider, and a custom colour uses a hex field.
+**Chat theme** and **Terminal theme** can Follow app, System, Light or Dark
+independently. **Terminal palette in dark mode** and **Terminal palette in
+light mode** open searchable lists. **Settings > Terminal > Terminal
+background** chooses Black / white, Follow theme or Custom color.
+
+On the phone, **Settings > Interface > Import Ghostty theme** opens a local
+file to add a private terminal palette, not an app theme. The file needs
+background and foreground colours and all sixteen palette entries, using
+six-digit RGB hex colours; other Ghostty settings are not imported. After
+**Palette imported**, choose it in Terminal palette in dark mode or Terminal
+palette in light mode: importing does not select it or replace your current
+colours. An unreadable or invalid file says why and leaves the palettes as they
+were.
+
 Window glass lets the blurred desktop show through the sidebar, the work area,
 terminals, and chat on macOS, Windows and Linux. On macOS and Windows, menus and most dialogs (Rename
 Session, Quick Access and the like) turn frosted to match. The Transparency group's Transparency
@@ -5535,7 +6466,7 @@ in Windows Settings > Personalization > Colors, always makes the window opaque. 
 transparency on or off, or changing any of its choices, applies to every open Ghostex
 window at once, without restarting. On Windows the corners of menus and pop-ups follow
 Windows' own rounding.
-Behind the glass (on macOS, Windows and Linux) is four cards: Desktop and windows (the default) shows everything behind Ghostex. Wallpaper only shows just your desktop wallpaper, so other windows never show through; built-in wallpapers such as Sequoia show as a still picture of that wallpaper, and a solid color wallpaper shows everything behind the window. Picture shows a picture you choose instead, one for dark mode and one for light mode, side by side with Choose and Clear buttons; a mode with no picture shows everything behind the window. Live shows something moving behind the glass, chosen for dark mode and for light mode (only dark mode with Transparency set to Dark only): one of eight calm animations drawn in your theme's colours (Aurora, Ink, Drift, Nebula, Silk, Bokeh, Waves, Mesh), so switching themes or Colourfulness recolours it at once, or, on macOS and Linux, Your video, a .mov, .mp4 or .m4v file you choose, which plays muted, looping and blurred (a mode set to Your video with no file shows everything behind the window). On Windows, Live pauses when Show animations is off in Windows Settings > Accessibility > Visual effects (showing a still frame) and in battery saver. Speed sets how fast the animation moves (a quarter of its pace to twice as fast) and Brightness how bright it glows (60% by default, a soft glow that shows through the tints; every animation is about as bright as the others at the same setting); your own video plays as it is. An animation loops every two minutes without a seam, and changing the animation, theme or brightness, or switching between an animation and your video, fades rather than jumping. Nothing is downloaded. Live pauses whenever Ghostex is in the background, hidden or minimized, while the display sleeps and in Low Power Mode; Reduce Motion shows a still frame; and Play only when plugged in (on by default) pauses it on battery. For Wallpaper, Picture and Your video, Picture position picks Moves with the window (the default: the picture covers the window and moves with it) or Stays with the desktop (the picture stays put while the window moves over it, and can trail the window while you drag it) (`windowGlassSource`, `windowGlassImagePlacement`, `windowGlassImageDark`, `windowGlassImageLight`, `windowGlassLiveStyleDark`, `windowGlassLiveStyleLight`, `windowGlassVideoDark`, `windowGlassVideoLight`, `windowGlassLiveSpeed`, `windowGlassLiveBrightness`, `windowGlassVideoOnlyOnPower`).
+Behind the glass (on macOS, Windows and Linux) is four cards: Desktop and windows (the default) shows everything behind Ghostex; on macOS, in full screen (where nothing sits behind the window) it shows your desktop wallpaper blurred and tinted the same way, and leaving full screen shows everything behind Ghostex again (a solid color wallpaper stays black in full screen). Wallpaper only shows just your desktop wallpaper, so other windows never show through; built-in wallpapers such as Sequoia show as a still picture of that wallpaper, and a solid color wallpaper shows everything behind the window. Picture shows a picture you choose instead, one for dark mode and one for light mode, side by side with Choose and Clear buttons; a mode with no picture shows everything behind the window. Live shows something moving behind the glass, chosen for dark mode and for light mode (only dark mode with Transparency set to Dark only): one of eight calm animations drawn in your theme's colours (Aurora, Ink, Drift, Nebula, Silk, Bokeh, Waves, Mesh), so switching themes or Colourfulness recolours it at once, or, on macOS and Linux, Your video, a .mov, .mp4 or .m4v file you choose, which plays muted, looping and blurred (a mode set to Your video with no file shows everything behind the window). On Windows, Live pauses when Show animations is off in Windows Settings > Accessibility > Visual effects (showing a still frame) and in battery saver. Speed sets how fast the animation moves (a quarter of its pace to twice as fast) and Brightness how bright it glows (60% by default, a soft glow that shows through the tints; every animation is about as bright as the others at the same setting); your own video plays as it is. An animation loops every two minutes without a seam, and changing the animation, theme or brightness, or switching between an animation and your video, fades rather than jumping. Nothing is downloaded. Live pauses whenever Ghostex is in the background, hidden or minimized, while the display sleeps and in Low Power Mode; Reduce Motion shows a still frame; and Play only when plugged in (on by default) pauses it on battery. For Wallpaper, Picture and Your video, Picture position picks Moves with the window (the default: the picture covers the window and moves with it) or Stays with the desktop (the picture stays put while the window moves over it, and can trail the window while you drag it) (`windowGlassSource`, `windowGlassImagePlacement`, `windowGlassImageDark`, `windowGlassImageLight`, `windowGlassLiveStyleDark`, `windowGlassLiveStyleLight`, `windowGlassVideoDark`, `windowGlassVideoLight`, `windowGlassLiveSpeed`, `windowGlassLiveBrightness`, `windowGlassVideoOnlyOnPower`).
 On Linux, transparency works on Xorg and Wayland desktops (the desktop app currently uses XWayland for its embedded pages). Desktop and windows uses your compositor's blur: on Hyprland, keep background blur enabled; on Xorg, run a compositor with transparency and blur support. The compositor controls the blur's strength. Picture and Live animations work without compositor blur. Wallpaper only reads the picture reported by Hyprpaper, swww/awww, GNOME, Cinnamon, MATE or a single-screen Plasma desktop; when no readable picture is available it shows Desktop and windows. Stays with the desktop works on X11 and Hyprland; other native Wayland compositors cannot report the position needed for this mode, so use Moves with the window. Your video requires FFmpeg (included as a Linux package dependency). Live respects battery power, the power-saver profile, and disabled desktop animations (`windowGlass`, `windowGlassSource`, `windowGlassImagePlacement`, `windowGlassVideoOnlyOnPower`).
 While glass is on, four sliders tune it, each in dark mode and in light mode: Sidebar tint and Work area tint set how much of the desktop each area hides, independently, so either can be the darker one; lower shows more of your desktop.
 Keep Awake (Power)
@@ -5599,7 +6530,7 @@ is listening on 127.0.0.1:…"; stop that program, then start Ghostex again.
 Ghostex deletes old files it made by itself, once a day, so its data folders do not keep
 growing. It removes screenshots agents saved more than 60 days ago (folders named
 `release-*` or `youtube-*` are kept, and images you pasted into chats or board cards are
-never removed), published chat pages after 90 days, log files nothing has written for
+never removed), published Ghostex pages after 90 days, log files nothing has written for
 14 days, crash reports after 30 days, backups taken before a data migration after 30 days,
 Ghostex's copies of compressed Codex chats nobody opened for 30 days (opening the chat
 again rebuilds its copy), and closed sessions idle for 90 days from the closed sessions
@@ -5693,7 +6624,8 @@ Report in Send Bug / Feedback.
 - "Match the terminal width to the chat": `ghostex settings set
 terminalViewWidthMode match-chat`.
 - "How do I annotate a Browser page or Markdown file": Browser pages use
-  Agentation in the Browser toolbar (see Views, Browser). Markdown files use
+  Agentation in the Browser toolbar (see Views, Browser); Send attaches a
+  picture of each annotated spot. Markdown files use
   Files: select text to comment or mark Looks good, Clarify, or Needs tests,
   then Send to the last-clicked session (see Views, Files).
 - "Update everything" or "update my agents": Settings > Updates has Update all
@@ -5701,6 +6633,10 @@ terminalViewWidthMode match-chat`.
   `ghostex agent-cli update <agent-id>`.
 - "Use Ghostex from my phone or another computer": see Remote machines, web,
   and mobile, then `ghostex settings open --tab remote`.
+- "Have my coordinator run work on my other computer": connect that computer
+  (Settings > Remote > Remote machines, Agent access on), then tell the
+  coordinator "run this on <computer name>"; see Coordinators, Threads on
+  another computer.
 - "Run an agent on a schedule": see Automations; open the Automate view or
   drive `ghostex automation-save`.
 - "Play a sound and notify me when an agent finishes": `completionSound`
@@ -5709,3 +6645,4 @@ terminalViewWidthMode match-chat`.
   sidebar bell (kept visible with `notificationsTitlebarButtonHidden false`)
   lists every finished turn with what the agent said.
 - "What does the Kanban board do": see Project board (Kanban).
+- "Does a coordinator use the Kanban board?": not on its own. A coordinator's Board pill is its own list of work (see Coordinators, The coordinator's board); the Kanban view is the Beads board in the repository (Project board (Kanban)). Tell the coordinator "use the Kanban board (Beads) to manage the work" (with the Ghostex Project Board Beads skill installed) or "work the high-priority beads on the board" and it keeps tasks as cards and starts a thread per card. Docs: ghostex.dev/docs/workflows/orchestrators.

@@ -64,19 +64,28 @@ pub(crate) fn with_project_cli_env(
     let Some(family) = family.filter(|family| matches!(*family, "claude" | "codex")) else {
         return command.to_string();
     };
-    let paths = get_gxserver_paths(None);
-    if !super::super::connectors_enabled(&paths) {
+    let env = project_cli_env(db, project);
+    if env.is_empty() {
         return command.to_string();
+    }
+    with_env(family, &env, command)
+}
+
+/// The variables that hand an agent in `project` its workspace's `gh` and `gws` sign-ins; none
+/// while Connectors is off.
+fn project_cli_env(db: &rusqlite::Connection, project: &Value) -> Vec<(String, String)> {
+    let paths = get_gxserver_paths(None);
+    // A GBot that only reads the user's apps gets no sign-in it could write with.
+    if !super::super::connectors_enabled(&paths)
+        || crate::gbots::project_reads_apps_only(db, project)
+    {
+        return Vec::new();
     }
     // Listing projects reads no server-specific field, so no server id is needed here.
     let repository = crate::domain::DomainRepository::new(db, "");
     let workspace = project_workspace(db, &repository, project)
         .unwrap_or_else(|_| DEFAULT_WORKSPACE_ID.to_string());
-    let env = session_env(&paths, &workspace);
-    if env.is_empty() {
-        return command.to_string();
-    }
-    with_env(family, &env, command)
+    session_env(&paths, &workspace)
 }
 
 /// The same for a resume, which has no database open.

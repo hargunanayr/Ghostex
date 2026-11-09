@@ -7,7 +7,11 @@
 //! (Sidebar Tags with the New tag form, from the sidebar's New tag deep link), `hotkeys` (the
 //! Hotkeys entry point), `marked-preview` (the Marked sections style Preview dialog open). Saves are
 //! applied back to the modal the way the app rehydrates it.
+//! `dictation`, `dictation-retired`, `dictation-openai` and `voice-agent` are Settings › Dictation and
+//! Voice Agent (settings_voice.rs).
 //! `GHOSTEX_NATIVE_MODAL_DEMO_GLASS=1` previews the frosted palette.
+//! `GHOSTEX_NATIVE_MODAL_DEMO_SETTINGS_WIDTH=<points>` opens the dialog narrower or wider than its
+//! base 900 (before the app's enlargement), to check a page at another window width.
 //! `GHOSTEX_NATIVE_MODAL_DEMO_SETTINGS='{"actionsHidden":false}'` merges saved settings over the
 //! state's (a built-in extension switched on or off, for example).
 use super::settings_modal::model::SettingsModalHost;
@@ -33,6 +37,8 @@ mod settings_secrets;
 mod settings_sync;
 #[path = "settings_updates.rs"]
 mod settings_updates;
+#[path = "settings_voice.rs"]
+mod settings_voice;
 #[path = "settings_workspaces.rs"]
 mod settings_workspaces;
 
@@ -168,10 +174,28 @@ pub(super) fn open(demo: &super::DemoEnv, cx: &mut App) {
                 for payload in settings_updates::answers(&host_state, &message) {
                     deliver(&host_slot, payload, cx);
                 }
+                for (delay, payload) in settings_voice::script(&host_state, &message) {
+                    if delay == 0 {
+                        deliver(&host_slot, payload, cx);
+                        continue;
+                    }
+                    let slot = host_slot.clone();
+                    cx.spawn(async move |cx| {
+                        cx.background_executor()
+                            .timer(std::time::Duration::from_millis(delay))
+                            .await;
+                        let _ = cx.update(|cx| deliver(&slot, payload, cx));
+                    })
+                    .detach();
+                }
             }
             // The system colour panel belongs to the app host (settings_modal_lifecycle.rs).
             SettingsModalCommand::PickSystemColor { key, initial } => {
                 eprintln!("system colour panel: {key} from {initial}")
+            }
+            SettingsModalCommand::ApproveRequest { id, reply } => {
+                eprintln!("approve request {id} (Touch ID in the app)");
+                cx.defer(move |cx| reply(Ok(serde_json::json!({ "approved": true })), cx));
             }
             SettingsModalCommand::GxserverRpc {
                 path,
@@ -186,6 +210,12 @@ pub(super) fn open(demo: &super::DemoEnv, cx: &mut App) {
                 }
                 if settings_sync::owns(&host_state) {
                     let result = settings_sync::rpc(&path, &params);
+                    cx.defer(move |cx| reply(result, cx));
+                    return;
+                }
+                if settings_voice::owns(&host_state)
+                    && let Some(result) = settings_voice::rpc(&host_state, &path, &params)
+                {
                     cx.defer(move |cx| reply(result, cx));
                     return;
                 }
@@ -253,6 +283,10 @@ pub(super) fn open(demo: &super::DemoEnv, cx: &mut App) {
             json!({ "initialSearchQuery": if query.is_empty() { "font".to_string() } else { query } })
         }
         "search-other" => json!({ "initialSearchQuery": "tailscale" }),
+        // `orchestrator-playbook…-row`: searched for, so the Playbook overrides row shows.
+        state if state.starts_with("orchestrator-playbook") && state.ends_with("-row") => {
+            json!({ "initialSearchQuery": "playbook" })
+        }
         state if state.starts_with("orchestrator-playbook") => {
             json!({ "initialSection": "chat" })
         }
@@ -267,6 +301,7 @@ pub(super) fn open(demo: &super::DemoEnv, cx: &mut App) {
             .or_else(|| settings_sync::open_message(&state))
             .or_else(|| settings_cloud_boxes::open_message(&state))
             .or_else(|| settings_secrets::open_message(&state))
+            .or_else(|| settings_voice::open_message(&state))
             .or_else(|| settings_f2::open_message(&state))
             .or_else(|| settings_e::open_message(&state))
             .unwrap_or_else(|| json!({})),
@@ -291,6 +326,7 @@ pub(super) fn open(demo: &super::DemoEnv, cx: &mut App) {
     } else if settings_workspaces::owns(&state)
         || settings_machines::owns(&state)
         || settings_secrets::owns(&state)
+        || settings_voice::owns(&state)
     {
         true
     } else if settings_cloud_boxes::owns(&state) {
@@ -313,8 +349,11 @@ pub(super) fn open(demo: &super::DemoEnv, cx: &mut App) {
         sidebar_state: sidebar_state(&settings.borrow()),
         open_forms: serde_json::Value::Null,
     };
+    let width = super::env("GHOSTEX_NATIVE_MODAL_DEMO_SETTINGS_WIDTH")
+        .parse::<f32>()
+        .unwrap_or(SETTINGS_MODAL_WIDTH);
     let (window, view) = super::open_settings_dialog_window(
-        SETTINGS_MODAL_WIDTH,
+        width,
         SETTINGS_MODAL_HEIGHT,
         move |window, cx| cx.new(|cx| GpuiSettingsModalWindow::new(config, host, window, cx)),
         cx,
@@ -326,106 +365,66 @@ pub(super) fn open(demo: &super::DemoEnv, cx: &mut App) {
     }
 }
 
-/// The playbook Ghostex ships, as the scripted gxserver serves it: the skill's body.
-fn shipped_playbook() -> String {
-    let skill = include_str!("../../../../../skills/ghostex-orchestrator/SKILL.md");
-    skill
-        .strip_prefix("---\n")
-        .and_then(|rest| rest.split_once("\n---\n"))
-        .map_or(skill, |(_, body)| body)
-        .trim()
-        .to_string()
-}
-
-/// One scripted edited copy: `(text, enabled)`.
-type DemoCopy = Option<(String, bool)>;
-
 thread_local! {
-    /// The scripted orchestrator playbook copies: `(all projects, project-ghostex's own)`, seeded
-    /// from the state on first use (`…-edited…`: an edited copy for all projects, on, whose
-    /// default changed since, and an edited project copy that is off).
-    static ORCHESTRATOR_PLAYBOOKS: std::cell::RefCell<Option<(DemoCopy, DemoCopy)>> =
+    /// The scripted playbook overrides and whether an old full copy is still stored, seeded from
+    /// the state on first use (`…-old…`: an edited full playbook for all projects saved before
+    /// overrides; `…-overrides…`: overrides written).
+    static ORCHESTRATOR_PLAYBOOK: std::cell::RefCell<Option<(String, bool)>> =
         const { std::cell::RefCell::new(None) };
-}
-
-fn demo_scope(copy: &DemoCopy, default: &str, default_changed: bool) -> Value {
-    match copy {
-        Some((text, enabled)) => json!({
-            "edited": true,
-            "text": text,
-            "enabled": enabled,
-            "defaultText": default,
-            "defaultChanged": default_changed,
-        }),
-        None => json!({ "edited": false, "text": "", "enabled": true, "defaultText": default }),
-    }
 }
 
 /// The scripted gxserver's `/api/readCoordinatorPlaybook` and `/api/setCoordinatorPlaybook`
 /// (states `orchestrator-playbook`, `orchestrator-playbook-edit`,
-/// `orchestrator-playbook-edited-edit`, `orchestrator-playbook-edited-armed`,
-/// `projects-orchestrator-playbook-edit`, `projects-orchestrator-playbook-edited`).
+/// `orchestrator-playbook-overrides-edit`, `orchestrator-playbook-old-edit`,
+/// `orchestrator-playbook-old-armed`, `orchestrator-playbook-view`,
+/// `orchestrator-playbook-overrides-view`), and `/api/readCoordinatorGuide`.
 fn orchestrator_playbook_rpc(
     state: &str,
     path: &str,
     params: &Value,
 ) -> Option<Result<Value, String>> {
+    if path == "/api/readCoordinatorGuide" {
+        return Some(Ok(
+            json!({ "guide": super::new_coordinator_demo::demo_guide() }),
+        ));
+    }
     if !matches!(
         path,
         "/api/readCoordinatorPlaybook" | "/api/setCoordinatorPlaybook"
     ) {
         return None;
     }
-    let shipped = shipped_playbook();
-    let project_id = params.get("projectId").and_then(Value::as_str);
-    ORCHESTRATOR_PLAYBOOKS.with(|stored| {
+    ORCHESTRATOR_PLAYBOOK.with(|stored| {
         let mut stored = stored.borrow_mut();
-        let (all, project) = stored.get_or_insert_with(|| {
-            if state.contains("edited") {
-                (
-                    Some((
-                        format!("{shipped}\n\n## House rules\n\nNever push without asking."),
-                        true,
-                    )),
-                    Some((
-                        "# Ghostex coordinator for this project\n\nKeep threads small.".to_string(),
-                        false,
-                    )),
-                )
+        let (overrides, old) = stored.get_or_insert_with(|| {
+            let overrides = if state.contains("overrides") {
+                "Never push without asking.\nIgnore the board rules.\nThreads never restart the app."
             } else {
-                (None, None)
-            }
-        });
-        if path == "/api/setCoordinatorPlaybook" {
-            let target = if project_id.is_some() {
-                &mut *project
-            } else {
-                &mut *all
+                ""
             };
-            if params["reset"] == true {
-                *target = None;
-            } else if let Some(enabled) = params["enabled"].as_bool() {
-                if let Some(copy) = target.as_mut() {
-                    copy.1 = enabled;
-                }
-            } else if let Some(text) = params["text"].as_str() {
-                *target = Some((
-                    text.trim().to_string(),
-                    target.as_ref().is_none_or(|copy| copy.1),
-                ));
+            (overrides.to_string(), state.contains("-old"))
+        });
+        let mut saved = Vec::new();
+        if path == "/api/setCoordinatorPlaybook" {
+            if let Some(text) = params["overrides"].as_str() {
+                *overrides = text.trim().to_string();
+            }
+            if params["retireOldCopies"] == true && *old {
+                *old = false;
+                saved.push("~/.ghostex/coordinators/old-playbooks/all-projects-2026-11-07.md");
             }
         }
-        let all_in_effect = match all {
-            Some((text, true)) => text.clone(),
-            _ => shipped.clone(),
-        };
-        let mut view = json!({ "allProjects": demo_scope(all, &shipped, true) });
-        if let Some(project_id) = project_id {
-            let mut scope = demo_scope(project, &all_in_effect, false);
-            scope["projectId"] = json!(project_id);
-            scope["name"] = json!("Ghostex");
-            scope["isWorktree"] = json!(false);
-            view["project"] = scope;
+        let mut view = json!({
+            "source": if *old { "allProjects" } else { "shipped" },
+            "overrides": { "text": overrides.clone() },
+            "oldCopies": if *old {
+                json!([{ "scope": "allProjects", "enabled": true }])
+            } else {
+                json!([])
+            },
+        });
+        if path == "/api/setCoordinatorPlaybook" && params.get("retireOldCopies").is_some() {
+            view["savedFiles"] = json!(saved);
         }
         Some(Ok(view))
     })

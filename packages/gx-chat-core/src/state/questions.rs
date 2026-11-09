@@ -68,6 +68,11 @@ pub struct QuestionsState {
     pub dismissed_notice: Option<DismissedNotice>,
     /// The refusal the notice card shows instead of the composer's error line.
     pub notice_error: Option<String>,
+    /// The approval answer on its way, which keeps its card drawn dimmed until the prompt is gone
+    /// (`crate::questions::pending_approval`).
+    pub pending_approval: Option<crate::questions::pending_approval::PendingApproval>,
+    /// The "Approved" / "Denied" line an answered approval left, until the next prompt.
+    pub settled_approval: Option<serde_json::Value>,
     /// Whether the notice card is on screen, kept true by [`crate::questions::sync`] after every
     /// event.
     ///
@@ -139,6 +144,9 @@ pub struct FormState {
         std::collections::BTreeMap<String, (i64, bool, Option<u32>, String)>,
     /// Whether an accepted answer is still held in gxserver's queue.
     pub sent_waiting_for_idle: bool,
+    /// On a Ghostex Collab guest's page, the held message that carries the answers while the
+    /// chat's owner has not approved it yet (`extras::collab::settle_held_answers`).
+    pub held_for_owner: Option<String>,
     /// Why the last send was refused.
     pub error: Option<String>,
     /// The reader opened the answered form again (`formToggle`); answered forms start collapsed.

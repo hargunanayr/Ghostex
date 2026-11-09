@@ -16,7 +16,7 @@ use super::store::{
     NOTIFICATION_FEED_KIND_FINISHED, NOTIFICATION_FEED_KIND_NEEDS_INPUT,
 };
 
-const OBSERVER_BUSY_TIMEOUT: Duration = Duration::from_millis(2_000);
+pub(super) const OBSERVER_BUSY_TIMEOUT: Duration = Duration::from_millis(2_000);
 
 /// Feed rows are written from the one place every attention transition already passes through, after the endpoint's own transaction committed.
 /// Entering attention writes a row; leaving attention reads the session's rows, preserving deferrals on automatic transitions.
@@ -46,6 +46,10 @@ pub(crate) fn observe_agent_activity_result(
         .get("activity")
         .and_then(Value::as_str)
         .unwrap_or("idle");
+    // A GBot's chat that finished a turn adds a line to the bot's daily log.
+    if let Some(session) = result.get("session") {
+        crate::gbots::observe_gbot_activity(&state.paths, previous, next, activity, session);
+    }
     let entered_attention = result.get("enteredAttention").and_then(Value::as_bool) == Some(true);
     let left_attention = previous == "attention" && next != "attention";
     let explicitly_acknowledged = endpoint_path == "/api/updateAgentActivity"
@@ -156,6 +160,62 @@ fn record_attention_row(
             message: format!("SQLite gxserver state error: {error}"),
         })?;
     let repository = DomainRepository::new(&db, state.metadata.server_id.as_str());
+    let (title, subtitle) = session_row_heading(&repository, project_id, session)?;
+    let row = insert_notification_feed_row(
+        &db,
+        NewNotificationFeedRow {
+            project_id: project_id.to_string(),
+            session_id: session_id.to_string(),
+            kind,
+            title,
+            subtitle,
+            body,
+            agent_name: notification_agent_icon(session),
+            attention_event_id: activity
+                .get("attentionEventId")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        },
+    )?;
+    // CDXC:Notifications 2026-11-08: the row is the bell's either way; an attention the rule says
+    // does not alert (a thread's finished turn, a coordinator's with nothing for the user, an
+    // approval Autopilot answers) is written already read and goes to no phone, so the bell, the
+    // phone and the computer's sound agree (packages/gx-core/src/alert_rule.rs).
+    if attention_row_alerts(&db, session, project_id, session_id) {
+        crate::push::announce_feed_row(state, &repository, session, &row);
+    } else if let Some(id) = row.get("id").and_then(Value::as_str) {
+        super::store::mark_notification_feed_row_read(&db, id)?;
+    }
+    Ok(true)
+}
+
+/// The same verdict the presentation stamps on this attention (`attention.alerts`), read from the
+/// live session the endpoint just stored.
+fn attention_row_alerts(
+    db: &rusqlite::Connection,
+    session: &Value,
+    project_id: &str,
+    session_id: &str,
+) -> bool {
+    let now = crate::presentation::now_iso();
+    let attention = crate::presentation::attention_state(session, &now);
+    let role = crate::presentation::recorded_alert_role(db, project_id, session_id);
+    let awaiting_approval = crate::session_approval::session_awaits_approval(session, &now);
+    crate::presentation::attention_state_alerts(
+        role,
+        &attention,
+        awaiting_approval,
+        project_id,
+        session_id,
+    )
+}
+
+/// A session row's title (the session's title) and subtitle (its project's name).
+pub(super) fn session_row_heading(
+    repository: &DomainRepository<'_>,
+    project_id: &str,
+    session: &Value,
+) -> Result<(String, String), DomainStateError> {
     let subtitle = repository
         .get_project(project_id)?
         .and_then(|project| {
@@ -172,23 +232,7 @@ fn record_attention_row(
         .filter(|value| !value.is_empty())
         .unwrap_or("Session")
         .to_string();
-    insert_notification_feed_row(
-        &db,
-        NewNotificationFeedRow {
-            project_id: project_id.to_string(),
-            session_id: session_id.to_string(),
-            kind,
-            title,
-            subtitle,
-            body,
-            agent_name: notification_agent_icon(session),
-            attention_event_id: activity
-                .get("attentionEventId")
-                .and_then(Value::as_str)
-                .map(str::to_string),
-        },
-    )?;
-    Ok(true)
+    Ok((title, subtitle))
 }
 
 fn record_attention_left(

@@ -1296,4 +1296,40 @@ pub const GXSERVER_STORAGE_MIGRATIONS: &[Migration] = &[
         id: "0059_paired_device_api_token",
         sql: include_str!("migrations/0059_paired_device_api_token.sql"),
     },
+    Migration {
+        id: "0060_coordinator_board_tag",
+        sql: include_str!("migrations/0060_coordinator_board_tag.sql"),
+    },
+    Migration {
+        id: "0061_tailcat_relay",
+        sql: include_str!("migrations/0061_tailcat_relay.sql"),
+    },
+    Migration {
+        id: "0062_pairing_v2_device_keys",
+        sql: include_str!("migrations/0062_pairing_v2_device_keys.sql"),
+    },
+    Migration {
+        id: "0063_projects_revision",
+        sql: include_str!("migrations/0063_projects_revision.sql"),
+    },
+    Migration {
+        id: "0064_side_chat_index",
+        sql: include_str!("migrations/0064_side_chat_index.sql"),
+    },
+    Migration {
+        id: "0065_gbots",
+        sql: include_str!("migrations/0065_gbots.sql"),
+    },
+    Migration {
+        id: "0066_gbots_routines",
+        sql: include_str!("migrations/0066_gbots_routines.sql"),
+    },
+    Migration {
+        id: "0067_gbots_problems",
+        sql: include_str!("migrations/0067_gbots_problems.sql"),
+    },
+    Migration {
+        id: "0068_gbots_day_watch",
+        sql: include_str!("migrations/0068_gbots_day_watch.sql"),
+    },
 ];

@@ -20,10 +20,50 @@ pub(crate) fn gpui_remote_gxserver_post_typed_operation(
     params: &serde_json::Value,
     timeout: Duration,
 ) -> Result<(u16, String), String> {
+    // The user's own Stop, answer or typing there waits for this app to be approved as the owner
+    // there, instead of asking on its own (CDXC:Security 2026-11-08 in app/owner_security/mod.rs).
+    if let Some(message) = crate::app::owner_security::steer_needs_owner(target, path) {
+        let body = serde_json::json!({
+            "ok": false,
+            "error": crate::app::owner_security::OWNER_APPROVAL_NEEDED_ERROR,
+            "message": message,
+        });
+        return Ok((403, body.to_string()));
+    }
     // A remote gxserver still starting is waited out like the local one (typed_operations.rs).
-    gpui_wait_out_gxserver_starting(std::time::Instant::now() + timeout, |remaining| {
-        gpui_remote_gxserver_post_typed_operation_once(target, path, params, remaining)
-    })
+    let mut answer =
+        gpui_wait_out_gxserver_starting(std::time::Instant::now() + timeout, |remaining| {
+            gpui_remote_gxserver_post_typed_operation_once(target, path, params, remaining)
+        });
+    /*
+    CDXC:RemoteMachines 2026-11-09 WHY:
+    GitHub #520: a command from this computer to a connected one "doesn't arrive", and that
+    computer's log had a 401 right after this computer reached it. An owner session there ends
+    when its gxserver restarts; the 401 dropped it here (`forget_owner_token`) but still answered
+    the call with the 401, so that command was lost. The same call now goes once more, with that
+    computer's token file, as every call does until an owner session opens there again.
+    */
+    if matches!(answer, Ok((401, _))) {
+        answer = gpui_remote_gxserver_post_typed_operation_once(target, path, params, timeout);
+    }
+    // The app's own sensitive click on that computer: the system prompt now, then the same call
+    // with its approval (CDXC:Security 2026-11-08 in app/owner_security/mod.rs).
+    if let Ok((status, body)) = &answer {
+        let transport = crate::app::owner_security::Transport::Remote(target.clone());
+        if let Some(params) = crate::app::owner_security::approve_own_call(
+            &transport, *status, body,
+        )
+        .and_then(|approval_id| crate::app::owner_security::with_approval_id(params, &approval_id))
+        {
+            return gpui_wait_out_gxserver_starting(
+                std::time::Instant::now() + timeout,
+                |remaining| {
+                    gpui_remote_gxserver_post_typed_operation_once(target, path, &params, remaining)
+                },
+            );
+        }
+    }
+    answer
 }
 
 fn gpui_remote_gxserver_post_typed_operation_once(
@@ -56,9 +96,12 @@ fn gpui_remote_gxserver_post_typed_operation_once(
         "params": params,
     })
     .to_string();
+    // The app's owner session on that computer once it is open (GitHub #495), its token file
+    // until then.
+    let owner_token = crate::app::owner_security::cached_remote_owner_token(target);
     let request = format!(
         "POST {path} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\n{GPUI_GXSERVER_PROTOCOL_HEADER}: {GPUI_GXSERVER_PROTOCOL_VERSION}\r\nContent-Length: {}\r\n\r\n{body}",
-        target.token.as_str(),
+        owner_token.as_deref().unwrap_or(target.token.as_str()),
         body.len()
     );
     let write_error = stream.write_all(request.as_bytes()).err();
@@ -97,6 +140,11 @@ fn gpui_remote_gxserver_post_typed_operation_once(
         .and_then(|line| line.split_whitespace().nth(1))
         .and_then(|status| status.parse::<u16>().ok())
         .ok_or_else(|| "Remote gxserver returned an invalid HTTP status.".to_string())?;
+    if status_code == 401 {
+        if let Some(token) = owner_token.as_deref() {
+            crate::app::owner_security::forget_owner_token(token);
+        }
+    }
     Ok((status_code, gxserver_http_response_body(headers, body)?))
 }
 

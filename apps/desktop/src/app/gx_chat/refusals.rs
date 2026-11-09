@@ -124,6 +124,9 @@ fn rpc_method_name(wire: &str) -> &'static str {
         ChatRpcMethod::ReadCoordinatorThreads => "readCoordinatorThreads",
         ChatRpcMethod::OpenCoordinatorThread => "openCoordinatorThread",
         ChatRpcMethod::CoordinatorBoard => "coordinatorBoard",
+        ChatRpcMethod::Autopilot => "autopilot",
+        ChatRpcMethod::Collab => "collab",
+        ChatRpcMethod::CollabTyping => "collabTyping",
         ChatRpcMethod::StartSideChat => "startSideChat",
         ChatRpcMethod::BringBackSideChat => "bringBackSideChat",
         ChatRpcMethod::DeleteSideChat => "deleteSideChat",
@@ -133,6 +136,9 @@ fn rpc_method_name(wire: &str) -> &'static str {
         ChatRpcMethod::ReadSessionFilesLinks => "readSessionFilesLinks",
         ChatRpcMethod::ReadSessionDetails => "readSessionDetails",
         ChatRpcMethod::StopSessionBackgroundTask => "stopSessionBackgroundTask",
+        ChatRpcMethod::HoldSessionChatSend => "holdSessionChatSend",
+        ChatRpcMethod::ListHeldSessionChatSends => "listHeldSessionChatSends",
+        ChatRpcMethod::CancelHeldSessionChatSend => "cancelHeldSessionChatSend",
         ChatRpcMethod::Other(_) => "other",
     }
 }

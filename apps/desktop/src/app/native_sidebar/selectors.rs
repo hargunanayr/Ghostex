@@ -86,6 +86,11 @@ impl GhostexGpuiApp {
             .children(
                 self.render_native_sidebar_space_row_at(snapshot, placement, appearance, true, cx),
             )
+            // Chief's row sits under the Spaces bar across the sidebar; the two-column layout's
+            // narrow project column has no room for it.
+            .when(placement == SelectorsPlacement::Top, |column| {
+                column.children(self.render_native_sidebar_chief(snapshot, appearance, false, cx))
+            })
             .into_any_element()
     }
 

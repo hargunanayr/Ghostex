@@ -1,11 +1,18 @@
-//! The Project sidebar as one list for every machine: a project that is on several machines is
-//! one entry, with the sessions of every copy in it. Two clones on one machine stay two entries.
+//! The Project sidebar as one list for every machine: a project that is on several machines (or,
+//! with Merge copies of the same repository on, cloned twice on one) is one entry, with the
+//! sessions of every copy in it.
 //!
 //! CDXC:RemoteMachines 2026-11-05 DECISION:
-//! User: "i wanna switch to showing the projects from all my machines without a machine picker basically as much as possible ... if same project is on both machines then should just have 1 entry in my sidebar for that project". Unless Settings › Sidebar's Separate by machine is on, this computer's list takes every connected machine's projects: a project matches another by git remote, then by folder name, with the Unified sidebar's rule (`unified_sidebar::repo`, Q1351); the sessions of every copy are mixed in one list, each one from another machine carrying that machine's name (Q1350); and the header's creating actions (New Terminal, Create Agent, the ⋯ menu's Add Worktree, History and the rest) go to the copy a session of the project last started in (Q1353). A worktree project and a bot are never merged: a worktree is its own entry under its parent, and bots stay in Bots.
+//! User: "i wanna switch to showing the projects from all my machines without a machine picker basically as much as possible ... if same project is on both machines then should just have 1 entry in my sidebar for that project". Unless Settings › Sidebar's Separate by machine is on, this computer's list takes every connected machine's projects: a project matches another by git remote, then by folder name, with the Unified sidebar's rule (`unified_sidebar::repo`, Q1351); two clones of one repository on the same machine are one entry too (Q1352); the sessions of every copy are mixed in one list, each one from another machine carrying that machine's name (Q1350); and the header's creating actions (New Terminal, Create Agent, the ⋯ menu's Add Worktree, History and the rest) go to the copy a session of the project last started in (Q1353). A worktree project and a bot are never merged: a worktree is its own entry under its parent, and bots stay in Bots. While Worktree sessions show in their project is on, a worktree's sessions are listed in its parent's entry instead, on every machine (CDXC:Worktrees 2026-11-06 in worktree_fold.rs).
+//!
+//! CDXC:RemoteMachines 2026-11-07 DECISION:
+//! Issue #461 (one computer, 15 projects that are subfolders of one monorepo, in 6 Spaces): a project's key is its repository AND its folder inside that repository (the path below `gitRepositoryRootPath`), not the repository alone. Different folders of one repository (`monorepo/`, `monorepo/trading`, `monorepo/product-x`) are always separate entries, on one computer and across computers, each with its own Space and sessions. Copies at the same folder of the repository still merge: on another computer, and, per Q1352, a second clone on the same computer (both at the root, or both at `trading`). Keying by the remote alone put every subfolder's sessions in the first subfolder's entry, so the Trading Space drew the Product Space's sessions and its Space switch restored one of them.
+//!
+//! CDXC:RemoteMachines 2026-11-09 DECISION:
+//! Issue #518 (a folder copied to a new name, both clones of one GitHub repository, drawn as one entry named after one of them with both folders' sessions mixed in); user: "we need toggle for this. and we need phone and pc to match pls." Settings › Sidebar's Merge copies of the same repository (`sidebarMergeRepositoryCopies`, on by default, so Q1352 stays the default) decides whether two copies on ONE computer are one entry. Off, every folder on a computer is its own entry, titled and acting as its own project, and copies on different computers still merge (Q1350's one entry per project across computers is what the one list is for, and the report is about one computer only): another computer's copy joins the entry whose folder has its folder's name, else the first copy's, and an entry takes at most one copy from each computer, so that computer's second copy is its own entry too. The phone's Project list follows the same switch (apps/mobile/app/src/contract/grouping.ts `mergeRepositoryCopies`): it merges one computer's copies only while this is on and Separate by machine is off, as this list does. Separate by machine already keeps every copy apart, so the row shows only while it is off.
 //!
 //! CDXC:RemoteMachines 2026-11-06 DECISION:
-//! Ryan (this fork) chose that two clones of one repository on the same computer stay separate projects: standard, forever and tripple are clones of one repository filed as separate projects in their own project groups (tripple in another group than the other two), and each keeps its own entry, its own sessions and its group. Only copies on different computers merge, and another computer's copy joins the first clone in this computer's order. Supersedes upstream's rule that clones on one machine are one entry (Q1352).
+//! Ryan (this fork) chose that two clones of one repository on the same computer stay separate projects: standard, forever and tripple are clones of one repository filed as separate projects in their own project groups, each with its own entry, sessions and group; only copies on different computers merge. Since the 11.2.0 merge this is upstream's Merge copies of the same repository switch turned off, so this fork ships it off by default (settings-catalog defaults.rs, `SidebarSettings::default`), and gxserver sends the phone `false` whenever it is not on.
 //!
 //! CDXC:RemoteMachines 2026-11-05 WHY:
 //! A copy merged into another entry gives it its sessions only: its user-made session groups are listed with the entry's own sessions rather than as groups, because a session group is drawn inside the project that owns its id (`owner_project_group_id`), and that project is not drawn. A project only another machine has keeps its session groups, exactly as that machine's tab drew them.
@@ -17,15 +24,20 @@ use crate::change::ChangeSummary;
 use crate::core::Core;
 use crate::keys::{MachineId, ProjectKey, SessionKey};
 use crate::presentation_store::PresentationStore;
-use crate::unified_sidebar::repo::{merge_repo_identities, repo_identity, RepoIdentity};
+use crate::unified_sidebar::repo::{
+    folder_in_repository, merge_repo_identities, project_repo_key, repo_identity, RepoIdentity,
+};
 
-use super::groups::{GroupKind, GroupPlan, PlanActionTarget, ProjectContextInput, RowRef};
+use super::groups::{
+    FoldedWorktreePlan, GroupKind, GroupPlan, PlanActionTarget, ProjectContextInput, RowRef,
+};
 use super::inputs::{SidebarInputs, LOCAL_MACHINE_ID};
 use super::membership::{project_members, ProjectMembers};
 use super::model::SidebarUpdateWork;
 use super::projects::{build_project_meta, ProjectMeta};
 use super::rows::{session_row, side_chat_needs, RowContext};
 use super::view::{MachineChip, RemoteMachineView};
+use super::worktree_fold::{mark_row, row_worktree, MarkedRows};
 use super::{CollectionsState, SpacesState};
 
 /// What the merge keeps between updates.
@@ -34,6 +46,9 @@ pub(super) struct MergeCache {
     machines: BTreeMap<MachineId, GuestMachine>,
     /// Every other machine's row in this list, kept until the store says that session moved.
     rows: BTreeMap<SessionKey, RowRef>,
+    /// Those rows marked with their worktree, for a worktree folded into its parent's entry
+    /// (`worktree_fold.rs`).
+    worktree_rows: MarkedRows,
 }
 
 /// One other machine's projects as this list reads them.
@@ -55,8 +70,8 @@ pub(super) struct MergeInput<'a> {
 /// What the list needs from the merge besides the plans it rewrote.
 #[derive(Default)]
 pub(super) struct MergeOutcome {
-    /// The group ids no longer drawn (another machine's copy and its session groups), each with
-    /// the entry that now lists its sessions: the focus follows them there.
+    /// The group ids no longer drawn (another machine's copy, a second clone, and their session
+    /// groups), each with the entry that now lists its sessions: the focus follows them there.
     pub(super) merged_into: BTreeMap<String, String>,
 }
 
@@ -97,7 +112,12 @@ pub(super) fn merge_machines(
         } else {
             std::mem::take(&mut previous.rows)
         },
+        worktree_rows: MarkedRows::new(),
     };
+    let mut previous_marked = std::mem::take(&mut previous.worktree_rows);
+    let fold_worktrees = input.inputs.settings.worktree_sessions_in_project
+        && !input.inputs.settings.unified_sidebar;
+    let merge_copies = input.inputs.settings.merge_repository_copies;
     for key in changes
         .sessions_changed
         .iter()
@@ -149,12 +169,23 @@ pub(super) fn merge_machines(
             }
         }
     }
+    identities.retain(|identity| identity.key != HOME_KEY);
     let canonical = merge_repo_identities(identities.iter());
     let key_of = |project: &ProjectContextInput| -> String {
+        if project.is_home {
+            return HOME_KEY.to_string();
+        }
         let identity = identity_of(project);
-        canonical
+        let from_origin = !identity.key.starts_with("dir:");
+        let key = canonical
             .get(&identity.key)
-            .map_or(identity.key, |merged| merged.key.clone())
+            .map_or(identity.key, |merged| merged.key.clone());
+        // Each folder of a repository is its own project (#461). A folder with no origin is
+        // keyed by its own folder name already.
+        let folder =
+            folder_in_repository(&project.path, project.git_repository_root_path.as_deref())
+                .filter(|_| from_origin);
+        project_repo_key(&key, folder.as_deref())
     };
 
     let mut outcome = MergeOutcome::default();
@@ -163,14 +194,16 @@ pub(super) fn merge_machines(
         .flat_map(|plan| plan.rows.iter())
         .filter_map(|row| row.row.key.clone())
         .collect();
-    // The entry each repository is drawn as, by its index in `plans`.
-    let mut entry_of_key: HashMap<String, usize> = HashMap::new();
+    // The entries each repository is drawn as, by their index in `plans`: one, unless Merge copies
+    // of the same repository is off and a computer has it twice.
+    let mut entry_of_key: HashMap<String, Vec<usize>> = HashMap::new();
     let mut copies: BTreeMap<usize, Vec<Copy>> = BTreeMap::new();
     let mut names: BTreeMap<usize, Vec<MachineChip>> = BTreeMap::new();
+    let mut dropped: BTreeSet<usize> = BTreeSet::new();
     let local_chip = machine_chip(input.inputs, LOCAL_MACHINE_ID);
 
-    // This computer's projects first, in its own order. Every clone keeps its own entry (the
-    // 2026-11-06 decision above); another computer's copy joins the first clone.
+    // This computer's projects first, in its own order: a second clone (at the same folder of the
+    // repository) joins the first.
     let mut index = 0;
     while index < plans.len() {
         let Some(project) = mergeable(plans[index].kind, plans[index].project.as_deref()) else {
@@ -187,9 +220,31 @@ pub(super) fn merge_machines(
             project,
             remote_machine: None,
         };
-        entry_of_key.entry(key).or_insert(index);
-        copies.insert(index, vec![copy]);
-        names.insert(index, vec![local_chip.clone()]);
+        let joined = entry_of_key
+            .get(&key)
+            .and_then(|entries| entries.first().copied())
+            .filter(|_| merge_copies);
+        match joined {
+            None => {
+                entry_of_key.entry(key).or_default().push(index);
+                copies.insert(index, vec![copy]);
+                names.insert(index, vec![local_chip.clone()]);
+            }
+            Some(entry) => {
+                let entry_id = plans[entry].group_id.clone();
+                for merged in std::iter::once(index).chain(subgroups.clone()) {
+                    let rows = std::mem::take(&mut plans[merged].rows);
+                    plans[entry].rows.extend(rows);
+                    let folded = std::mem::take(&mut plans[merged].folded_worktrees);
+                    plans[entry].folded_worktrees.extend(folded);
+                    outcome
+                        .merged_into
+                        .insert(plans[merged].group_id.clone(), entry_id.clone());
+                    dropped.insert(merged);
+                }
+                copies.entry(entry).or_default().push(copy);
+            }
+        }
         index = subgroups.end;
     }
 
@@ -200,6 +255,42 @@ pub(super) fn merge_machines(
         let context = RowContext {
             side_chat_needs: &needs,
             ..*input.context
+        };
+        // The entry each of this machine's projects went to, so its worktrees follow it there.
+        let mut entry_of_copy: HashMap<String, usize> = HashMap::new();
+        // Merge copies of the same repository off: an entry takes at most one copy from a
+        // machine, and the one whose folder has this copy's name first (CDXC:RemoteMachines
+        // 2026-11-09).
+        let entry_for = |entry_of_key: &HashMap<String, Vec<usize>>,
+                         copies: &BTreeMap<usize, Vec<Copy>>,
+                         key: &str,
+                         machine: &MachineId,
+                         project: &ProjectContextInput|
+         -> Option<usize> {
+            let entries = entry_of_key.get(key)?;
+            if merge_copies {
+                return entries.first().copied();
+            }
+            let open: Vec<usize> = entries
+                .iter()
+                .copied()
+                .filter(|entry| {
+                    !copies
+                        .get(entry)
+                        .is_some_and(|copies| copies.iter().any(|copy| copy.machine == *machine))
+                })
+                .collect();
+            let name = folder_name(&project.path);
+            open.iter()
+                .copied()
+                .find(|entry| {
+                    copies.get(entry).is_some_and(|copies| {
+                        copies
+                            .iter()
+                            .any(|copy| folder_name(&copy.project.path) == name)
+                    })
+                })
+                .or_else(|| open.first().copied())
         };
         for project_id in machine.meta.project_order.iter() {
             let (Some(project), Some(members)) = (
@@ -246,8 +337,68 @@ pub(super) fn merge_machines(
                     work,
                 )
             };
-            let entry = mergeable(GroupKind::Project, Some(project))
-                .and_then(|project| entry_of_key.get(&key_of(project)).copied());
+            // A worktree whose parent has an entry is listed in it (`worktree_fold.rs`).
+            let parent_entry = project
+                .worktree
+                .as_ref()
+                .filter(|_| fold_worktrees)
+                .and_then(|worktree| machine.contexts.get(&worktree.parent_project_id))
+                .and_then(|parent| mergeable(GroupKind::Project, Some(parent)))
+                .and_then(|parent| {
+                    entry_of_copy.get(&parent.project_id).copied().or_else(|| {
+                        entry_for(
+                            &entry_of_key,
+                            &copies,
+                            &key_of(parent),
+                            &guest.machine,
+                            parent,
+                        )
+                    })
+                });
+            if let Some(entry) = parent_entry {
+                let entry_id = plans[entry].group_id.clone();
+                let worktree = row_worktree(&group_id, project);
+                let session_ids = members.session_ids.iter().chain(
+                    members
+                        .subgroups
+                        .iter()
+                        .flat_map(|subgroup| subgroup.session_ids.iter()),
+                );
+                for session_id in session_ids {
+                    if let Some(row) = row_of(session_id, &mut drawn_keys) {
+                        let row = mark_row(
+                            row,
+                            &worktree,
+                            &mut previous_marked,
+                            &mut cache.worktree_rows,
+                        );
+                        plans[entry].rows.push(row);
+                    }
+                }
+                outcome
+                    .merged_into
+                    .insert(group_id.clone(), entry_id.clone());
+                for subgroup in &members.subgroups {
+                    outcome
+                        .merged_into
+                        .insert(subgroup.sidebar_group_id.clone(), entry_id.clone());
+                }
+                plans[entry].folded_worktrees.push(FoldedWorktreePlan {
+                    group_id,
+                    project: project.clone(),
+                    remote_machine: Some(remote_machine),
+                });
+                continue;
+            }
+            let entry = mergeable(GroupKind::Project, Some(project)).and_then(|project| {
+                entry_for(
+                    &entry_of_key,
+                    &copies,
+                    &key_of(project),
+                    &guest.machine,
+                    project,
+                )
+            });
             let copy = Copy {
                 machine: guest.machine.clone(),
                 project_id: project_id.clone(),
@@ -268,6 +419,27 @@ pub(super) fn merge_machines(
                         plans[entry].rows.push(row);
                     }
                 }
+                // That computer's Chief of Staff is a row of the one home list, pinned right under
+                // this computer's (ordering.rs `sort_pinned`).
+                if let Some(key) = project
+                    .is_home
+                    .then(|| chief_row_key(store, &guest.machine))
+                    .flatten()
+                    .filter(|key| drawn_keys.insert(key.clone()))
+                {
+                    if let Some(row) = guest_row(
+                        &mut cache.rows,
+                        store,
+                        key,
+                        &guest.chip,
+                        input.inputs,
+                        &context,
+                        next_row_id,
+                        work,
+                    ) {
+                        plans[entry].rows.push(row);
+                    }
+                }
                 outcome.merged_into.insert(group_id, entry_id.clone());
                 for subgroup in &members.subgroups {
                     outcome
@@ -275,6 +447,7 @@ pub(super) fn merge_machines(
                         .insert(subgroup.sidebar_group_id.clone(), entry_id.clone());
                 }
                 copies.entry(entry).or_default().push(copy);
+                entry_of_copy.insert(project_id.clone(), entry);
                 let entry_names = names.entry(entry).or_default();
                 if !entry_names.contains(&guest.chip) {
                     entry_names.push(guest.chip.clone());
@@ -302,6 +475,7 @@ pub(super) fn merge_machines(
                 is_stale: guest.is_stale,
                 machine_names: Vec::new(),
                 action_target: None,
+                folded_worktrees: Vec::new(),
             });
             for subgroup in &members.subgroups {
                 let rows: Vec<RowRef> = subgroup
@@ -323,11 +497,13 @@ pub(super) fn merge_machines(
                     is_stale: guest.is_stale,
                     machine_names: Vec::new(),
                     action_target: None,
+                    folded_worktrees: Vec::new(),
                 });
             }
             if let Some(project) = mergeable(GroupKind::Project, Some(project)) {
-                entry_of_key.insert(key_of(project), entry);
+                entry_of_key.entry(key_of(project)).or_default().push(entry);
             }
+            entry_of_copy.insert(project_id.clone(), entry);
             copies.insert(entry, vec![copy]);
             names.insert(entry, vec![guest.chip.clone()]);
         }
@@ -343,6 +519,14 @@ pub(super) fn merge_machines(
         if entry_copies.len() > 1 {
             plans[*entry].action_target = last_used_copy(&plans[*entry], entry_copies);
         }
+    }
+    if !dropped.is_empty() {
+        let mut index = 0;
+        plans.retain(|_| {
+            let keep = !dropped.contains(&index);
+            index += 1;
+            keep
+        });
     }
     (cache, outcome)
 }
@@ -507,13 +691,32 @@ fn mergeable(
     })
 }
 
+/// The key every computer's home project shares, so the homes are one entry (`identity_of`).
+const HOME_KEY: &str = "home:";
+
+/// CDXC:Chief 2026-11-08 DECISION:
+/// User (Q1993): with computers combined, Main Hub is "one list with a small computer chip on each chat instead of one header per computer"; then: "can have multiple chiefs of staff from different machines in 1 place". Every computer's home project (`is_home`) has the same key, so the homes are one entry under the Main Hub header, each other computer's chat carrying that computer's chip like any merged project's, and each computer's Chief of Staff pinned at the top (`chief_row_key`, ordering.rs `sort_pinned`). Supersedes one header per computer (Q1913).
 fn identity_of(project: &ProjectContextInput) -> RepoIdentity {
+    if project.is_home {
+        return RepoIdentity {
+            key: HOME_KEY.to_string(),
+            label: project.title.clone(),
+        };
+    }
     repo_identity(
         project.git_remote_origin_url.as_deref(),
         &project.path,
         None,
         &project.title,
     )
+}
+
+/// A project folder's own name, as the copies of one repository are told apart by.
+fn folder_name(path: &str) -> &str {
+    path.trim_end_matches(['/', '\\'])
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default()
 }
 
 /// The session groups drawn right after the project plan at `index`, as indices.
@@ -543,6 +746,18 @@ fn last_used_copy(plan: &GroupPlan, copies: &[Copy]) -> Option<PlanActionTarget>
         group_id: copy.group_id.clone(),
         project: copy.project.clone(),
         remote_machine: copy.remote_machine.clone(),
+    })
+}
+
+/// `machine`'s Chief of Staff session, listed in the one home entry even when it still lives in
+/// that computer's Ghostex config folder project.
+fn chief_row_key(store: &PresentationStore, machine: &MachineId) -> Option<SessionKey> {
+    let loaded = store.machine(machine)?.loaded()?;
+    let session = loaded.server_sessions().find(|session| session.is_chief)?;
+    Some(SessionKey {
+        machine: machine.clone(),
+        project_id: session.project_id.clone(),
+        session_id: session.session_id.clone(),
     })
 }
 

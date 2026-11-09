@@ -2,17 +2,15 @@ use crate::data::*;
 use crate::json::opt;
 use crate::json::Opt;
 use crate::rows::{row, section, Section};
+use crate::Platform;
 
-pub(crate) fn theming() -> Section {
-    section(
-        "theming",
-        "Interface",
-        vec![
+pub(crate) fn theming(platform: Platform) -> Section {
+    let mut rows = vec![
             row("sidebarTheme", "Appearance", "Follow the system appearance by default, or choose Light or Dark.").options(SIDEBAR_THEME_SETTING_OPTIONS),
             row("darkThemePreset", "Dark mode colour", "The colour of the sidebar and window in dark mode: one of sixteen colour squares, or the + square for a custom colour.").options(DARK_THEME_PRESET_OPTIONS),
             row("customSidebarTitlebarBackgroundTintColor", "Custom dark mode tint", "The custom dark mode colour, chosen in the colour picker the + square opens."),
             row("lightThemePreset", "Light mode colour", "The colour of the sidebar and window in light mode: one of sixteen colour squares, or the + square for a custom colour.").options(LIGHT_THEME_PRESET_OPTIONS),
-            row("themeSidebarContrast", "Sidebar colourfulness", "How much of the theme colour shows in the sidebar, from Subtle (deeper, nearly neutral) through Vivid (lighter, more colourful) to Full, where dark mode shows the colour you picked itself. Colourfulness sets the sidebar and work area together, and how deep a custom colour is."),
+            row("themeSidebarContrast", "Sidebar colourfulness", "How much of the theme colour shows in the sidebar, from Subtle (deeper, nearly neutral) through Vivid (lighter, more colourful) to Full, which shows the colour you picked itself. Colourfulness sets the sidebar and work area together, and how deep a custom colour is."),
             row("themeWorkAreaContrast", "Work area colourfulness", "How much of the theme colour shows in the work area (chat, terminals and views), from Subtle to Full. Colourfulness sets the sidebar and work area together."),
             row("customSidebarTitlebarLightBackgroundTintColor", "Custom light mode tint", "The custom light mode colour, chosen in the colour picker the + square opens."),
             row("sessionChatFontFamily", "App font", "Pick one of the fonts installed on this computer for the whole app: sidebar, chat, menus, dialogs and Settings, then press Apply. App default keeps Ghostex's own fonts. Terminals and code use the Monospace font."),
@@ -25,7 +23,7 @@ pub(crate) fn theming() -> Section {
             row("filesZoomPercent", "Files zoom (%)", "Scale the text of a file open in the Files view (Markdown, text and code, with its line numbers) and the Changes diff, from 70% to 200% in 5% steps, when Scale areas separately is on. Cmd+= and Cmd+- (Ctrl on Windows and Linux) in an open file change it too, and Cmd+0 sets 100%. Default: 100%."),
             row("terminalFontSize", "Terminal font size", "The terminal text size in points, when Scale areas separately is on. Cmd+= and Cmd+- in a terminal change it for that terminal only until it restarts. Default: 13."),
             row("sessionChatTextStrengthPercent", "Text strength", "How strong agents' replies and your messages read in chat, on the computer and the phone. 0% is the standard colour; 100% is full white in dark mode and full black in light mode. Muted text, links, code blocks and status colours stay as they are."),
-            row("sessionChatMutedThinking", "Show thinking in grey", "Show the agent's thinking in grey and its replies in the full text colour, so the two are easy to tell apart."),
+            row("sessionChatMutedThinking", "Show thinking in grey", "Show the agent's thinking in grey, so it reads apart from the agent's replies."),
             row("sessionChatTheme", "Chat theme", "Follow the app theme by default, or override chat with Light, Dark, or System.").options(SESSION_CHAT_THEME_OPTIONS),
             row("terminalColorScheme", "Terminal theme", "Follow the app theme by default, or override terminals with Light, Dark, or System.").options(SESSION_CHAT_THEME_OPTIONS),
             row("terminalGhosttyLightTheme", "Terminal palette in light mode", "Uses the light theme set in Ghostex's terminal config, or GitHub Light when none is set.").options(&ghostty_themes_without_unmanaged()),
@@ -55,8 +53,21 @@ pub(crate) fn theming() -> Section {
             row("showActivePaneOutline", "Show active pane outline", "Show an outline around the currently focused pane."),
             row("workspaceActivePaneBorderColor", "Active pane outline colour", "Color of the outline around the currently focused pane."),
             row("workAreaFrame", "Frame the work area", "Show the work area as a card inside the window, with a thin margin all around, a hairline border and a light shadow. Off keeps the work area edge to edge."),
-        ],
-    )
+            // CDXC:Settings 2026-11-08 DECISION: User: "please add setting under this [Frame the work area] to show traffic lights on macos when sidebar is collapsed (default to yes). only show this sub setting on macos. also please move this whole setting under a new advanced area in the interface page in settings". Both rows sit in the Interface page's Advanced fold (`ADVANCED_MAIN_SETTING_KEYS`).
+            row("showWindowButtonsWhenSidebarCollapsed", "Show the window buttons when the sidebar is collapsed", "Keep the red, yellow and green window buttons in the window's top left while the sidebar is collapsed. Off hides them until you open the floating sidebar, which carries them in its top row. Full screen keeps its own title bar either way."),
+    ];
+    if platform == Platform::Linux {
+        // CDXC:PlatformSupport 2026-11-08 DECISION: User (issue #503): a Linux-only Display scale row under Scale areas separately (interface_scale.rs has the full decision).
+        let after = rows
+            .iter()
+            .position(|row| row.key == "interfaceScaleAreasSeparately")
+            .map_or(rows.len(), |index| index + 1);
+        rows.insert(
+            after,
+            row("linuxDisplayScale", "Display scale", "How big the whole app is drawn: the header, menus, dialogs and web pages too. Automatic follows your desktop's display scale; pick a fixed one if Ghostex gets it wrong. Interface scale applies on top. Takes effect when Ghostex restarts. Default: Automatic.").options(crate::interface_scale::LINUX_DISPLAY_SCALE_OPTIONS),
+        );
+    }
+    section("theming", "Interface", rows)
 }
 
 /// `GHOSTTY_THEME_SETTING_OPTIONS` without "Use terminal config file": the light palette always names a theme.

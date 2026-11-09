@@ -12,13 +12,21 @@ use serde_json::Value;
 
 mod entries;
 mod hlc;
+mod lists;
 mod settings_keys;
 mod spaces;
+mod spaces_repair;
 
 pub use entries::{
     entries_digest, local_edit, merge_entries, MergeOutcome, SyncConflict, SyncEntry,
 };
-pub use hlc::{hlc_wall_ms, next_hlc, seed_hlc};
+pub use hlc::{hlc_wall_ms, is_seed_hlc, next_hlc, seed_hlc, seed_hlc_since};
+pub use lists::{
+    account_sync_value, agent_roster_values, apply_agent_roster_entry, apply_synced_account,
+    describe_list_key, skill_file_path_safe, skill_fits, skill_hash, skill_name_syncs,
+    ACCOUNT_KEY_PREFIX, AGENT_KEY_PREFIX, AGENT_ORDER_KEY, BUNDLED_SKILL_KEY_PREFIX,
+    MAX_SAVED_ACCOUNTS, MAX_SKILLS_BYTES, MAX_SKILL_BYTES, MAX_SKILL_FILES, OWN_SKILL_KEY_PREFIX,
+};
 pub use settings_keys::{
     category_setting_keys, category_setting_values, describe_setting_key, setting_of_sync_key,
     setting_sync_key,
@@ -27,6 +35,7 @@ pub use spaces::{
     apply_spaces_entries, derive_spaces_edits, describe_spaces_key, group_deleted_edit,
     merge_spaces_by_name, spaces_named_apart, LocalSpaces, SpacesApplied,
 };
+pub use spaces_repair::{repair_folded_spaces, spaces_moves, SpacesMove};
 
 /// One thing a computer can sync, as Settings > Sync lists it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,6 +72,28 @@ pub const SYNC_CATEGORIES: &[SyncCategory] = &[
         prefix: "agents",
         setting_key: "syncAgentDefaults",
         label: "Agent defaults",
+        default_on: false,
+        available: true,
+    },
+    // CDXC:SettingsSync 2026-11-07 DECISION in lists.rs: Agents, Skills and Accounts, off by default.
+    SyncCategory {
+        prefix: "agentRoster",
+        setting_key: "syncAgents",
+        label: "Agents",
+        default_on: false,
+        available: true,
+    },
+    SyncCategory {
+        prefix: "skills",
+        setting_key: "syncSkills",
+        label: "Skills",
+        default_on: false,
+        available: true,
+    },
+    SyncCategory {
+        prefix: "accounts",
+        setting_key: "syncAccounts",
+        label: "Accounts",
         default_on: false,
         available: true,
     },

@@ -23,13 +23,41 @@ impl NativeChatView {
             self.terminal_picker_input = None;
             return None;
         }
+        // A Ghostex Collab guest sees what the agent asks, never its answers: only the owner
+        // answers a prompt (gxserver refuses a guest's answer too).
+        if self.collab_guest() {
+            let waiting = text(&snapshot["collab"], "waitingForOwner");
+            let title = [
+                text(notice, "title"),
+                text(notice, "label"),
+                text(notice, "kind"),
+            ]
+            .into_iter()
+            .find(|value| !value.is_empty())
+            .unwrap_or_else(|| "The agent is asking something".to_string());
+            return Some(self.tone_card(
+                ToneCardParts {
+                    look: tone_look("wait", p),
+                    title,
+                    detail: waiting,
+                    trailing: Vec::new(),
+                    body: Vec::new(),
+                    footer_start: Vec::new(),
+                    footer_note: None,
+                    footer_end: Vec::new(),
+                },
+                None,
+                None,
+                p,
+            ));
+        }
         if notice["dialog"]["presentation"]["picker"].is_object() {
             self.terminal_dialog_input = None;
             return Some(self.terminal_picker_card(notice, p, window, cx));
         }
         self.terminal_picker_input = None;
         if notice["passthrough"].is_object() {
-            return Some(self.passthrough_card(notice, p, cx));
+            return Some(self.passthrough_card(notice, p, window, cx));
         }
         let key = format!(
             "notice:{}:{}",
@@ -38,6 +66,10 @@ impl NativeChatView {
         );
         let choices = notice["choices"].as_array().cloned().unwrap_or_default();
         let answerable = !choices.is_empty();
+        // An answered approval waits here, dimmed and held, until its prompt is gone
+        // (`approvalPending`, the chat core's questions/pending_approval.rs).
+        let pending = snapshot["approvalPending"]["card"] == "notice";
+        let held = pending || snapshot["questionCard"]["busy"] == true;
         // A tabbed Claude panel with option rows (`/plugin`'s install scope) shows its details
         // above the rows and never folds them away (terminal_prompts.rs `highlighted_row`).
         let panel = notice["dialog"]["presentation"]["blocks"]
@@ -72,7 +104,36 @@ impl NativeChatView {
                 self.terminal_dialog_input = None;
                 return Some(self.side_question_card(notice, p, window, cx));
             }
-            let (mut body, actions) = self.render_terminal_dialog(&notice["dialog"], p, window, cx);
+            let (mut body, mut actions) =
+                self.render_terminal_dialog(&notice["dialog"], p, window, cx);
+            // A refused answer says why, and the card can then be closed (`dismiss_notice`).
+            if let Some(error) = snapshot["noticeError"].as_str() {
+                body.push(
+                    div()
+                        .id("terminal-dialog-error")
+                        .role(gpui::Role::Alert)
+                        .text_size(px(14.0 * p.scale))
+                        .line_height(px(19.25 * p.scale))
+                        .text_color(p.card_muted)
+                        .child(error.to_owned())
+                        .into_any_element(),
+                );
+                actions.push(
+                    self.tone_button(
+                        "dismiss-notice",
+                        "Dismiss",
+                        None,
+                        ToneButton::Secondary,
+                        None,
+                        false,
+                        p,
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.invoke(json!({"type":"dismissNotice"}), cx)
+                    }))
+                    .into_any_element(),
+                );
+            }
             // "Ready to code?" with "Tell Claude what to change" highlighted: the plan the
             // feedback is about stays readable above the field.
             if notice["plan"].is_object() {
@@ -123,6 +184,12 @@ impl NativeChatView {
         let approval = notice["approval"].is_object();
         if approval {
             body.extend(self.permission_details(&notice["approval"], collapsed, &key, p, cx));
+            if let Some(line) = notice["autoBlockAt"]
+                .as_str()
+                .and_then(|at| super::tone_card::auto_block_line(at, p))
+            {
+                body.push(line);
+            }
         }
         // The plan "Ready to code?" asks to approve, whole: Claude's pane shows only a screenful of
         // it (`plan` in the chat core's questions/document.rs).
@@ -228,7 +295,7 @@ impl NativeChatView {
                         format!("notice-choice:{}", choice["index"]),
                         choice,
                         shortcut,
-                        snapshot["questionCard"]["busy"] == true,
+                        held,
                         rate_limit,
                         Some(json!({"type":"answer","answer":choice["answer"]})),
                         None,
@@ -248,7 +315,7 @@ impl NativeChatView {
                     shortcut,
                     collapsed,
                     true,
-                    snapshot["questionCard"]["busy"] == true,
+                    held,
                     json!({"type":"answer","answer":choice["answer"]}),
                     p,
                     cx,
@@ -424,15 +491,23 @@ impl NativeChatView {
                         None,
                         kind,
                         None,
-                        false,
+                        held,
                         p,
                     )
-                    .on_click(cx.listener(move |this, _, _, cx| this.invoke(answer.clone(), cx)))
+                    .when(!held, |button| {
+                        button.on_click(
+                            cx.listener(move |this, _, _, cx| this.invoke(answer.clone(), cx)),
+                        )
+                    })
                     .into_any_element(),
                 );
             }
         }
-        if notice["choices"].is_null() && notice["dialog"].is_null() {
+        // A card with rows or a dialog is answered, not closed, until an answer on it is refused
+        // (`dismiss_notice` in the chat core's questions/actions.rs).
+        if (notice["choices"].is_null() && notice["dialog"].is_null())
+            || snapshot["noticeError"].is_string()
+        {
             footer_end.push(
                 self.tone_button(
                     "dismiss-notice",
@@ -510,8 +585,16 @@ impl NativeChatView {
                 },
                 detail: text(&notice["approval"], "source"),
                 trailing,
-                body,
-                footer_start: Vec::new(),
+                body: super::tone_card::dim_pending(body, pending),
+                footer_start: if pending {
+                    vec![super::tone_card::pending_answer_note(
+                        "notice-answer-pending",
+                        &text(&snapshot["approvalPending"], "sending"),
+                        p,
+                    )]
+                } else {
+                    Vec::new()
+                },
                 footer_note: None,
                 // The notice's own actions sit at the footer's right end, ahead of its dialog
                 // buttons and Dismiss.

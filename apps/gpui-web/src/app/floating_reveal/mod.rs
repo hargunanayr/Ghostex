@@ -10,4 +10,24 @@ impl crate::GhostexGpuiApp {
     pub(crate) fn floating_sidebar_shown(&self) -> bool {
         false
     }
+
+    /// A browser page has no traffic lights, so no row keeps room for them.
+    pub(crate) fn window_controls_reserved(&self) -> bool {
+        false
+    }
+
+    /// The page never floats the sidebar over the window's full height (that is macOS only).
+    pub(crate) fn floating_sidebar_full_height(&self) -> bool {
+        false
+    }
+
+    /// A browser page has no traffic lights to show over the header.
+    pub(crate) fn window_lights_over_header(&self) -> bool {
+        false
+    }
+
+    /// The page never floats the sidebar, so its top row never shows the lights.
+    pub(crate) fn floating_sidebar_lights_row(&self) -> Option<(f32, f32)> {
+        None
+    }
 }

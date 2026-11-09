@@ -39,11 +39,22 @@ pub const READ_ALOUD: &str = "readAloud";
 /// calls while it is off, and the phone learns it from `builtInFeaturesOff`. Dictate is not part
 /// of it.
 pub const VOICE_AGENT: &str = "voiceAgent";
+/// Main Hub with Chief of Staff, the Ghostex-wide coordinator (its pinned row in Main Hub on the
+/// desktop and the phone, its agent session and its head role); a beta, off by default. gxserver
+/// takes the head role away and puts its agent to sleep while it is off (server/src/chief/).
+pub const CHIEF: &str = "chief";
+/// GBots, Ghostex's own bots under Chief of Staff in Main Hub; off by default, and off while Main
+/// Hub ([`CHIEF`]) is off. gxserver refuses `/api/gbots` and `ghostex gbots` while it is off
+/// (server/src/gbots/feature.rs).
+pub const GBOTS: &str = "gbots";
 /// Claude (claude.ai in a view opened from the sidebar's top bar, with an account bar to switch
 /// between the saved Claude accounts' sign-ins). Off by default.
 pub const CLAUDE_WEB: &str = "claudeWeb";
-/// Connectors (Settings > Connectors, the `ghostex connectors` verbs and routes). Gated by Enable
-/// Experimental Features as well as its switch.
+/// Grok (grok.com in the same place as Claude, opened from its own sidebar button, with a bar to
+/// switch between Grok logins, each with its own browser profile). Off by default.
+pub const GROK_WEB: &str = "grokWeb";
+/// Connectors (Settings > Connectors, the `ghostex connectors` verbs and routes). Experimental, off
+/// by default.
 pub const CONNECTORS: &str = "connectors";
 /// The Session details panel (the panel beside a Claude chat, its context ring in the header, its
 /// Claude task-list row on Settings > Chat). Beta, off by default.
@@ -52,7 +63,7 @@ pub const SESSION_DETAILS: &str = "sessionDetailsPanel";
 /// line, the chat's Session note row, the note dialog, its hotkey, `ghostex session-note`). Off by
 /// default; the phone learns it from `builtInFeaturesOff`. Saved notes are kept while it is off.
 pub const SESSION_NOTES: &str = "sessionNotes";
-/// OS Integration (Settings > OS Integration). Gated by Enable Experimental Features.
+/// OS Integration (Settings > OS Integration). Experimental, off by default.
 pub const OS_INTEGRATION: &str = "osIntegration";
 /// Debugging (Settings > Debugging). Listed while its switch is on; never gated.
 pub const DEBUGGING: &str = "debugging";
@@ -203,7 +214,7 @@ pub fn disabled_features_with(read: impl Fn(&str) -> Option<bool>) -> Vec<&'stat
 }
 
 /// The setting that must also be on before built-in extension `id` shows at all (`gatedBy`:
-/// Enable Experimental Features for Connectors and OS Integration).
+/// none since Enable Experimental Features became one switch each on 2026-11-09).
 /// Its switch sits on top of that gate; while the gate is closed its Store card is left out.
 pub fn gate_key(id: &str) -> Option<&'static str> {
     entry(id)?.get("gatedBy").and_then(J::as_str)
@@ -300,4 +311,26 @@ pub fn turned_off_message(id: &str) -> String {
         "{} is turned off. Turn it on in Settings > Extensions.",
         title(id)
     )
+}
+
+/*
+CDXC:Extensions 2026-11-09 WHY:
+"Connectors is turned off … From a terminal: ghostex settings set connectorsHidden false" sent people
+to a command the CLI refuses: Connectors' switch is not agent-writable (only the owner turns it on, in
+the Settings window). A switch the CLI may write keeps the `set` command; any other points to
+`ghostex settings open <key>`, which opens its Settings page for the user to flip it there.
+*/
+/// " From a terminal: …" for turning `key` to `value`: `ghostex settings set` when agents and the
+/// CLI may write that setting, `ghostex settings open` (its page in the Settings window) when only
+/// the owner may.
+pub fn terminal_hint(key: &str, value: bool) -> String {
+    let writable = crate::help::catalog()
+        .settings
+        .into_iter()
+        .any(|entry| entry.key == key && entry.agent_writable);
+    if writable {
+        format!(" From a terminal: ghostex settings set {key} {value}")
+    } else {
+        format!(" From a terminal: ghostex settings open {key}")
+    }
 }

@@ -33,8 +33,33 @@ impl GhostexGpuiApp {
         let id = group.group_id.clone();
         let hover_id = id.clone();
         let drag_id = id.clone();
-        let menu = group.menu.clone();
         let scale = appearance.scale;
+        // The home project's header is Main Hub (chief.rs): the flower and "Main Hub", Main Hub's
+        // settings over the project's menu, and its card beside the sidebar; everything else is
+        // the project header's own, its click folding it like any project's.
+        let home = self.native_sidebar.snapshot.as_ref().and_then(|snapshot| {
+            snapshot
+                .home_headers
+                .iter()
+                .find(|home| home.group_id == group.group_id)
+                .cloned()
+        });
+        let menu = match &home {
+            Some(home) => {
+                let mut items = self
+                    .native_sidebar_home_menu(&home.machine_id)
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
+                items.push(json!({ "separator": true }));
+                items.extend(group.menu.as_array().cloned().unwrap_or_default());
+                std::sync::Arc::new(Value::Array(items))
+            }
+            None => group.menu.clone(),
+        };
+        let home_title = home
+            .as_ref()
+            .map(|_| super::chief_row_view::HOME_LABEL.to_string());
         let hovered = self.native_sidebar.hovered_group.as_ref() == Some(&id);
         let tooltip_span = self
             .native_sidebar
@@ -58,7 +83,7 @@ impl GhostexGpuiApp {
             .and_then(Value::as_str)
             .and_then(super::images::sidebar_image);
         // Set only on a bot's row, which draws a gateway dot instead of git stats and counts.
-        let bot_gateway_running = group.bot_gateway_running();
+        let bot_status = group.bot_status();
         // CDXC:Icons 2026-10-24 DECISION:
         // User chose "Keep the folder": a user-made session group's header draws a folder instead of its title's first letter, which made "Group 6" and a project named "g…" look alike. The letter tile (CDXC:Icons 2026-09-24 below) stays for projects only.
         let folder_icon = group.owner_group_id.is_some();
@@ -102,7 +127,7 @@ impl GhostexGpuiApp {
             .native_sidebar
             .name_editor
             .as_ref()
-            .filter(|editor| editor.kind == "group" && editor.id == id)
+            .filter(|editor| home.is_none() && editor.kind == "group" && editor.id == id)
         {
             div()
                 .flex_1()
@@ -125,14 +150,20 @@ impl GhostexGpuiApp {
                 .items_center()
                 .font_weight(gpui::FontWeight::LIGHT)
                 .gap(px(5.0 * scale))
-                .child(div().min_w_0().truncate().child(group.title.clone()))
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .child(home_title.clone().unwrap_or_else(|| group.title.clone())),
+                )
                 .children(
                     group
                         .machine_names
                         .iter()
+                        .filter(|_| home.is_none())
                         .map(|(_, short)| machine_name_chip(short, appearance)),
                 )
-                .when_some(tooltip, |title, tooltip| {
+                .when_some(tooltip.filter(|_| home.is_none()), |title, tooltip| {
                     title.when(
                         self.native_sidebar.pointer_inside
                             && self.native_sidebar.menu.is_none()
@@ -165,7 +196,7 @@ impl GhostexGpuiApp {
         h_flex()
             .id(format!("native-sidebar-project-{id}"))
             .role(gpui::Role::TreeItem)
-            .aria_label(group.title.clone())
+            .aria_label(home_title.clone().unwrap_or_else(|| group.title.clone()))
             .aria_expanded(!group.collapsed)
             .relative()
             .h(px(30.0 * scale))
@@ -182,7 +213,27 @@ impl GhostexGpuiApp {
                 let header_bounds = header_bounds.clone();
                 move |bounds, _, _| header_bounds.set(Some(bounds))
             })
+            // Resting on Main Hub's header opens its card beside the sidebar (chief.rs).
+            .when(home.is_some(), |row| {
+                let header_bounds = header_bounds.clone();
+                let card_key = id.clone();
+                row.on_hover(cx.listener(move |app, hovered: &bool, _, cx| {
+                    let top = header_bounds.get().map(|bounds| bounds.top().as_f32());
+                    app.hover_main_hub_row(card_key.clone(), top, *hovered, cx);
+                }))
+                .on_any_mouse_down(cx.listener(|app, _, _, cx| app.dismiss_main_hub_card(cx)))
+            })
             .child(self.native_sidebar.header_hover.probe(hover_id))
+            // Where the pick-an-agent menu of this computer's Chief hangs (chief.rs).
+            .when(
+                home.as_ref()
+                    .is_some_and(|home| home.machine_id == ghostex_gx_core::LOCAL_MACHINE_ID),
+                |row| {
+                    row.on_prepaint(super::menus::record_menu_owner(
+                        &self.native_sidebar.chief_row_bounds,
+                    ))
+                },
+            )
             // CDXC:Projects 2026-10-06 DECISION:
             // User: "Make the chevron to the left of the project part of the button, not outside it". The chevron sits inside the header's hover/selected box at its left edge and is not a hit area of its own: a click on it is the row's click, which expands/collapses the project, and a drag from it moves the project. This supersedes the 2026-09-19 separate chevron button hanging outside the row.
             .child(
@@ -200,13 +251,19 @@ impl GhostexGpuiApp {
                 hud["settings"]["showProjectIcons"].as_bool() != Some(false),
                 |row| {
                     row.child(match icon_image {
+                        _ if home.is_some() => gpui::svg()
+                            .path(super::chief_row_view::FLOWER_ICON)
+                            .size(px(16.0 * scale))
+                            .flex_shrink_0()
+                            .text_color(appearance.muted)
+                            .into_any_element(),
                         _ if folder_icon => gpui::svg()
                             .path("titlebar/folder.svg")
                             .size(px(16.0 * scale))
                             .flex_shrink_0()
                             .text_color(appearance.muted)
                             .into_any_element(),
-                        _ if bot_gateway_running.is_some() => letter_tile(
+                        _ if bot_status.is_some() => letter_tile(
                             &group.title,
                             super::bots::hermes_color(),
                             rgb(0x111111).into(),
@@ -234,10 +291,10 @@ impl GhostexGpuiApp {
                 super::sections::section_drop_highlight(row, scale)
             })
             .child(title)
-            .when_some(bot_gateway_running, |row, running| {
-                row.child(super::bots::bot_gateway_dot(running, appearance))
+            .when_some(bot_status, |row, status| {
+                row.child(super::bots::bot_status_dot(status, appearance))
             })
-            .when(!hovered && bot_gateway_running.is_none(), |row| {
+            .when(!hovered && bot_status.is_none(), |row| {
                 row.children(super::project_status::project_status(
                     group, hud, appearance,
                 ))

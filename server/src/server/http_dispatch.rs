@@ -19,13 +19,27 @@ pub(super) async fn handle_http_request(
     request: Request<Body>,
 ) -> std::result::Result<Response<Body>, Infallible> {
     let started_at = Instant::now();
+    let _in_flight = super::stall_watch::request_started(request.uri().path());
     let client = request
         .extensions()
         .get::<SocketAddr>()
         .map(|address| address.ip().to_string());
     let headers = request.headers().clone();
     let request_id = request_id(&headers);
-    let mut routed = route_http(state.clone(), request, request_id).await;
+    // Who asked, for the security log (server/src/audit/caller.rs).
+    let caller = crate::audit::Caller::from_headers(
+        &headers,
+        &state.auth_token,
+        &state.device_api_tokens,
+        &state.security.session_tokens,
+    );
+    // Boxed: the routing future is large, and moving it through the caller scope by value took
+    // over a megabyte of stack in debug builds (a route test overflowed).
+    let mut routed = crate::audit::with_caller(
+        caller,
+        Box::pin(route_http(state.clone(), request, request_id)),
+    )
+    .await;
     apply_cors_headers(&headers, &mut routed.response, &state.config);
     let status = routed.response.status().as_u16();
     let mut details = json!({

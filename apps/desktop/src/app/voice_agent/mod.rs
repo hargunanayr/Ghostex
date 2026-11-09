@@ -18,8 +18,8 @@
 //! - `memory.rs`: the remembered last conversation the panel offers to continue.
 //! - `typing.rs`: whether the user is typing, which keeps the agent's follow from switching sessions.
 //! - `dictation.rs`: the chat box's and the terminal bar's Dictate: `recorder.rs` records to a
-//!   file first, then gxserver keeps and transcribes it with the engine picked in Settings › Voice
-//!   (a local model, OpenAI or xAI); `dictate_hotkey.rs` the hotkey's tap and hold;
+//!   file first, then gxserver keeps and transcribes it with the engine picked in Settings ›
+//!   Dictation (Hex, OpenAI or xAI); `dictate_hotkey.rs` the hotkey's tap and hold;
 //!   `microphones.rs` the input devices the microphone picker offers.
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -36,6 +36,7 @@ pub(crate) mod dictation;
 pub(crate) mod endpoint;
 pub(crate) mod focus;
 pub(crate) mod header_button;
+pub(crate) mod hex_install;
 pub(crate) mod hold_to_talk;
 pub(crate) mod memory;
 pub(crate) mod microphones;
@@ -51,6 +52,6 @@ pub(crate) mod typing;
 pub(crate) use conversation::{VoiceAgent, voice_agent_on};
 pub(crate) use dictation::{
     Dictate, DictateEvent, DictateFailure, DictatePhase, clock as dictation_clock, dictate_engine,
-    download_engine_model, previous_recording, refresh_engine, refresh_previous,
+    previous_recording, refresh_engine, refresh_previous,
 };
 pub(crate) use endpoint::set_local_voice_endpoint;

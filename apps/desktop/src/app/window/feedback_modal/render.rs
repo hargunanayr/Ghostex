@@ -2,8 +2,8 @@ use super::images::FEEDBACK_MAX_IMAGES;
 use super::state::{FeedbackStep, GpuiFeedbackModalWindow, github_username};
 use crate::app::window::native_modal_kit::*;
 use gpui::{
-    AnyElement, ClickEvent, Context, ExternalPaths, InteractiveElement as _, IntoElement,
-    ParentElement as _, Render, StatefulInteractiveElement as _, Styled as _, Window, div, px,
+    AnyElement, Context, ExternalPaths, InteractiveElement as _, IntoElement, ParentElement as _,
+    Render, StatefulInteractiveElement as _, Styled as _, Window, div, px,
 };
 use gpui_component::v_flex;
 use std::rc::Rc;
@@ -99,10 +99,13 @@ impl GpuiFeedbackModalWindow {
                 .role(gpui::Role::Switch)
                 .aria_toggled(a11y_toggled(self.collect_with_agent))
                 .aria_label("Collect more data with an agent")
-                .cursor_pointer()
-                .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
-                    this.toggle_collect_with_agent(cx)
-                })),
+                .switch_row_press(
+                    switch_row_wash(p.foreground),
+                    false,
+                    bind_press(cx, |this: &mut Self, _window, cx| {
+                        this.toggle_collect_with_agent(cx)
+                    }),
+                ),
             )
             .into_any_element();
         let subtitle = if self.collect_with_agent {
@@ -197,7 +200,7 @@ impl GpuiFeedbackModalWindow {
                     &p,
                     "feedback-open-in-browser",
                     "Open a GitHub issue in your browser",
-                    self.busy.then(|| modal_spinner(p.primary_foreground)),
+                    self.busy.then(|| modal_spinner(p.primary_button_text())),
                     ModalButtonTone::Primary,
                     self.busy,
                     |this, _window, cx| this.open_offline_issue(cx),
@@ -223,7 +226,7 @@ impl GpuiFeedbackModalWindow {
 
     fn render_footer(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = self.palette;
-        let spinner = || self.busy.then(|| modal_spinner(p.primary_foreground));
+        let spinner = || self.busy.then(|| modal_spinner(p.primary_button_text()));
         let buttons = match &self.step {
             FeedbackStep::Compose => vec![
                 modal_action_button(

@@ -20,7 +20,7 @@ pub(crate) fn terminal(platform: Platform) -> Section {
     settings.extend([
         row("ghosttySettingsActions", "Ghostty settings actions", "Recommended terminal settings, Import from Ghostty (fonts and cursor, not the theme), the Ghostty app's config, Ghostex's own terminal config, Ghostty docs, and defaults.").options(&[opt("Open Ghostex config", "openGhostexTerminalConfigFile"), opt("Open Ghostty config", "openGhosttyConfigFile"), opt("Import from Ghostty", "importGhosttyConfig"), opt("Apply recommended", "applyRecommendedGhosttySettings"), opt("Reset to defaults", "resetGhosttySettingsToDefault"), opt("Ghostty docs", "openGhosttySettingsDocs")]),
         row("terminalBackgroundMode", "Terminal background", "Only changes the terminal panes. Black / white is pure black in dark mode and pure white in light mode.").options(&[opt("Black / white", "pure"), opt("Follow theme", "theme"), opt("Custom color", "custom")]),
-        row("workspaceBackgroundColor", "Terminal background color", "Custom terminal background, painted behind terminal text in dark mode."),
+        row("workspaceBackgroundColor", "Terminal background color", "Custom terminal background, painted behind terminal text in dark and light mode."),
         row("terminalBackgroundOpacity", "Background opacity (%)", "How much of the work area's glass tint terminals keep while transparency is on (Settings > Interface > Transparency). 100% matches the rest of the work area; lower shows more of what is behind the window. Off while transparency is off."),
         // CDXC:Settings 2026-10-29 DECISION (cleanup Q15, Q16, Q18): Background blur (Theme's Blur slider) and
         // Background Image Fit (the image always covers the pane) left this page; Show notification on
@@ -44,15 +44,8 @@ pub(crate) fn terminal(platform: Platform) -> Section {
         row("showSessionIdInTerminalPanes", "Show session id in terminal panes", "Show the provider session id in the top-right corner of terminal panes."),
         row("promptEditorBackend", format!("Editor for {} and $EDITOR prompts", hotkey_label("ctrl+g", platform)), format!("Choose which editor {} uses when a terminal prompt asks for $EDITOR.", hotkey_label("ctrl+g", platform))).options(PROMPT_EDITOR_BACKEND_OPTIONS),
     ]);
-    // Shown only on macOS (Metal), and the Terminal page and search list it only while Enable
-    // Experimental Features is on (`setting_visible` and the search filter in the desktop's settings_modal/search.rs).
-    if platform == Platform::MacOs {
-        settings.push(row(
-            "terminalShadersEnabled",
-            "Custom shaders (experimental)",
-            "Apply the shaders from Ghostex's terminal config in order. macOS with Metal only; tested on Apple Silicon. Intel Mac rendering is not yet validated. Windows and Linux are unsupported. Turn off to restore ordinary rendering in the same sessions.",
-        ));
-    }
+    // Custom shaders (`terminalShadersEnabled`) is the Terminal shaders switch in Settings >
+    // Extensions > Experimental now (CDXC:Extensions 2026-11-09 in data/official_extensions.rs).
     section("terminal", "Terminal", settings)
 }
 

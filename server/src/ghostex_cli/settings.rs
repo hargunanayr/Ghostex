@@ -43,6 +43,7 @@ const SETTINGS_MODAL_TABS: &[&str] = &[
     "voiceAgent",
     "voice",
     "connectors",
+    "collab",
     "workspaces",
     "cloudBoxes",
     "extensions",
@@ -52,6 +53,7 @@ const SETTINGS_MODAL_TABS: &[&str] = &[
     "agents",
     "accounts",
     "secrets",
+    "security",
     "actions",
     "openTargets",
     "hotkeys",
@@ -162,7 +164,11 @@ pub(super) fn read_settings_file() -> CliResult<Map<String, Value>> {
             &read.problems,
         );
     }
-    Ok(read.object.unwrap_or_default())
+    let mut object = read.object.unwrap_or_default();
+    // The experimental switches in place of Enable Experimental Features (CDXC:Extensions
+    // 2026-11-09 in the settings catalog), as the app and gxserver read them.
+    ghostex_settings_catalog::migrate_experimental_features_switch(&mut object);
+    Ok(object)
 }
 
 /// The catalog default of `entry` on this computer: a platform default (Enable transparency is
@@ -650,7 +656,7 @@ fn app_not_running_error(error: CliError, entry: &CatalogEntry) -> CliError {
 
 /// CDXC:Settings 2026-09-09 DECISION:
 /// User: agent settings writes go through the running desktop app (renderer command -> the Settings modal's own save path), not a direct file write, so every save gets the same normalization and fan-out; when the app is not running the command fails instead of writing the file.
-/// SEE-ALSO: packages/gx-core/src/renderer_commands/verbs.rs (`updateSettingsPatch`), apps/desktop/src/app/gx_store/renderer_commands/perform.rs, packages/settings-catalog/src/help/ (the catalog this validates against).
+/// SEE-ALSO: packages/gx-core/src/renderer_commands/verbs.rs (`updateSettingsPatch`), apps/desktop/src/app/gx_store/renderer_commands/perform.rs, packages/settings-catalog/src/help/ (the catalog this validates against), server/src/headless_settings.rs (a computer without the desktop app, where gxserver saves the write itself, issue #475).
 fn apply_setting(entry: &CatalogEntry, value: Value, flags: &Flags, verb: &str) -> CliResult<()> {
     if !entry.agent_writable {
         return Err(not_writable_error(entry));

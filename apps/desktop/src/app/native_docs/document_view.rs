@@ -101,7 +101,11 @@ impl GhostexGpuiApp {
         let svg_source = document.svg_source;
         let media = kind.is_viewer();
         let published_page = kind == DocsFileKind::Page;
-        let page_url = document.page.as_ref().map(|page| page.url.clone());
+        let page_url = published_page
+            .then(|| document.page.as_ref().map(|page| page.url.clone()))
+            .flatten();
+        // A Ghostex page file shows its page, which has no annotation tool.
+        let page_file = kind == DocsFileKind::Html && document.page.is_some();
         // CDXC:Docs 2026-10-01 WHY: the Show files button is the header row's last control, not a corner overlay drawn over the row's right end; a guessed reserve for the overlay let it cover the actions (the Open With arrow and Reload) whenever the row and the overlay disagreed.
         // CDXC:Docs 2026-10-09 DECISION: User: "when i hover the button to show files list pls keep the bar behind to not change". The button stays in the row while the list floats over it (a peek or a drawer) and goes only once the list is docked, so opening the floating list never re-lays out the bar: the title, the meta strip and the other buttons stay exactly where they were.
         let restore = (!layout.docked).then(|| self.render_native_docs_restore_button(p, cx));
@@ -250,7 +254,7 @@ impl GhostexGpuiApp {
                     .text_size(px(WORKAREA_HEADER_TITLE_TEXT_SIZE))
                     .text_color(p.subtle)
                     .when(review.is_some(), |this| this.child("Agent reply"))
-                    .when(published_page, |this| this.child("Interactive page"))
+                    .when(published_page, |this| this.child("Ghostex page"))
                     .children(review.clone().filter(|title| !title.is_empty()))
                     .when(deleted, |this| this.child("Deleted"))
                     .when(dirty, |this| this.child("Edited"))
@@ -315,7 +319,7 @@ impl GhostexGpuiApp {
                             )),
                         )
                     })
-                    .when(kind == DocsFileKind::Html, |this| {
+                    .when(kind == DocsFileKind::Html && !page_file, |this| {
                         let annotate = html_annotate;
                         let toggle_path = path.clone();
                         this.child(
@@ -405,7 +409,7 @@ impl GhostexGpuiApp {
                             )),
                         )
                     })
-                    // CDXC:SessionChat 2026-10-24 WHY: a page an agent published (Settings > Chat > Open chat pages in: Files) has no file, so its header offers what the floating page window's does: open it in the browser, and close it.
+                    // CDXC:SessionChat 2026-10-24 WHY: a page an agent published (Settings > Chat > Open Ghostex pages in: Files) has no file, so its header offers what the floating page window's does: open it in the browser, and close it.
                     .when(published_page, |this| {
                         let close_path = path.clone();
                         this.child(
@@ -719,6 +723,7 @@ impl GhostexGpuiApp {
         let Some(editor) = document.editor.clone() else {
             return notice("files-view/t-refresh-2.svg", "Loading file".to_string());
         };
+        let read_only = document.read_only;
         let find = self.render_native_docs_code_find(p, cx);
         div()
             .relative()
@@ -736,6 +741,7 @@ impl GhostexGpuiApp {
                         // `Editor` brings the theme's code font, size and row height; the text
                         // view keeps the Docs mono font at the input text size and rows.
                         Editor::new(&editor)
+                            .readonly(read_only)
                             .scrollbar_show(ScrollbarMode::Always)
                             .appearance(false)
                             // Under glass the Kit theme's opaque gutter and current-line

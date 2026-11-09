@@ -79,6 +79,14 @@ pub fn handle_coordinator_endpoint(
         "/api/coordinatorBoard" => {
             let key = required_ids(params, "projectId", "sessionId")?;
             resolve_coordinator(db, &key)?;
+            // "Don't show again" on the coordinator tips, for every coordinator (intro.rs).
+            if params.get("op").and_then(Value::as_str) == Some("hideIntro") {
+                super::intro::hide_intro(db)?;
+                return Ok(CoordinatorEndpointOutput {
+                    result: json!({ "introHidden": true }),
+                    changed_sessions: Vec::new(),
+                });
+            }
             let threads = super::panel::cached_thread_rows(&key);
             let (result, _) = super::board::handle_board_request(db, &key, &threads, params)?;
             Ok(CoordinatorEndpointOutput {
@@ -608,6 +616,19 @@ pub fn coordinator_view(
         },
         "threads": threads,
         "playbookNotice": playbook_notice,
+        "networkNotice": network_notice(),
         "generatedAt": Utc::now().to_rfc3339(),
     }))
+}
+
+/// What `coordinator status` says while this computer is offline (CDXC:OfflineHold in
+/// network_status): Ghostex holds its nudges and reports, so silence from the threads is expected.
+fn network_notice() -> Option<String> {
+    crate::network_status::offline_since().map(|since| {
+        format!(
+            "{} (since {}). Ghostex holds nudges, not-moving reports and reports to you until it's back, then sends one line saying so.",
+            crate::network_status::OFFLINE_LABEL,
+            crate::network_status::local_clock(since)
+        )
+    })
 }

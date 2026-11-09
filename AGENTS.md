@@ -193,7 +193,13 @@ Some controls are deliberately owned by a single shared component so every surfa
 
 - **Segmented single-select** ("pick exactly one of N": Sidebar version, Preset, Add Worktree mode, Automate schedule/execution): `modal_segmented_control` / `modal_bordered_segmented_control` in `apps/desktop/src/app/window/native_modal_kit/segmented_and_rail.rs`, the stock shadcn ButtonGroup shape with a highlighted fill on the selected segment.
 - **Toggle switch**: `modal_switch` in `apps/desktop/src/app/window/native_modal_kit/controls.rs`, one shape app-wide. Don't reintroduce per-surface pill overrides.
+- **Switch rows toggle from anywhere on the row** (user, 2026-11-06: "allow clicking in the center of any toggle bar or on it's title to toggle it (not just the toggle button itself)"): a row that pairs a title with a switch makes the whole row the click target, with a pointer cursor and a hover wash. Desktop: `SwitchRowExt::switch_row_press` (native_modal_kit/controls.rs) for `modal_panel_row` and hand-built rows; Settings' `switch_control`/`small_switch_control` return a `SwitchControl` that `setting_row` and `toggle_field_with` turn into a row-wide toggle (`toggle_from_row` wraps a row built elsewhere). The switch and other controls in the row (`stopping_press`, `click_shield`) stop the click, so pressing the switch toggles once. Phone: `SwitchRow` in `apps/mobile/app/src/components/common/SwitchRow.tsx`. A new switch row must use these, not a switch-only click target.
+- **Context menu**: the sessions sidebar's right-click menu (`apps/desktop/src/app/native_sidebar/menus.rs`) is the reference for every context menu and ⋯ menu in the app: its surface, rows, icons, hover, spacing and submenus. Reuse its builder instead of styling a new one, and never give a menu a black or near-black fill (user, 2026-11-06: "the context menu in the sidebar is the one we should imitate in the rest of the app").
 - **Focus ring**: the chat composer's ring is the reference, 3px at `ring-ring/20` plus `border-ring`. Every shared primitive uses that value; never raise it back to `ring-ring/50` or `/30`. Surfaces that deliberately have no ring (the modal tab rails) stay ringless.
+
+### Show each thing once
+
+Never show the same action or the same piece of information twice in one view. If a chip already opens an issue, the expanded card doesn't add an "Open issue #433" button as well: make the chip the button, or hide the chip while the button shows. The same goes for cards, menus, headers, pills, toasts and notices, on every surface (user, 2026-11-06: "we shouldn't show same button/info twice like this").
 
 ### UX mockups: one HTML file per screen, annotation-friendly classes
 

@@ -69,7 +69,15 @@ impl NativeChatView {
                 "hasRuntime": self.runtime.is_some(),
             }),
         );
-        if !self.composer_ready || self.draft.trim().is_empty() {
+        if !self.composer_ready {
+            return;
+        }
+        // A picture still on its way: the message waits for it (composer_attach.rs).
+        let requested = if interrupt { "interrupt" } else { mode };
+        if self.hold_send_for_attachments(requested, cx) {
+            return;
+        }
+        if self.draft.trim().is_empty() {
             return;
         }
         if mode != "send" && self.snapshot["queue"]["capabilities"]["canQueue"] != true {
@@ -344,10 +352,18 @@ impl NativeChatView {
         } else {
             self.render_working_card(p, cx)
         };
-        let card_above_box = working_card.is_some();
+        // The session's computer is offline: its card tops the stack, above the working card
+        // (computer_card.rs).
+        let computer_card = if maximized {
+            None
+        } else {
+            self.render_computer_card(p, cx)
+        };
+        let card_above_box = working_card.is_some() || computer_card.is_some();
         // The last transcript row's own gap is the space above the card (working_card.rs).
         footer = footer
             .when(card_above_box, |this| this.pt_0())
+            .children(computer_card)
             .children(working_card);
         // What stacks between the card and the box.
         let mut waiting: Vec<AnyElement> = Vec::new();
@@ -357,29 +373,32 @@ impl NativeChatView {
         if let Some(card) = self.render_composer_not_ready(p, cx) {
             waiting.push(super::suggestions::stack_member(card, &stack_top).into_any_element());
         } else if let Some(error) = self.snapshot["operationError"].as_str() {
-            // An answer only the terminal can take (gxserver's `ANSWER_IN_TERMINAL`) offers the way there.
-            let open_terminal =
-                (self.snapshot["operationErrorCode"] == "answerInTerminal").then(|| {
-                    div().flex().mt(px(6.0 * p.scale)).child(self.chat_button(
-                        "answer-in-terminal".into(),
-                        "Open terminal".into(),
-                        json!({"type":"switchToTerminal"}),
-                        p,
-                        cx,
-                    ))
-                });
-            let retry = (self.snapshot["operationErrorCode"] == "unreachable").then(|| {
-                div()
-                    .flex()
-                    .mt(px(6.0 * p.scale))
-                    .child(self.unreachable_retry(p, cx))
-            });
+            // An answer only the terminal can take (gxserver's `ANSWER_IN_TERMINAL`) offers the way
+            // there; a call Ghostex didn't answer offers Retry. Both sit in the opened card.
+            let mut actions = Vec::new();
+            if self.snapshot["operationErrorCode"] == "answerInTerminal" {
+                actions.push(self.chat_button(
+                    "answer-in-terminal".into(),
+                    "Open terminal".into(),
+                    json!({"type":"switchToTerminal"}),
+                    p,
+                    cx,
+                ));
+            }
+            if self.snapshot["operationErrorCode"] == "unreachable" {
+                actions.push(self.unreachable_retry(p, cx));
+            }
+            let card = match &self.snapshot["operationErrorCard"] {
+                card if card.is_object() => card.clone(),
+                _ => ghostex_gx_chat_core::session::error_card::error_card(
+                    error,
+                    self.snapshot["operationErrorCode"].as_str(),
+                ),
+            };
             waiting.push(
                 div()
-                    .text_color(gpui::rgb(0xef9999))
-                    .child(error.to_string())
-                    .children(open_terminal)
-                    .children(retry)
+                    .w_full()
+                    .child(self.error_card("chat-operation-error", &card, actions, p, cx))
                     .child(super::suggestions::stack_marker(&stack_top))
                     .into_any_element(),
             );
@@ -389,6 +408,9 @@ impl NativeChatView {
         }
         if let Some(requests) = self.render_secret_requests(p, window, cx) {
             waiting.push(requests);
+        }
+        if let Some(collab) = self.render_collab(p, cx) {
+            waiting.push(collab);
         }
         if let Some(line) = self.render_relayed_answer_lines(p) {
             waiting.push(line);
@@ -605,7 +627,7 @@ impl NativeChatView {
                         this.opacity(frame.controls_opacity)
                             .top(px(frame.controls_offset * s))
                     })
-                    .when(!collapsed, |this| {
+                    .when(!collapsed && !self.collab_guest(), |this| {
                         this.child(self.render_option_pills(&model, &effort, p, cx))
                     })
                     .child(self.render_toolbar(p, cx))
@@ -631,7 +653,7 @@ impl NativeChatView {
         // CDXC:SessionChat 2026-09-18 WHY: React's inline composer had a zero-height notification section before its field, contributing one grid gap even while idle. Reserve that same gap here when nothing stacks above the box.
         // The chat's pills ride in a strip along the box's top edge, inside its border
         // (pills_strip.rs); what the box holds under it is unchanged.
-        let pills_strip = if maximized {
+        let pills_strip = if maximized || self.collab_guest() {
             None
         } else {
             self.render_pills_strip(p, cx)
@@ -670,7 +692,7 @@ impl NativeChatView {
                         .children(self.render_dictation_pill(p, cx)),
                 ),
         );
-        if self.status_line_reserved() {
+        if self.status_line_reserved() && !self.collab_guest() {
             footer = footer.child(self.render_context_status(p, cx));
         }
         div()

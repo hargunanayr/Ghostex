@@ -19,10 +19,22 @@ use serde::Deserialize;
 pub(crate) const SECTION_OPEN: &str = "\u{E000}section:";
 pub(crate) const SECTION_CLOSE: &str = "\u{E000}/section";
 
-/// The "In progress" colour (user pick 2026-10-11: #00A6ED). It reads 2.7:1 on a white chat, too
-/// faint for a label, so the light chat takes the same hue darkened to #0077B6 (4.9:1).
-const IN_PROGRESS_DARK: u32 = 0x00a6ed;
-const IN_PROGRESS_LIGHT: u32 = 0x0077b6;
+/// CDXC:MarkedHandovers 2026-11-06 DECISION:
+/// User: "please make in progress color in handover headings #C68A06 like Moving is in the board". The "In progress" heading takes the board's Moving amber in both appearances (the board uses this one colour on dark and light, so there is no darker light shade); it replaces the earlier #00A6ED / #0077B6 pick of 2026-10-11.
+const IN_PROGRESS_DARK: u32 = 0xc68a06;
+const IN_PROGRESS_LIGHT: u32 = 0xc68a06;
+
+/// CDXC:MarkedHandovers 2026-11-08 DECISION:
+/// User: "please make Needs you pinkish color in the handover section headings, and make blocked red". "Needs you" takes the sidebar's pink question dot (`QUESTION_COLOR` #f472b6 in native_sidebar/status.rs) and "Blocked" its red dot (`FAILED_COLOR` #ef4444), on the dark chat; the light chat keeps a darker shade of each so the text stays readable on white (pink #be185d, red #dc2626). It replaces the orange #fb923c / #c2410c "Needs you" of 2026-10-12. "Kicked off" had the same pink and moved to sky blue the same day (below).
+const NEED_DARK: u32 = 0xf472b6;
+const NEED_LIGHT: u32 = 0xbe185d;
+const BLOCKED_DARK: u32 = 0xef4444;
+const BLOCKED_LIGHT: u32 = 0xdc2626;
+
+/// CDXC:MarkedHandovers 2026-11-08 DECISION:
+/// User: "give 'Kicked off' its own hue so it no longer matches Needs you's pink", one no other heading uses and clear of Read this's amber, Suggestions' purple and Shipped's indigo (for example a sky blue). "Kicked off" is sky blue (#38bdf8 dark, #0369a1 light): In progress is amber now, so no heading is blue, and it sits about 26 degrees from Untested's teal and 40 from Shipped's indigo.
+const KICKED_DARK: u32 = 0x38bdf8;
+const KICKED_LIGHT: u32 = 0x0369a1;
 
 /// How the chat draws marked sections (`markedHandoversStyle`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -173,14 +185,14 @@ pub(crate) fn blend_strength(palette: Hsla, text: Hsla, strength: f32) -> Hsla {
 /// A kind's colour in the chat's light or dark appearance (the mockup's palette).
 pub(crate) fn kind_color(kind: &str, light: bool) -> Hsla {
     let (dark, light_color) = match kind {
-        "need" => (0xfb923c, 0xc2410c),
+        "need" => (NEED_DARK, NEED_LIGHT),
         "done" => (0x4ade80, 0x15803d),
         "read" => (0xfbbf24, 0xb45309),
-        "kicked" => (0xf472b6, 0xbe185d),
+        "kicked" => (KICKED_DARK, KICKED_LIGHT),
         "progress" => (IN_PROGRESS_DARK, IN_PROGRESS_LIGHT),
         "untested" => (0x2dd4bf, 0x0f766e),
         "shipped" => (0x818cf8, 0x4f46e5),
-        "blocked" => (0xf87171, 0xdc2626),
+        "blocked" => (BLOCKED_DARK, BLOCKED_LIGHT),
         "comms" => (0xa3e635, 0x4d7c0f),
         "parked" => (0x94a3b8, 0x475569),
         "held" => (0xd6a77a, 0x92400e),
@@ -417,4 +429,19 @@ pub(crate) fn preview_reply(
         .text_color(look.prose)
         .children(children)
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::kind_color;
+    use gpui::rgb;
+
+    /// CDXC:MarkedHandovers 2026-11-06: "In progress" is the board's Moving amber (#C68A06) in the
+    /// dark and the light chat alike.
+    #[test]
+    fn in_progress_is_the_boards_moving_amber_in_both_appearances() {
+        let amber = rgb(0xc68a06).into();
+        assert_eq!(kind_color("progress", false), amber);
+        assert_eq!(kind_color("progress", true), amber);
+    }
 }

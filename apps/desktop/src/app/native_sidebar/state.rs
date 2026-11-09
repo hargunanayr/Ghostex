@@ -26,6 +26,13 @@ pub(crate) struct NativeSidebarState {
     pub(crate) next_menu_request: u64,
     /// Where the sidebar menu button was last painted, so its menu can drop down from it.
     pub(crate) more_button_bounds: std::rc::Rc<std::cell::Cell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    /// Chief's row (native_sidebar/chief.rs): where it was last painted, for its menus; whether
+    /// the other computers' Chiefs are unfolded under it; and the agents its Change Agent offers
+    /// with the one it runs on, from the last `/api/chief` status.
+    pub(crate) chief_row_bounds: super::menus::MenuOwner,
+    pub(crate) chief_others_expanded: bool,
+    pub(crate) chief_agents: Vec<(String, String)>,
+    pub(crate) chief_agent_id: Option<String>,
     /// The trigger of the menu the last outside press dismissed, and where that press landed: a
     /// click on that trigger made by the same press is the closing half of a toggle (menus.rs).
     pub(crate) menu_dismissed_by_press: Option<(String, gpui::Point<gpui::Pixels>)>,
@@ -73,6 +80,14 @@ pub(crate) struct NativeSidebarState {
     /// The list the card shows (the web build draws it in its own page).
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     pub(crate) links_card_list: Option<gpui::Entity<super::links_list::SessionLinksList>>,
+    /// The Main Hub row the pointer rests on (its home header's group id, or `chief-row` for the
+    /// row under the Spaces bar), and the top of that row in the window when its card opened
+    /// (chief.rs, window/main_hub_card.rs on the desktop, web_host/main_hub_card.rs on the web).
+    pub(crate) main_hub_card_pending: Option<String>,
+    pub(crate) main_hub_card_open: Option<(String, f32)>,
+    /// The card's window on the desktop.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub(crate) main_hub_card_window: Option<gpui::AnyWindowHandle>,
     /// The session whose links list is open in the header dropdown (native_sidebar/links_list.rs).
     pub(crate) links_list_session: Option<ghostex_gx_core::SessionKey>,
     /// The pointer is on the Commands row's account-usage pin (usage.rs); the unpinned strip peeks while it is.

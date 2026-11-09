@@ -377,6 +377,27 @@ pub fn endpoint_for(path: &str) -> Option<EndpointDescriptor> {
         | "/api/removeSettingsSyncComputer"
         | "/api/restoreSettingsSyncComputer"
         | "/api/deleteSyncedProjectGroup" => remote_allowed(path),
+        // The phone and a desktop connected to this computer turn Autopilot on and off and read its log too.
+        "/api/autopilot" => remote_allowed(path),
+        // Ghostex Collab: the owner's shares (the phone stops and approves them too), and the
+        // typing signal both the owner and a guest send (server/src/collab_shim/http.rs; the component answers a guest's).
+        // A guest's page reads the chat's pages and sends their answers through the same tunnel.
+        "/api/collab"
+        | "/api/collabTyping"
+        | "/api/collabGuestPage"
+        | "/api/collabGuestPageAnswers"
+        // Installing Collab (with the owner's signed approval), updating and uninstalling it,
+        // from the desktop, a desktop connected to this computer, or the phone.
+        | "/api/extensionComponents" => remote_allowed(path),
+        // The Collab component's calls (server/src/collab_shim/http.rs): no gxserver token, only
+        // the host token gxserver handed the component on its stdin, checked by the handler.
+        "/api/collabHost" => descriptor(
+            path,
+            ApiPermission::RemoteBlocked,
+            false,
+            false,
+            Transport::Http,
+        ),
         "/api/events" => descriptor(
             path,
             ApiPermission::RemoteAllowed,
@@ -854,6 +875,11 @@ pub fn endpoint_for(path: &str) -> Option<EndpointDescriptor> {
         "/api/draftCloudWork" | "/api/startCloudWork" => full_local(path),
         "/api/claudeCloud" => full_local(path),
         /*
+        CDXC:GBots 2026-11-08 WHY:
+        GBots run on this computer's own agent logins; another computer reaches them through its own `--computer` relay, never this route directly.
+        */
+        "/api/gbots" => full_local(path),
+        /*
         CDXC:PiChatChannel 2026-11-05 WHY:
         The Ghostex Pi and OMP extensions poll it from inside the agent process on this computer, with the same token their hook reports use; it hands them chat commands for their own session only, so no other computer has any business with it.
         */
@@ -908,15 +934,12 @@ pub fn endpoint_for(path: &str) -> Option<EndpointDescriptor> {
         | "/api/deleteDictation" => remote_allowed(path),
         /*
         CDXC:Dictate 2026-11-05 WHY:
-        Dictate's engine, models and clean-up belong to the computer whose gxserver transcribes, and the phone changes them per computer (Q1275), so every client may read and change them; no key is read or written here.
+        Dictate's engine, its old models and clean-up belong to the computer whose gxserver transcribes, and the phone changes them per computer (Q1275), so every client may read and change them; no key is read or written here.
         */
         "/api/readDictateSettings"
         | "/api/setDictateSettings"
         | "/api/readDictateEngine"
-        | "/api/listSpeechModels"
-        | "/api/downloadSpeechModel"
-        | "/api/cancelSpeechModelDownload"
-        | "/api/deleteSpeechModel"
+        | "/api/deleteOldSpeechModels"
         | "/api/skipDictationPolish" => remote_allowed(path),
         /*
         CDXC:Connectors 2026-10-15 WHY:
@@ -991,14 +1014,14 @@ pub fn endpoint_for(path: &str) -> Option<EndpointDescriptor> {
             Transport::Http,
         ),
         /*
-        CDXC:AgentHooks 2026-06-19-14:15:
-        Hook read/install/uninstall endpoints inspect or mutate user-local provider config files, so Rust keeps the TypeScript contract as full-local HTTP APIs requiring auth and protocol-version gates.
+        CDXC:AgentHooks 2026-11-07 WHY:
+        Hook read/install/uninstall inspect or write the agent CLIs' own config files, so they need auth and the protocol-version gate. They are remote-allowed (superseding the 2026-06-19 full-local contract) because a headless computer has no other way to get Ghostex's hooks: the desktop's Settings > Agents with that computer picked and `ghostex agent-hooks --computer` reach them from another computer (issue #431, connected_computers/scope.rs).
         */
-        "/api/readAgentHookStatus"
-        | "/api/installAgentHooks"
-        | "/api/uninstallAgentHooks"
+        "/api/readAgentHookStatus" | "/api/installAgentHooks" | "/api/uninstallAgentHooks" => {
+            remote_allowed(path)
+        }
         // The hook-free activity comparison (`ghostex hookless-activity`), a local debugging read.
-        | "/api/readHooklessActivityComparison"
+        "/api/readHooklessActivityComparison"
         /*
         CDXC:ServerDaemon 2026-06-24-13:30:
         Pinned Prompts can carry user-authored bodies, so their shared gxserver
@@ -1088,6 +1111,15 @@ pub fn endpoint_for(path: &str) -> Option<EndpointDescriptor> {
         | "/api/pairedDevices"
         | "/api/removePairedDevice"
         | "/api/pairedDeviceSeen"
+        // CDXC:RemotePairing 2026-11-08 WHY: this computer asks another to let it connect through Easy Connect (remote_access/computer_pairing.rs); it opens a tunnel from here, so only this computer's own clients may start it.
+        | "/api/pairComputer"
+        | "/api/computerPairingStatus"
+        | "/api/cancelComputerPairing"
+        /*
+        CDXC:RemotePairing 2026-11-06 WHY:
+        A paired phone asks for this computer's Easy Connect addresses with its device token, through the tunnel, which lands on the local listener; the addresses dial this computer, so like the tailcat status they never reach the remote listener.
+        */
+        | "/api/easyConnectAddresses"
         | "/api/queryLogs" => full_local(path),
         /*
         CDXC:Feedback 2026-10-04 WHY:
@@ -1096,11 +1128,16 @@ pub fn endpoint_for(path: &str) -> Option<EndpointDescriptor> {
         listener caller must never post issues in this user's name.
         */
         "/api/draftFeedback" | "/api/sendFeedback" | "/api/startFeedbackAgent" => full_local(path),
+        // CDXC:Chief 2026-11-08 WHY: another computer's Chief finds this computer's Chief through `status` (`ghostex chief send --computer`), and the desktop reaches a connected computer's Chief through its tunnel. Creating or moving Chief stays with this computer's own app, phone and terminal: the handler refuses peers and sessions (chief/endpoint.rs `may_change_chief`).
+        crate::chief::CHIEF_ENDPOINT => remote_allowed(path),
         /*
         CDXC:ServerApi 2026-10-06 WHY:
         `ghostex show` publishes a page an agent on this computer wrote, so only the loopback listener accepts it; the remote listener must not let another machine store pages that this gxserver then serves.
         */
         "/api/publishVisualPage" => full_local(path),
+        // CDXC:Security 2026-11-08 WHY: the security log is read by this computer's own Settings and CLI (and a phone through its tunnel, which lands on this listener); it names devices and computers, so it never answers on the remote listener.
+        crate::audit::SECURITY_LOG_ENDPOINT
+        | crate::security_upgrade::SECURITY_UPGRADE_NOTICE_ENDPOINT => full_local(path),
         /*
         CDXC:ServerApi 2026-10-11 WHY:
         A page card's picture is read by the chat on this computer (or the phone through its forward to this listener) and stored only by this computer's desktop app, from a page of this gxserver it showed (visual_pages/thumbnail.rs).
@@ -1117,10 +1154,20 @@ pub fn endpoint_for(path: &str) -> Option<EndpointDescriptor> {
         | "/api/listConnectedComputers"
         | "/api/issueComputerGrant"
         | "/api/revokeComputerGrant" => full_local(path),
+        // CDXC:RemoteMachines 2026-11-08 WHY: a message held for a computer that is offline (connected_computers/held_sends.rs) is sent later with that computer's token, so only this computer's own clients (and a phone through its tunnel) may hold, list or cancel one.
+        "/api/holdSessionChatSend"
+        | "/api/listHeldSessionChatSends"
+        | "/api/cancelHeldSessionChatSend" => full_local(path),
         // CDXC:RemoteMachines 2026-11-03 WHY: a coordinator's threads on another computer are linked on the coordinator's own computer, by its own CLI, so only this computer's clients may change them.
         "/api/linkRemoteCoordinatorThread"
         | "/api/updateRemoteCoordinatorThread"
         | "/api/listRemoteCoordinatorThreads" => full_local(path),
+        /*
+        CDXC:Notifications 2026-10-31 WHY:
+        A phone registers its push token over the link it already uses, the SSH or Easy Connect forward to the loopback listener with the bearer token; no other listener serves it. The token is a send credential, so the route never answers on the remote listener.
+        SEE-ALSO: server/src/push/registration.rs, packages/shared/gxserver-protocol-core.ts.
+        */
+        "/api/registerPushToken" => full_local(path),
         /*
         CDXC:RemotePairing 2026-09-03:
         The only unauthenticated write endpoint. A phone registers its SSH key
@@ -1130,13 +1177,44 @@ pub fn endpoint_for(path: &str) -> Option<EndpointDescriptor> {
         stays FullLocal: only the loopback API listener (and the tunnel that
         forwards to it) serves it, never the remote listener.
         */
-        "/api/pairDevice" => descriptor(
+        /*
+        CDXC:RemotePairing 2026-11-08 DECISION:
+        Pairing v2 (GitHub #495): a pending phone asks where its pairing stands, and a paired phone
+        renews its device token, before it holds a working token, so like `/api/pairDevice` these
+        take no bearer token; each ask is signed by the phone's device key instead (checked
+        against the key it paired with, timestamps fresh and only ever newer) and the answer
+        carries a token only for that key. FullLocal like `/api/pairDevice`.
+        */
+        "/api/pairDevice" | "/api/pairingStatus" | "/api/renewDeviceToken" => descriptor(
             path,
             ApiPermission::FullLocal,
             false,
             true,
             Transport::Http,
         ),
+        // A phone signing in over SSH asks to pair through that login, with the token file it
+        // reads there (remote_access/pair_device.rs `begin_ssh_pairing`).
+        "/api/pairOverSsh" => descriptor(
+            path,
+            ApiPermission::FullLocal,
+            true,
+            true,
+            Transport::Http,
+        ),
+        /*
+        CDXC:Security 2026-11-08 WHY:
+        The approval API (crate::security, server/src/server/security_http.rs). The phone and a desktop connected to this computer list, approve and deny requests too; approving needs a signature from a registered approver key, and only the owner's devices pass the capability check, so the listener is not what protects it.
+        */
+        "/api/listApprovalRequests"
+        | "/api/readApprovalRequest"
+        | "/api/approveApprovalRequest"
+        | "/api/denyApprovalRequest"
+        | "/api/listApproverKeys"
+        | "/api/enrollApproverKey"
+        | "/api/removeApproverKey"
+        | "/api/securityStatus" => remote_allowed(path),
+        // CDXC:Security 2026-11-08 WHY: the desktop proves its owner key to this computer's own gxserver only; the loopback listener (and the tunnels that forward to it) serves these, never the remote listener.
+        "/api/enrollOwnerKey" | "/api/ownerChallenge" | "/api/openOwnerSession" => full_local(path),
         "/api/updateAuth"
         | "/api/updateListenerConfig"
         | "/api/installTool"

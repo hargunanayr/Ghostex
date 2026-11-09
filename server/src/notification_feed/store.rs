@@ -18,6 +18,8 @@ pub(crate) const NOTIFICATION_FEED_KIND_BELL: &str = "bell";
 pub(crate) const NOTIFICATION_FEED_KIND_CUSTOM: &str = "custom";
 /// A chat message could not be sent for good (session_chat_send_failure.rs), drawn red.
 pub(crate) const NOTIFICATION_FEED_KIND_SEND_FAILED: &str = "sendFailed";
+/// An agent's turn ended on an error Ghostex positively identified (failure.rs); clients draw it red.
+pub(crate) const NOTIFICATION_FEED_KIND_FAILED: &str = "failed";
 /// A banked usage reset of a saved account expires soon; clients draw it red.
 pub(crate) const NOTIFICATION_FEED_KIND_RESET_EXPIRING: &str = "resetExpiring";
 /// Ghostex used an expiring banked reset on its own.
@@ -28,6 +30,14 @@ pub(crate) const NOTIFICATION_FEED_KIND_RESET_REDEEMED: &str = "resetRedeemed";
 pub(crate) const ACCOUNT_NOTIFICATION_SESSION_PREFIX: &str = "account:";
 /// The `projectId` account rows are stored under.
 pub(crate) const ACCOUNT_NOTIFICATION_PROJECT_ID: &str = "accounts";
+
+/// A sensitive action recorded in the security log (server/src/audit/notify.rs): one row per log
+/// entry, under this prefix plus the entry's number, so a click opens Settings > Security and the
+/// orphan sweep keeps it. Clients draw it like an account row, with no session to open.
+pub(crate) const NOTIFICATION_FEED_KIND_SECURITY: &str = "security";
+pub(crate) const SECURITY_NOTIFICATION_SESSION_PREFIX: &str = "security:";
+/// The `projectId` security rows are stored under.
+pub(crate) const SECURITY_NOTIFICATION_PROJECT_ID: &str = "security";
 
 pub(crate) fn account_notification_session_id(account_id: &str) -> String {
     format!("{ACCOUNT_NOTIFICATION_SESSION_PREFIX}{account_id}")
@@ -67,6 +77,8 @@ pub(crate) fn insert_notification_feed_row(
     let id = uuid::Uuid::new_v4().to_string();
     let created_at = now_iso();
     // A finished turn says nothing about a message that was not sent, so it never replaces that row.
+    // A newer row of any other kind (finished, needs input, failed) therefore sits next to an unread
+    // Not sent row: a session can hold two unread rows, Not sent and the newer one.
     db.execute(
         "DELETE FROM notification_feed WHERE sessionId = ?1 AND readAt IS NULL AND (kind <> ?2 OR ?3 = ?2)",
         params![row.session_id, NOTIFICATION_FEED_KIND_SEND_FAILED, row.kind],
@@ -89,6 +101,56 @@ pub(crate) fn insert_notification_feed_row(
             row.agent_name,
             row.attention_event_id,
             created_at,
+        ],
+    )
+    .map_err(sql_error)?;
+    prune_notification_feed(db)?;
+    read_notification_feed_item(db, &id)?
+        .ok_or_else(|| DomainStateError::not_found("Notification was not stored."))
+}
+
+/// Marks one row read as it is written: a row the alert rule keeps quiet (CDXC:Notifications
+/// 2026-11-08 in packages/gx-core/src/alert_rule.rs) stays in the bell without lighting it.
+pub(crate) fn mark_notification_feed_row_read(db: &Connection, id: &str) -> DomainResult<()> {
+    db.execute(
+        "UPDATE notification_feed SET readAt = ?1 WHERE id = ?2 AND readAt IS NULL",
+        params![now_iso(), id],
+    )
+    .map_err(sql_error)?;
+    Ok(())
+}
+
+/// Insert a row beside the session's unread rows instead of superseding them: only an earlier
+/// unread row with the same title goes. For news about a chat that is not about its agent (a
+/// Ghostex Collab guest joining, `collab_shim::http`, `notify_guest_joined`), which must not hide an
+/// approval or a finished turn waiting in that chat.
+pub(crate) fn insert_notification_feed_row_beside(
+    db: &Connection,
+    row: NewNotificationFeedRow,
+) -> DomainResult<Value> {
+    let id = uuid::Uuid::new_v4().to_string();
+    db.execute(
+        "DELETE FROM notification_feed WHERE sessionId = ?1 AND readAt IS NULL AND kind = ?2 AND title = ?3",
+        params![row.session_id, row.kind, row.title],
+    )
+    .map_err(sql_error)?;
+    db.execute(
+        r#"
+        INSERT INTO notification_feed (
+          id, projectId, sessionId, kind, title, subtitle, body, agentName, attentionEventId, createdAt, readAt, deferredAt
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, NULL)
+        "#,
+        params![
+            id,
+            row.project_id,
+            row.session_id,
+            row.kind,
+            row.title,
+            row.subtitle,
+            row.body,
+            row.agent_name,
+            row.attention_event_id,
+            now_iso(),
         ],
     )
     .map_err(sql_error)?;
@@ -140,8 +202,8 @@ fn prune_notification_feed(db: &Connection) -> DomainResult<()> {
 /// Rows whose session was deleted have nothing to open; drop them before listing.
 fn drop_orphaned_notification_feed_rows(db: &Connection) -> DomainResult<()> {
     db.execute(
-        "DELETE FROM notification_feed WHERE sessionId NOT IN (SELECT sessionId FROM sessions) AND substr(sessionId, 1, length(?1)) <> ?1",
-        params![ACCOUNT_NOTIFICATION_SESSION_PREFIX],
+        "DELETE FROM notification_feed WHERE sessionId NOT IN (SELECT sessionId FROM sessions) AND substr(sessionId, 1, length(?1)) <> ?1 AND substr(sessionId, 1, length(?2)) <> ?2",
+        params![ACCOUNT_NOTIFICATION_SESSION_PREFIX, SECURITY_NOTIFICATION_SESSION_PREFIX],
     )
     .map_err(sql_error)?;
     Ok(())
@@ -201,13 +263,18 @@ pub(crate) fn unread_notification_session_ids(
 ) -> DomainResult<Vec<String>> {
     let mut statement = db
         .prepare(
-            "SELECT DISTINCT sessionId FROM notification_feed WHERE readAt IS NULL AND (?1 IS NULL OR id = ?1) AND substr(sessionId, 1, length(?2)) <> ?2",
+            "SELECT DISTINCT sessionId FROM notification_feed WHERE readAt IS NULL AND (?1 IS NULL OR id = ?1) AND substr(sessionId, 1, length(?2)) <> ?2 AND substr(sessionId, 1, length(?3)) <> ?3",
         )
         .map_err(sql_error)?;
     let rows = statement
-        .query_map(params![id, ACCOUNT_NOTIFICATION_SESSION_PREFIX], |row| {
-            row.get::<_, String>(0)
-        })
+        .query_map(
+            params![
+                id,
+                ACCOUNT_NOTIFICATION_SESSION_PREFIX,
+                SECURITY_NOTIFICATION_SESSION_PREFIX
+            ],
+            |row| row.get::<_, String>(0),
+        )
         .map_err(sql_error)?
         .collect::<rusqlite::Result<Vec<_>>>()
         .map_err(sql_error)?;
@@ -376,6 +443,13 @@ fn item_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
         .and_then(|id| id.strip_prefix(ACCOUNT_NOTIFICATION_SESSION_PREFIX))
     {
         item["accountId"] = Value::String(account_id.to_string());
+    }
+    if let Some(entry) = item["sessionId"]
+        .as_str()
+        .and_then(|id| id.strip_prefix(SECURITY_NOTIFICATION_SESSION_PREFIX))
+        .and_then(|seq| seq.parse::<u64>().ok())
+    {
+        item["securityEntry"] = Value::from(entry);
     }
     Ok(item)
 }

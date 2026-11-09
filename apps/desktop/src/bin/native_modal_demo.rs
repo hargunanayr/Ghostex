@@ -4,10 +4,16 @@ Standalone preview of the native GPUI app modals so their look can be checked
 against the React Storybook stories without launching Ghostex. Run with:
     cargo run --release --bin native-modal-demo
 Environment:
-    GHOSTEX_NATIVE_MODAL_DEMO=export-transcript|...           (which modal; default export-transcript)
+    GHOSTEX_NATIVE_MODAL_DEMO=export-transcript|updates-menu|start-menu|chief-row|notice-modal|gbot-team|new-gbot|... (which modal; default export-transcript)
     GHOSTEX_NATIVE_MODAL_DEMO_THEME=dark|light                (default dark)
+    GHOSTEX_NATIVE_MODAL_DEMO_SIDEBAR_THEME=dark-green|...    (a dark theme's text colours)
+    GHOSTEX_NATIVE_MODAL_DEMO_CHROME=<rrggbb>                 (tint the modal from a theme chrome)
+    GHOSTEX_NATIVE_MODAL_DEMO_GLASS=1                         (the frosted dialog palette, as under window glass)
     GHOSTEX_NATIVE_MODAL_DEMO_STATE=<per-modal state name>    (default: the opening state)
     GHOSTEX_NATIVE_MODAL_DEMO_BACKGROUND=1                    (open without taking focus, for screenshots)
+    GHOSTEX_NATIVE_MODAL_DEMO_SNAPSHOT=<png>                  (any preview, built with
+        --features modal-demo-snapshot: draw offscreen to <png> and quit;
+        GHOSTEX_NATIVE_MODAL_DEMO_HOVER=<x>,<y> points at that spot first, for a tooltip)
     GHOSTEX_EXPORT_MODAL_DEMO_MODE=handoff|export             (Handoff / Export only)
     GHOSTEX_EXPORT_MODAL_DEMO_PREFS=<file>                    (Handoff / Export's saved choices)
 Hosts simulate the daemon: a primary action answers after one second with a
@@ -25,6 +31,16 @@ mod fold_motion;
 mod host_name;
 #[path = "../hotkey_label.rs"]
 mod hotkey_label;
+// Settings > Interface's Linux-only Display scale row reads what the app found at launch (#503).
+#[cfg(target_os = "linux")]
+#[path = "../linux_x11_scale.rs"]
+mod linux_x11_scale;
+
+/// The preview never hides `WAYLAND_DISPLAY` the way the app does (main.rs), so it inherited none.
+#[cfg(target_os = "linux")]
+pub(crate) fn linux_inherited_wayland_display() -> Option<&'static str> {
+    None
+}
 #[path = "../app/window/native_modal_kit/mod.rs"]
 mod native_modal_kit;
 #[path = "../app/window/session_handoff_modal.rs"]
@@ -44,6 +60,12 @@ mod agent_hooks_required_modal;
 mod agents_hub_demo;
 #[path = "../app/window/agents_hub/mod.rs"]
 mod agents_hub_modal;
+#[path = "native_modal_demo/chief_row.rs"]
+mod chief_row_demo;
+#[path = "../app/native_sidebar/chief_row_view.rs"]
+mod chief_row_view;
+#[path = "native_modal_demo/close_buttons.rs"]
+mod close_buttons_demo;
 #[path = "native_modal_demo/coordinator_details.rs"]
 mod coordinator_details_demo;
 #[path = "../app/window/coordinator_details_modal.rs"]
@@ -60,6 +82,16 @@ mod delayed_send_modal;
 mod delete_worktree_demo;
 #[path = "../app/window/delete_worktree_modal.rs"]
 mod delete_worktree_modal;
+#[path = "native_modal_demo/extension_menu.rs"]
+mod extension_menu_demo;
+#[path = "native_modal_demo/gbot_settings.rs"]
+mod gbot_settings_demo;
+#[path = "../app/window/gbot_settings_modal/mod.rs"]
+mod gbot_settings_modal;
+#[path = "native_modal_demo/gbot_team.rs"]
+mod gbot_team_demo;
+#[path = "../app/window/gbot_team_modal/mod.rs"]
+mod gbot_team_modal;
 #[path = "native_modal_demo/git_commit.rs"]
 mod git_commit_demo;
 #[path = "../app/window/git_commit_modal/mod.rs"]
@@ -72,10 +104,18 @@ mod missing_project_folder_modal;
 mod new_coordinator_demo;
 #[path = "../app/window/new_coordinator_modal.rs"]
 mod new_coordinator_modal;
+#[path = "native_modal_demo/new_gbot.rs"]
+mod new_gbot_demo;
+#[path = "../app/window/new_gbot_modal.rs"]
+mod new_gbot_modal;
 #[path = "../app/window/new_thread_picker.rs"]
 mod new_thread_picker;
 #[path = "native_modal_demo/new_thread_picker.rs"]
 mod new_thread_picker_demo;
+#[path = "../app/window/notice_modal.rs"]
+mod notice_modal;
+#[path = "native_modal_demo/notice_modal.rs"]
+mod notice_modal_demo;
 #[path = "../app/window/onboarding/mod.rs"]
 mod onboarding;
 #[path = "native_modal_demo/onboarding.rs"]
@@ -102,6 +142,12 @@ mod rename_session_modal;
 mod rename_worktree_demo;
 #[path = "../app/window/rename_worktree_modal.rs"]
 mod rename_worktree_modal;
+#[path = "../app/window/round_close_button.rs"]
+mod round_close_button;
+#[path = "native_modal_demo/security_upgrade.rs"]
+mod security_upgrade_demo;
+#[path = "../app/window/security_upgrade_modal.rs"]
+mod security_upgrade_modal;
 #[path = "native_modal_demo/session_note.rs"]
 mod session_note_demo;
 #[path = "../app/window/session_note_modal.rs"]
@@ -110,14 +156,28 @@ mod session_note_modal;
 mod settings_demo;
 #[path = "../app/window/settings_modal/mod.rs"]
 mod settings_modal;
+// The chat header's Share popover (Ghostex Collab), drawn from the app's own view.
+#[path = "native_modal_demo/share_popover.rs"]
+mod share_popover_demo;
+#[path = "../app/window/share_popover_view.rs"]
+mod share_popover_view;
 #[path = "native_modal_demo/space_editor.rs"]
 mod space_editor_demo;
 #[path = "../app/window/space_editor_modal.rs"]
 mod space_editor_modal;
+#[path = "native_modal_demo/start_menu_click.rs"]
+mod start_menu_click_demo;
+#[path = "native_modal_demo/start_menu.rs"]
+mod start_menu_demo;
 #[path = "native_modal_demo/update_available.rs"]
 mod update_available_demo;
+// The top bar's Updates button and list: `app` holds the stand-ins its rows file reads.
+#[path = "native_modal_demo/updates_menu_app.rs"]
+mod app;
 #[path = "../app/window/update_available_modal.rs"]
 mod update_available_modal;
+#[path = "native_modal_demo/updates_menu.rs"]
+mod updates_menu_demo;
 /// The voice panel's confirm card reads `super::controls` and `super::rows`, as in the panel.
 #[path = "../app/voice_agent/panel_confirm_card.rs"]
 mod voice_confirm_card;
@@ -129,6 +189,10 @@ use voice_panel_controls as controls;
 mod rows;
 #[path = "native_modal_demo/voice_panel.rs"]
 mod voice_panel_demo;
+/// The panel's size limits, the voice list's scroll and the Scroll to bottom pill, as in the panel.
+#[allow(dead_code)]
+#[path = "../app/voice_agent/panel_layout.rs"]
+mod voice_panel_layout;
 #[path = "native_modal_demo/web_runtime_prompt.rs"]
 mod web_runtime_prompt_demo;
 #[path = "../app/window/web_runtime_prompt_modal.rs"]
@@ -170,9 +234,35 @@ impl DemoEnv {
                 modal
             },
             state: env("GHOSTEX_NATIVE_MODAL_DEMO_STATE"),
-            palette: ModalPalette::resolve(env("GHOSTEX_NATIVE_MODAL_DEMO_THEME") == "light", None),
+            palette: demo_palette(),
         }
     }
+}
+
+/// The demo's palette: `GHOSTEX_NATIVE_MODAL_DEMO_THEME`, plus
+/// `GHOSTEX_NATIVE_MODAL_DEMO_SIDEBAR_THEME=dark-green|dark-blue|...` (a dark theme's text colours)
+/// and `GHOSTEX_NATIVE_MODAL_DEMO_CHROME=<rrggbb>` (the theme chrome the app tints modals from), so
+/// the theme colours of Settings > Interface can be previewed.
+fn demo_palette() -> ModalPalette {
+    let sidebar_theme = env("GHOSTEX_NATIVE_MODAL_DEMO_SIDEBAR_THEME");
+    let palette = ModalPalette::resolve(
+        env("GHOSTEX_NATIVE_MODAL_DEMO_THEME") == "light",
+        (!sidebar_theme.is_empty()).then_some(sidebar_theme.as_str()),
+    );
+    let palette = match u32::from_str_radix(
+        env("GHOSTEX_NATIVE_MODAL_DEMO_CHROME").trim_start_matches('#'),
+        16,
+    ) {
+        Ok(chrome) => palette.tinted(gpui::rgb(chrome)),
+        Err(_) => palette,
+    };
+    // The form dialogs' palette under window glass: the surface at the macOS frosted alpha (75%
+    // light, 60% dark, helpers/window_glass.rs), over whatever the snapshot is laid on.
+    if env("GHOSTEX_NATIVE_MODAL_DEMO_GLASS") == "1" {
+        let alpha = if palette.light { 0.75 } else { 0.6 };
+        return palette.frosted_dialog(native_modal_kit::rgba_of(palette.surface, alpha));
+    }
+    palette
 }
 
 /// Opens one modal window the way the app does: centered, borderless, at the
@@ -184,13 +274,21 @@ fn open_modal_window<V: Render>(
     cx: &mut App,
 ) -> (WindowHandle<Root>, Entity<V>) {
     let window_size = size(px(width), px(initial_height));
-    let bounds = cx
-        .primary_display()
-        .map(|display| Bounds::centered_at(display.bounds().center(), window_size))
-        .unwrap_or_else(|| Bounds::new(point(px(240.0), px(160.0)), window_size));
+    // GHOSTEX_NATIVE_MODAL_DEMO_SNAPSHOT=<png> (with --features modal-demo-snapshot) draws any
+    // preview in a window far off every screen, writes its frame after
+    // GHOSTEX_NATIVE_MODAL_DEMO_SNAPSHOT_WAIT ms (2500) and quits, as updates_menu.rs does for its own.
+    let snapshot = std::env::var("GHOSTEX_NATIVE_MODAL_DEMO_SNAPSHOT").unwrap_or_default();
+    let snapshot = snapshot.trim().to_string();
+    let bounds = if !snapshot.is_empty() {
+        Bounds::new(point(px(-10000.0), px(-10000.0)), window_size)
+    } else {
+        cx.primary_display()
+            .map(|display| Bounds::centered_at(display.bounds().center(), window_size))
+            .unwrap_or_else(|| Bounds::new(point(px(240.0), px(160.0)), window_size))
+    };
     // GHOSTEX_NATIVE_MODAL_DEMO_BACKGROUND=1 opens the window without taking
     // focus, so an agent can screenshot it while the user keeps typing elsewhere.
-    let background = env("GHOSTEX_NATIVE_MODAL_DEMO_BACKGROUND") == "1";
+    let background = env("GHOSTEX_NATIVE_MODAL_DEMO_BACKGROUND") == "1" || !snapshot.is_empty();
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         focus: !background,
@@ -215,7 +313,69 @@ fn open_modal_window<V: Render>(
         })
         .expect("open the demo window");
     let view = slot.borrow_mut().take().expect("the demo view");
+    if !snapshot.is_empty() {
+        snapshot_after_wait(window, snapshot, cx);
+    }
     (window, view)
+}
+
+#[cfg(feature = "modal-demo-snapshot")]
+fn snapshot_after_wait(window: WindowHandle<Root>, path: String, cx: &mut App) {
+    let wait = std::env::var("GHOSTEX_NATIVE_MODAL_DEMO_SNAPSHOT_WAIT")
+        .ok()
+        .and_then(|ms| ms.trim().parse::<u64>().ok())
+        .unwrap_or(2500);
+    // GHOSTEX_NATIVE_MODAL_DEMO_HOVER=<x>,<y>: point there before drawing, for a hover or tooltip.
+    let hover = std::env::var("GHOSTEX_NATIVE_MODAL_DEMO_HOVER")
+        .ok()
+        .and_then(|spot| {
+            let (x, y) = spot.split_once(',')?;
+            Some(point(
+                px(x.trim().parse().ok()?),
+                px(y.trim().parse().ok()?),
+            ))
+        });
+    cx.spawn(async move |cx| {
+        cx.background_executor()
+            .timer(std::time::Duration::from_millis(wait))
+            .await;
+        if let Some(position) = hover {
+            // Through the plain window handle: a typed update would hold the root the event reads.
+            let _ = cx.update_window(window.into(), |_, window, cx| {
+                window.dispatch_event(
+                    gpui::PlatformInput::MouseMove(gpui::MouseMoveEvent {
+                        position,
+                        pressed_button: None,
+                        modifiers: gpui::Modifiers::default(),
+                    }),
+                    cx,
+                );
+                window.refresh();
+            });
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(1500))
+                .await;
+        }
+        let _ = window.update(cx, |_, window, _| window.refresh());
+        cx.background_executor()
+            .timer(std::time::Duration::from_millis(300))
+            .await;
+        let _ = window.update(cx, |_, window, _| match window.render_to_image() {
+            Ok(image) => match image.save(&path) {
+                Ok(()) => eprintln!("wrote {path}"),
+                Err(error) => eprintln!("couldn't write {path}: {error}"),
+            },
+            Err(error) => eprintln!("couldn't draw the snapshot: {error}"),
+        });
+        let _ = cx.update(|cx| cx.quit());
+    })
+    .detach();
+}
+
+#[cfg(not(feature = "modal-demo-snapshot"))]
+fn snapshot_after_wait(_window: WindowHandle<Root>, _path: String, cx: &mut App) {
+    eprintln!("snapshots need: cargo build --bin native-modal-demo --features modal-demo-snapshot");
+    cx.quit();
 }
 
 /// `open_modal_window` for the large panel modals (Settings, Agents Hub, Commit Changes, File
@@ -514,6 +674,11 @@ fn main() {
                 "add-project" => add_project_demo::open(&demo, cx),
                 "new-thread-picker" => new_thread_picker_demo::open(&demo, cx),
                 "update-available" => update_available_demo::open(&demo, cx),
+                "notice-modal" => notice_modal_demo::open(&demo, cx),
+                "updates-menu" => updates_menu_demo::open(&demo, cx),
+                "share-popover" => share_popover_demo::open(&demo, cx),
+                "start-menu" => start_menu_demo::open(&demo, cx),
+                "start-menu-click" => start_menu_click_demo::open(&demo, cx),
                 "remote-setup" => remote_setup_demo::open(&demo, cx),
                 "delayed-send" => delayed_send_demo::open(&demo, cx),
                 "space-editor" => space_editor_demo::open(&demo, cx),
@@ -526,10 +691,17 @@ fn main() {
                 "rename-session" => rename_session_demo::open(&demo, cx),
                 "new-orchestrator" => new_coordinator_demo::open(&demo, cx),
                 "orchestrator-memory" => coordinator_details_demo::open(&demo, cx),
+                "gbot-settings" => gbot_settings_demo::open(&demo, cx),
+                "gbot-team" => gbot_team_demo::open(&demo, cx),
+                "new-gbot" => new_gbot_demo::open(&demo, cx),
+                "close-buttons" => close_buttons_demo::open(&demo, cx),
                 "session-note" => session_note_demo::open(&demo, cx),
+                "chief-row" => chief_row_demo::open(&demo, cx),
+                "extension-menu" => extension_menu_demo::open(&demo, cx),
                 "voice-panel" => voice_panel_demo::open(&demo, cx),
                 "permission-guide" => permission_guide_demo::open(&demo, cx),
                 "install-hooks" => agent_hooks_required_demo::open(&demo, cx),
+                "security-upgrade" => security_upgrade_demo::open(&demo, cx),
                 "agents-hub" => agents_hub_demo::open(&demo, cx),
                 "git-commit" => git_commit_demo::open(&demo, cx),
                 "git-file-diff" => git_commit_demo::open_file_diff(&demo, cx),
@@ -541,7 +713,12 @@ fn main() {
                     return;
                 }
             }
-            cx.activate(true);
+            // A background or snapshot run never takes focus from the app the user is typing in.
+            if env("GHOSTEX_NATIVE_MODAL_DEMO_BACKGROUND") != "1"
+                && env("GHOSTEX_NATIVE_MODAL_DEMO_SNAPSHOT").is_empty()
+            {
+                cx.activate(true);
+            }
         });
 }
 

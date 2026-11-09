@@ -133,6 +133,25 @@ fn agent_denied_key(key: &str) -> bool {
 /// Tabs whose rows are account or pairing state, never plain preferences.
 const AGENT_DENIED_TABS: &[&str] = &["accounts", "remote"];
 
+/*
+CDXC:Security 2026-11-08 DECISION:
+User (#495 follow-up, Q1866 "settings only"): the keys that loosen security, which an agent could still write through `ghostex settings set` or `updateSettingsPatch`, are the owner's alone: agents are refused and pointed to the Settings page, and the owner changes them in Settings with no prompt. Checked against the whole agent-writable list on 8 Nov: full access for every agent, Workspaces (the team backend and Slack requests), keeping Cloud Box keys on phones, trusting every project folder, Connectors (agents reach the owner's connected accounts), the commands Ghostex itself runs (title generation, worktree setup, the custom editor), paste protection, and the Bot automations feed (whole agent reports). Settings that ask the owner already (GBots, Sync) keep asking.
+*/
+/// Keys only the owner changes, in Settings: each loosens security.
+const USER_ONLY_KEYS: &[&str] = &[
+    "agentAcceptAllEnabled",
+    "workspacesHidden",
+    "cloudBoxesPhoneStartEnabled",
+    "trustProjectFoldersAutomatically",
+    "connectorsHidden",
+    "customSessionTitleGenerationCommand",
+    "globalWorktreeCommand",
+    "customDefaultEditorCommand",
+    "terminalClipboardPasteProtection",
+    "botAutomationsHidden",
+    "gbotsChiefAddsOnItsOwn",
+];
+
 fn number_range(key: &str) -> Option<NumberRange> {
     let range = |min: f64, max: f64| NumberRange {
         min,
@@ -237,8 +256,10 @@ fn catalog_entry(row: &SettingRow, location: &Location) -> CatalogEntry {
         value_type,
         ValueType::Boolean | ValueType::Number | ValueType::String | ValueType::Enum
     );
-    let agent_writable =
-        primitive && !AGENT_DENIED_TABS.contains(&location.tab.0) && !agent_denied_key(row.key);
+    let agent_writable = primitive
+        && !AGENT_DENIED_TABS.contains(&location.tab.0)
+        && !agent_denied_key(row.key)
+        && !USER_ONLY_KEYS.contains(&row.key);
     CatalogEntry {
         key: row.key.to_string(),
         title: row.title.clone(),
@@ -588,4 +609,50 @@ impl Catalog {
 /// `skills/ghostex-help/references/settings-catalog.json`.
 pub fn catalog_json() -> String {
     format!("{}\n", catalog().to_json().to_pretty_string())
+}
+
+/// Settings keys the committed Help files leave out until the feature they belong to ships in a
+/// release; the catalog itself (Settings, `ghostex settings`) keeps them.
+///
+/// CDXC:GBots 2026-11-07 DECISION:
+/// User (Q1544): GBots merges to main off by default, and merging must publish nothing about GBots to installed copies before a release ships it. The Help files under `skills/` reach every install from `main` on its next start (agent_skills_remote.rs), so their GBots rows are held here and the hand-written section waits in the held help patch; the release that ships GBots empties this list and regenerates.
+///
+/// CDXC:Collab 2026-11-07 DECISION:
+/// The coordinator, for the user: Collab merges to main off by default and its Help is held the way GBots' is ("hold Collab's generated Help ... out of the committed Help files ... so merging to main publishes nothing about Collab before a release ships it"); the hand-written section waits in the held help patch.
+///
+/// CDXC:Changes 2026-11-07 DECISION:
+/// The coordinator, for the user: the Changes view's Hide test files setting is held the same way until the release that ships it; the hand-written paragraph waits in the held help patch.
+///
+/// CDXC:Dictate 2026-11-08 DECISION:
+/// The coordinator, for the user: the Dictation page's new rows (the key under the engine, the old speech models) are held the same way until the release that ships Hex as the only offline engine; the hand-written paragraphs wait in the held help patch.
+///
+/// CDXC:RemoteMachines 2026-11-09 DECISION:
+/// The coordinator, for the user (#518): Merge copies of the same repository is held the same way until the release that ships it; the hand-written paragraph waits in the held help patch.
+///
+/// CDXC:Extensions 2026-11-09 DECISION:
+/// The coordinator, for the user: the Grok extension (official_extensions.rs) is held the same way until the release that ships it; its hand-written paragraph waits in the held help patch.
+///
+/// CDXC:SessionChat 2026-11-09 DECISION:
+/// Tool call lines (Extensions > Experimental) is held the same way until the release that ships it; its help waits in the held help patch.
+pub const HELD_FROM_HELP_FILES: &[&str] = &[
+    "sidebarMergeRepositoryCopies",
+    "grokWeb",
+    "grokWebHidden",
+    "grokWebStartPage",
+    "grokWebLogins",
+    "chatToolCallLines",
+];
+
+/// The catalog the committed Help files describe: [`catalog`] without [`HELD_FROM_HELP_FILES`].
+pub fn published_catalog() -> Catalog {
+    let mut catalog = catalog();
+    catalog
+        .settings
+        .retain(|entry| !HELD_FROM_HELP_FILES.contains(&entry.key.as_str()));
+    catalog
+}
+
+/// The committed `settings-catalog.json`: [`catalog_json`] without the held keys.
+pub fn published_catalog_json() -> String {
+    format!("{}\n", published_catalog().to_json().to_pretty_string())
 }

@@ -11,7 +11,7 @@
 use super::super::super::super::native_modal_kit::*;
 use super::super::super::fields::{
     ButtonSize, ButtonVariant, icon, settings_button_sized, settings_icon, settings_icon_button,
-    settings_switch, tooltip_text,
+    tooltip_text,
 };
 use super::super::super::model::SettingsTabId;
 use super::easy_connect::{path_card, path_head};
@@ -82,8 +82,36 @@ pub(crate) struct MachineDialog {
     advanced_open: bool,
     focus: FocusHandle,
     inputs: DialogInputs,
+    /// Pairing this computer with the one behind the code (pairing v2, GitHub #495).
+    pairing: Option<ComputerPairing>,
+    /// Asks where that pairing stands every `COMPUTER_PAIRING_POLL`; dropped with the dialog.
+    pairing_poll: Option<gpui::Task<()>>,
+    /// A code was pasted in this dialog; a saved machine's old code (whose secret is long spent)
+    /// never pairs again by itself.
+    code_edited: bool,
     _subscriptions: Vec<Subscription>,
 }
+
+/*
+CDXC:RemotePairing 2026-11-08 DECISION:
+User (GitHub #495): "Computers connecting through Easy Connect must not need their key added by hand under Advanced: give them the same flow as phones." Adding (or saving) an Easy Connect machine with a code from the other computer's Show QR window first pairs this computer with it through this computer's gxserver (`/api/pairComputer`, server/src/remote_access/computer_pairing.rs): the dialog shows three words, the other computer shows the same three under Paired devices, and once the owner approves there with Touch ID, Windows Hello or the system password this computer's Easy Connect key is on its allow-list and the machine is saved. A code without its secret (an older Copy code) saves as before, for a computer whose key is already listed.
+*/
+#[derive(Clone, Debug, PartialEq)]
+enum ComputerPairing {
+    Starting,
+    Waiting {
+        pending_id: String,
+        words: Vec<String>,
+        computer: String,
+    },
+    Failed(String),
+}
+
+const COMPUTER_PAIRING_POLL: std::time::Duration = std::time::Duration::from_millis(1500);
+/// `/api/pairComputer` opens a tunnel and waits for the other computer's answer.
+const COMPUTER_PAIRING_START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+/// Approving can wait on the other computer's Windows administrator prompt.
+const COMPUTER_PAIRING_STATUS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(190);
 
 impl RemoteTab {
     /// Opens the dialog on `machine` (edit) or empty (Add a machine), replacing a dialog the last
@@ -254,14 +282,163 @@ impl RemoteTab {
             advanced_open,
             focus,
             inputs,
+            pairing: None,
+            pairing_poll: None,
+            code_edited: false,
             _subscriptions: subscriptions,
         });
         cx.notify();
     }
 
     fn close_machine_dialog(&mut self, cx: &mut Context<Self>) {
+        // A computer still waiting for approval stops waiting (its request lapses there).
+        if let Some(Some(ComputerPairing::Waiting { pending_id, .. })) = self
+            .machine_dialog
+            .as_ref()
+            .map(|dialog| dialog.pairing.clone())
+        {
+            self.rpc(
+                "/api/cancelComputerPairing",
+                json!({ "pendingId": pending_id }),
+                super::RPC_TIMEOUT,
+                cx,
+                |_, _, _| {},
+            );
+        }
         self.machine_dialog = None;
         cx.notify();
+    }
+
+    /// Starts pairing this computer with the one in the dialog's code (CDXC:RemotePairing
+    /// 2026-11-08 above), saving the machine once that computer's owner approves.
+    fn start_computer_pairing(&mut self, params: Value, cx: &mut Context<Self>) {
+        let Some(dialog) = self.machine_dialog.as_mut() else {
+            return;
+        };
+        dialog.pairing = Some(ComputerPairing::Starting);
+        cx.notify();
+        self.rpc(
+            "/api/pairComputer",
+            params,
+            COMPUTER_PAIRING_START_TIMEOUT,
+            cx,
+            |this, result, cx| {
+                let Some(dialog) = this.machine_dialog.as_mut() else {
+                    return;
+                };
+                if dialog.pairing != Some(ComputerPairing::Starting) {
+                    return;
+                }
+                let words: Option<Vec<String>> = result.as_ref().ok().and_then(|value| {
+                    value.get("words")?.as_array().map(|words| {
+                        words
+                            .iter()
+                            .filter_map(|word| word.as_str().map(str::to_string))
+                            .collect()
+                    })
+                });
+                let pending_id = result
+                    .as_ref()
+                    .ok()
+                    .and_then(|value| value.get("pendingId")?.as_str().map(str::to_string));
+                dialog.pairing = Some(match (result, pending_id, words) {
+                    (Ok(value), Some(pending_id), Some(words)) => ComputerPairing::Waiting {
+                        pending_id,
+                        words,
+                        computer: value
+                            .get("computerName")
+                            .and_then(Value::as_str)
+                            .unwrap_or("the other computer")
+                            .to_string(),
+                    },
+                    (Err(error), _, _) => ComputerPairing::Failed(error),
+                    _ => ComputerPairing::Failed(
+                        "The other computer sent an unreadable answer.".to_string(),
+                    ),
+                });
+                if matches!(dialog.pairing, Some(ComputerPairing::Waiting { .. })) {
+                    dialog.pairing_poll = Some(cx.spawn(async move |this, cx| {
+                        loop {
+                            cx.background_executor().timer(COMPUTER_PAIRING_POLL).await;
+                            let Ok(keep_going) =
+                                this.update(cx, |this, cx| this.poll_computer_pairing(cx))
+                            else {
+                                break;
+                            };
+                            if !keep_going {
+                                break;
+                            }
+                        }
+                    }));
+                }
+                cx.notify();
+            },
+        );
+    }
+
+    /// One ask; `false` once nothing is waiting any more.
+    fn poll_computer_pairing(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(Some(ComputerPairing::Waiting { pending_id, .. })) = self
+            .machine_dialog
+            .as_ref()
+            .map(|dialog| dialog.pairing.clone())
+        else {
+            return false;
+        };
+        if self.computer_pairing_in_flight {
+            return true;
+        }
+        self.computer_pairing_in_flight = true;
+        let asked = pending_id.clone();
+        self.rpc(
+            "/api/computerPairingStatus",
+            json!({ "pendingId": pending_id }),
+            COMPUTER_PAIRING_STATUS_TIMEOUT,
+            cx,
+            move |this, result, cx| {
+                this.computer_pairing_in_flight = false;
+                let Some(dialog) = this.machine_dialog.as_mut() else {
+                    return;
+                };
+                let still_this = matches!(
+                    &dialog.pairing,
+                    Some(ComputerPairing::Waiting { pending_id, .. }) if *pending_id == asked
+                );
+                if !still_this {
+                    return;
+                }
+                let status = result
+                    .as_ref()
+                    .ok()
+                    .and_then(|value| value.get("status")?.as_str().map(str::to_string));
+                match (status.as_deref(), result) {
+                    (Some("pending"), _) => {}
+                    (Some("approved"), _) => {
+                        dialog.pairing = None;
+                        dialog.pairing_poll = None;
+                        this.store_dialog_machine(cx);
+                    }
+                    (Some("denied"), _) => {
+                        dialog.pairing = Some(ComputerPairing::Failed(
+                            "The other computer denied this one. Show a new code there and try again.".to_string(),
+                        ));
+                        dialog.pairing_poll = None;
+                    }
+                    (_, Err(error)) => {
+                        dialog.pairing = Some(ComputerPairing::Failed(error));
+                        dialog.pairing_poll = None;
+                    }
+                    _ => {
+                        dialog.pairing = Some(ComputerPairing::Failed(
+                            "Nobody approved this computer in time. Show a new code on the other computer and try again.".to_string(),
+                        ));
+                        dialog.pairing_poll = None;
+                    }
+                }
+                cx.notify();
+            },
+        );
+        true
     }
 
     /// One field's `onChange`: the draft follows it, clipped to its `maxLength` (and digits only
@@ -291,6 +468,7 @@ impl RemoteTab {
         };
         match field {
             DraftField::Code => {
+                dialog.code_edited = true;
                 apply_easy_connect_code(&mut dialog.draft, &next);
                 // The code brings the name, user and port with it.
                 let draft = dialog.draft.clone();
@@ -388,8 +566,29 @@ impl RemoteTab {
         cx.notify();
     }
 
-    /// `saveMachine`: replaces or appends the machine, then sends a password still in the field.
+    /// Save: an Easy Connect code from the other computer's Show QR window pairs first.
     fn save_dialog_machine(&mut self, cx: &mut Context<Self>) {
+        let Some(dialog) = self.machine_dialog.as_ref() else {
+            return;
+        };
+        if matches!(
+            dialog.pairing,
+            Some(ComputerPairing::Starting | ComputerPairing::Waiting { .. })
+        ) {
+            return;
+        }
+        if dialog.draft.easy_connect
+            && dialog.code_edited
+            && let Some(params) = computer_pairing_params(&dialog.draft.easy_connect_code)
+        {
+            self.start_computer_pairing(params, cx);
+            return;
+        }
+        self.store_dialog_machine(cx);
+    }
+
+    /// `saveMachine`: replaces or appends the machine, then sends a password still in the field.
+    fn store_dialog_machine(&mut self, cx: &mut Context<Self>) {
         let Some(dialog) = self.machine_dialog.as_ref() else {
             return;
         };
@@ -460,6 +659,7 @@ fn machine_draft_to_form(draft: &MachineDraft) -> Value {
         "easyConnectAddress": draft.easy_connect_address,
         "sshHost": draft.ssh_host,
         "sshIdentityFile": draft.ssh_identity_file,
+        "reuseSshConnection": draft.reuse_ssh_connection,
         "sshPort": draft.ssh_port,
         "sshUser": draft.ssh_user,
         "wslDistribution": draft.wsl_distribution,
@@ -494,6 +694,7 @@ fn machine_draft_from_form(form: &Value, base: MachineDraft) -> MachineDraft {
         ssh_identity_file: text("sshIdentityFile", base.ssh_identity_file.clone()),
         ssh_password: String::new(),
         ssh_password_saved: base.ssh_password_saved,
+        reuse_ssh_connection: flag("reuseSshConnection", base.reuse_ssh_connection),
         ssh_port: text("sshPort", base.ssh_port.clone()),
         ssh_user: text("sshUser", base.ssh_user.clone()),
         wsl_distribution: text("wslDistribution", base.wsl_distribution.clone()),
@@ -536,112 +737,32 @@ pub(super) fn preview_paste_easy_connect_code(
     tab.dialog_field_changed(DraftField::Code, payload, input, window, cx);
 }
 
-/// "Remote machines": the header and the tile grid.
-/// This computer's short name, beside the machine tiles.
-///
-/// CDXC:RemoteMachines 2026-11-06 DECISION:
-/// User: "i wanna be able to set the short names in settings for each machine". Each saved machine's dialog has a Short name field (`remoteMachines[].shortName`), and this computer's is set here (`localMachineShortName`), in the card that lists the computers; empty uses the one made from the name, shown as the placeholder (gx-core machine_short_names.rs). It is per computer, like the machine list, so Settings sync does not carry it.
-fn local_short_name_row(
-    tab: &mut RemoteTab,
-    t: &RemoteTokens,
-    made: &str,
-    window: &mut Window,
-    cx: &mut Context<RemoteTab>,
-) -> AnyElement {
-    if tab.local_short_name.is_none() {
-        let saved = tab
-            .store
-            .read(cx)
-            .value("localMachineShortName")
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
-        let placeholder = made.to_string();
-        let input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder(placeholder)
-                .default_value(saved)
-        });
-        let subscription = cx.subscribe_in(
-            &input,
-            window,
-            |tab: &mut RemoteTab, input, event: &InputEvent, window, cx| {
-                if !matches!(event, InputEvent::Change) {
-                    return;
-                }
-                let text = input.read(cx).value().to_string();
-                let short = ghostex_gx_core::machine_short_names::clean_machine_short_name(&text);
-                if short != text {
-                    let value = short.clone();
-                    input.update(cx, |input, cx| input.set_value(value, window, cx));
-                }
-                let mut patch = serde_json::Map::new();
-                patch.insert("localMachineShortName".to_string(), Value::String(short));
-                tab.store.update(cx, |store, cx| {
-                    store.apply_patch(patch, "settings:localMachineShortName", cx)
-                });
-            },
-        );
-        tab.local_short_name = Some((input, subscription));
-    }
-    let input = tab
-        .local_short_name
-        .as_ref()
-        .map(|(input, _)| input.clone())
-        .expect("made above");
-    h_flex()
-        .w_full()
-        .gap(px(10.0))
-        .items_center()
-        .child(
-            v_flex()
-                .flex_1()
-                .min_w_0()
-                .child(
-                    div()
-                        .text_size(px(14.0))
-                        .line_height(px(20.0))
-                        .text_color(hsla(t.foreground))
-                        .child("This computer's short name"),
-                )
-                .child(detail(
-                    t,
-                    "Up to 2 characters, shown on the sidebar's computer pills. Each machine's own is in its settings below.".to_string(),
-                    true,
-                )),
-        )
-        .child(
-            div()
-                .flex_shrink_0()
-                .w(px(64.0))
-                .child(remote_input(&t.p, &input, 32.0, 10.0, Some(64.0), false, false, window, cx)),
-        )
-        .into_any_element()
-}
-
+/// "Remote machines": the header and the tile grid. This computer's own short name is in the
+/// Current machine card above the tabs (CDXC:RemotePairing 2026-11-08 in current_machine.rs).
 pub(super) fn machines_section(
     tab: &mut RemoteTab,
     t: &RemoteTokens,
-    window: &mut Window,
+    window: &Window,
     cx: &mut Context<RemoteTab>,
 ) -> AnyElement {
+    // Three tiles to a row in a narrow Settings window, so a name and its status stay readable
+    // (four truncated both to "Macbo…" and "Setu…"; the same width as the section tabs' switch).
+    let per_row = if window.viewport_size().width < px(1060.0) {
+        3
+    } else {
+        4
+    };
     let machines = tab.remote_machines(cx);
-    // Every computer's pill, and this computer's made one for its field's placeholder (the
-    // short names with its own left out).
+    // Every computer's pill.
     let local_name = crate::host_name::local_computer_name();
     let mut settings = serde_json::Map::new();
     settings.insert("remoteMachines".to_string(), Value::Array(machines.clone()));
-    let made_local =
-        ghostex_gx_core::machine_short_names::short_names_by_machine_id(&local_name, &settings)
-            .remove(ghostex_gx_core::LOCAL_MACHINE_ID)
-            .unwrap_or_default();
     settings.insert(
         "localMachineShortName".to_string(),
         tab.store.read(cx).value("localMachineShortName"),
     );
     let short_names =
         ghostex_gx_core::machine_short_names::short_names_by_machine_id(&local_name, &settings);
-    let local_row = local_short_name_row(tab, t, &made_local, window, cx);
     // An edited machine that went away closes its dialog.
     if let Some(dialog) = tab.machine_dialog.as_ref()
         && let Some(id) = dialog.machine_id.as_deref()
@@ -662,7 +783,7 @@ pub(super) fn machines_section(
     while tiles.peek().is_some() {
         let mut row = h_flex().w_full().gap(px(8.0)).items_stretch();
         let mut count = 0;
-        for tile in tiles.by_ref().take(4) {
+        for tile in tiles.by_ref().take(per_row) {
             row = row.child(
                 div()
                     .flex_1()
@@ -673,7 +794,7 @@ pub(super) fn machines_section(
             );
             count += 1;
         }
-        for _ in count..4 {
+        for _ in count..per_row {
             row = row.child(div().flex_1().flex_basis(px(0.0)).min_w_0());
         }
         rows.push(row);
@@ -714,7 +835,6 @@ pub(super) fn machines_section(
                 .text_color(hsla(t.muted))
                 .child("Other computers this one connects to, over SSH or with an Easy Connect code. Their projects show up as separate sidebar sections; the switch hides a machine from the sidebar without deleting it."),
         )
-        .child(local_row)
         .child(v_flex().w_full().gap(px(8.0)).children(rows))
         .into_any_element();
     path_card(
@@ -747,15 +867,15 @@ fn tile_icon(t: &RemoteTokens, path: &'static str) -> AnyElement {
 }
 
 fn tile_text(t: &RemoteTokens, title: String, detail_text: String) -> AnyElement {
-    tile_text_wrapping(t, title, detail_text, false)
+    tile_text_with_dot(t, title, detail_text, false)
 }
 
-/// [`tile_text`] whose line may wrap: a failing machine's reason is read whole.
-fn tile_text_wrapping(
+/// [`tile_text`] whose one line leads with a red dot: a failing machine's short status.
+fn tile_text_with_dot(
     t: &RemoteTokens,
     title: String,
     detail_text: String,
-    wrap: bool,
+    dot: bool,
 ) -> AnyElement {
     v_flex()
         .flex_1()
@@ -772,7 +892,24 @@ fn tile_text_wrapping(
                 .text_color(hsla(t.foreground))
                 .child(title),
         )
-        .child(detail(t, detail_text, wrap))
+        .child(
+            h_flex()
+                .min_w_0()
+                .gap(px(6.0))
+                .items_center()
+                .when(dot, |line| line.child(status_dot(t)))
+                .child(detail(t, detail_text, false)),
+        )
+        .into_any_element()
+}
+
+/// The 7px red dot of a failing machine, in its tile and at the head of its status panel.
+fn status_dot(t: &RemoteTokens) -> AnyElement {
+    div()
+        .flex_shrink_0()
+        .size(px(7.0))
+        .rounded_full()
+        .bg(hsla(t.p.destructive))
         .into_any_element()
 }
 
@@ -832,7 +969,6 @@ fn machine_tile(
     let status = machine_tile_status(
         tab.connect_states.get(&id).map(String::as_str),
         tab.this_computer.contains(&id),
-        tab.status_messages.get(&id).map(String::as_str),
     );
     let hover = t.card(0.58);
     let open_machine = machine.clone();
@@ -865,17 +1001,18 @@ fn machine_tile(
                     tab.open_machine_dialog(Some(&open_machine), window, cx);
                 }))
                 .child(tile_icon(t, ICON_DEVICE_DESKTOP))
-                .child(tile_text_wrapping(
+                .child(tile_text_with_dot(
                     t,
                     name,
-                    // A failing machine's reason, or that it is this computer, comes first and
-                    // wraps; then a connected machine's Ghostex version (and its update) stands in
-                    // for the SSH target.
+                    // A failing machine's short status, or that it is this computer, comes first;
+                    // then a connected machine's Ghostex version (and its update) stands in for
+                    // the SSH target. The reason is in the machine's sheet, never in the tile.
                     status
-                        .clone()
+                        .as_ref()
+                        .map(|status| status.text.to_string())
                         .or_else(|| super::app_update::tile_update_line(tab, &id))
                         .unwrap_or_else(|| format_remote_machine_ssh_target(machine)),
-                    status.is_some(),
+                    status.as_ref().is_some_and(|status| status.failed),
                 )),
         )
         .children(super::app_update::tile_update_button(tab, t, &id, cx))
@@ -1017,88 +1154,38 @@ pub(super) fn machine_dialog(
     let mut fields: Vec<AnyElement> = Vec::new();
     if !is_new {
         let visible = !draft.disabled;
-        fields.push(
-            h_flex()
-                .w_full()
-                .items_center()
-                .gap(px(12.0))
-                .child(
-                    v_flex()
-                        .flex_1()
-                        .min_w_0()
-                        .child(
-                            div()
-                                .text_size(px(14.0))
-                                .line_height(px(19.25))
-                                .text_color(hsla(t.muted))
-                                .child("Show in sidebar"),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(13.0))
-                                .line_height(px(18.85))
-                                .text_color(hsla(colors.muted))
-                                .child("Turn off to hide this machine from the sidebar without deleting it."),
-                        ),
-                )
-                .child(
-                    div()
-                        .id("remote-machine-dialog-visible")
-                        .flex_shrink_0()
-                        .cursor_pointer()
-                        .on_click(cx.listener(move |tab, _: &ClickEvent, _window, cx| {
-                            if let Some(dialog) = tab.machine_dialog.as_mut() {
-                                dialog.draft.disabled = visible;
-                            }
-                            cx.notify();
-                        }))
-                        .child(settings_switch(&p, visible, false)),
-                )
-                .into_any_element(),
-        );
+        fields.push(dialog_switch_row(
+            t,
+            &colors,
+            "remote-machine-dialog-visible",
+            "Show in sidebar",
+            "Turn off to hide this machine from the sidebar without deleting it.",
+            visible,
+            move |tab| {
+                if let Some(dialog) = tab.machine_dialog.as_mut() {
+                    dialog.draft.disabled = visible;
+                }
+            },
+            cx,
+        ));
     }
     {
         // CDXC:RemoteMachines 2026-11-03 DECISION: the user chose that connecting a computer is permission enough for agents on both computers to start, message and read each other's sessions, with one switch per machine to stop it (on by default). SEE-ALSO: server/src/connected_computers/registry.rs.
         let agent_access = !draft.agent_access_off;
-        fields.push(
-            h_flex()
-                .w_full()
-                .items_center()
-                .gap(px(12.0))
-                .child(
-                    v_flex()
-                        .flex_1()
-                        .min_w_0()
-                        .child(
-                            div()
-                                .text_size(px(14.0))
-                                .line_height(px(19.25))
-                                .text_color(hsla(t.muted))
-                                .child("Agent access"),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(13.0))
-                                .line_height(px(18.85))
-                                .text_color(hsla(colors.muted))
-                                .child("Agents on this computer can start, message and read sessions on this machine, and its agents can do the same here."),
-                        ),
-                )
-                .child(
-                    div()
-                        .id("remote-machine-dialog-agent-access")
-                        .flex_shrink_0()
-                        .cursor_pointer()
-                        .on_click(cx.listener(move |tab, _: &ClickEvent, _window, cx| {
-                            if let Some(dialog) = tab.machine_dialog.as_mut() {
-                                dialog.draft.agent_access_off = agent_access;
-                            }
-                            cx.notify();
-                        }))
-                        .child(settings_switch(&p, agent_access, false)),
-                )
-                .into_any_element(),
-        );
+        fields.push(dialog_switch_row(
+            t,
+            &colors,
+            "remote-machine-dialog-agent-access",
+            "Agent access",
+            "Agents on this computer can start, message and read sessions on this machine, and its agents can do the same here.",
+            agent_access,
+            move |tab| {
+                if let Some(dialog) = tab.machine_dialog.as_mut() {
+                    dialog.draft.agent_access_off = agent_access;
+                }
+            },
+            cx,
+        ));
     }
     if let Some(reading) = &code_reading {
         let (text, color) = match reading {
@@ -1269,11 +1356,44 @@ pub(super) fn machine_dialog(
                     None,
                 )),
             ));
+        // A Windows WSL machine's gxserver listens inside that distribution, where a forward in
+        // the user's own SSH connection cannot land, so the setting is not offered for it.
+        // Windows OpenSSH cannot multiplex, so the setting is macOS and Linux only.
+        if cfg!(any(target_os = "macos", target_os = "linux"))
+            && !easy_connect
+            && draft.wsl_distribution.trim().is_empty()
+        {
+            // CDXC:RemoteMachines 2026-11-08 DECISION: GitHub #496, where the maintainer asked for
+            // "an advanced toggle to be enabled in the remote tab": the machine can ride the SSH
+            // connection the user already signed in to, so hosts that ask for a verification code
+            // on every login (2FA) work over the master `~/.ssh/config` keeps open.
+            // SEE-ALSO: helpers/remote/ssh_connection_share.rs (the check and the reused login).
+            let reuse = draft.reuse_ssh_connection;
+            advanced_fields = advanced_fields.child(dialog_switch_row(
+                t,
+                &colors,
+                "remote-machine-dialog-reuse-ssh",
+                "Reuse an existing SSH connection",
+                "For computers that ask for a verification code each time you sign in. Sign in once in a terminal with ControlMaster on in your SSH config, and Ghostex uses that connection instead of signing in again.",
+                reuse,
+                move |tab| {
+                    if let Some(dialog) = tab.machine_dialog.as_mut() {
+                        dialog.draft.reuse_ssh_connection = !reuse;
+                    }
+                },
+                cx,
+            ));
+        }
         advanced = advanced.child(advanced_fields);
     }
     fields.push(advanced.into_any_element());
 
     let mut body = v_flex().w_full().min_w_0().gap(px(12.0)).pr(px(2.0));
+    if let Some(machine_id) = machine_id.as_deref()
+        && let Some(panel) = machine_status_panel(tab, t, &colors, machine_id, &title, cx)
+    {
+        body = body.child(panel);
+    }
     if is_new {
         body = body.child(div().mb(px(2.0)).child(raised_segmented(
             &p,
@@ -1386,6 +1506,20 @@ pub(super) fn machine_dialog(
         body = body.child(section);
     }
 
+    if let Some(pairing) = tab
+        .machine_dialog
+        .as_ref()
+        .and_then(|dialog| dialog.pairing.clone())
+    {
+        body = body.child(computer_pairing_panel(t, &pairing));
+    }
+    let pairing_busy = tab.machine_dialog.as_ref().is_some_and(|dialog| {
+        matches!(
+            dialog.pairing,
+            Some(ComputerPairing::Starting | ComputerPairing::Waiting { .. })
+        )
+    });
+
     let mut footer = h_flex().w_full().items_center().justify_end().gap(px(8.0));
     if let Some(machine_id) = dialog_machine_id(tab) {
         footer = footer.child(div().mr_auto().child(settings_button_sized(
@@ -1417,11 +1551,17 @@ pub(super) fn machine_dialog(
         .child(settings_button_sized(
             &p,
             "remote-machine-save",
-            if is_new { "Add machine" } else { "Save" },
+            if pairing_busy {
+                "Waiting for approval…"
+            } else if is_new {
+                "Add machine"
+            } else {
+                "Save"
+            },
             None,
             ButtonVariant::Default,
             ButtonSize::Default,
-            !can_save,
+            !can_save || pairing_busy,
             Some(save_reason.into()),
             |tab: &mut RemoteTab, _window, cx| tab.save_dialog_machine(cx),
             cx,
@@ -1503,8 +1643,192 @@ pub(super) fn machine_dialog(
     ))
 }
 
+/// The first thing in a failing machine's sheet: what failed, why in a sentence, and the fixes.
+///
+/// CDXC:RemoteMachines 2026-11-08 DECISION: User (Q2018, Q2019 on the remote tile page): a
+/// machine's failure and its fix live at the top of the machine's own sheet, not in its tile. The
+/// panel has the state's title with the tile's red dot, the reason the app sent (or the state's
+/// own words), and Reconnect, Reinstall on <machine> (only for a gxserver package Ghostex installed
+/// there: the connect then replaces it even at the same build) and Copy details, which copies the
+/// state and the full reason for a bug report.
+fn machine_status_panel(
+    tab: &RemoteTab,
+    t: &RemoteTokens,
+    colors: &DialogColors,
+    machine_id: &str,
+    machine_name: &str,
+    cx: &mut Context<RemoteTab>,
+) -> Option<AnyElement> {
+    let state = tab
+        .connect_states
+        .get(machine_id)
+        .map(String::as_str)
+        .filter(|state| ghostex_gx_core::machine_state_is_failure(state))?;
+    if tab.this_computer.contains(machine_id) {
+        return None;
+    }
+    let (title, default_reason) = ghostex_gx_core::machine_state_copy(state);
+    let reason = tab
+        .status_messages
+        .get(machine_id)
+        .map(|message| message.trim().to_string())
+        .filter(|message| !message.is_empty())
+        .or_else(|| default_reason.map(str::to_string));
+    let managed = tab
+        .installs
+        .get(machine_id)
+        .is_some_and(|install| install.installed && install.managed);
+    let details = format!(
+        "{machine_name}: {title} ({state})\n{}",
+        reason.clone().unwrap_or_default()
+    );
+    let p = t.p.nested_dialog();
+    let copy_id = SharedString::from(format!("remote-machine-status-copy-{machine_id}"));
+    let copied = tab.copied.contains(&copy_id);
+    let reconnect_id = machine_id.to_string();
+    let reinstall_id = machine_id.to_string();
+    let mut actions = h_flex()
+        .w_full()
+        .flex_wrap()
+        .gap(px(6.0))
+        .pl(px(15.0))
+        .pt(px(4.0))
+        .child(settings_button_sized(
+            &p,
+            "remote-machine-status-reconnect",
+            "Reconnect",
+            Some(ICON_REFRESH),
+            ButtonVariant::Default,
+            ButtonSize::Sm,
+            false,
+            None,
+            move |tab: &mut RemoteTab, _window, cx| {
+                tab.post(
+                    json!({ "remoteMachineId": reconnect_id, "type": "reconnectRemoteMachine" }),
+                    cx,
+                );
+            },
+            cx,
+        ));
+    if managed {
+        actions = actions.child(settings_button_sized(
+            &p,
+            "remote-machine-status-reinstall",
+            format!("Reinstall on {machine_name}"),
+            Some(icon::DOWNLOAD),
+            ButtonVariant::Secondary,
+            ButtonSize::Sm,
+            false,
+            None,
+            move |tab: &mut RemoteTab, _window, cx| {
+                tab.post(
+                    json!({
+                        "reinstall": true,
+                        "remoteMachineId": reinstall_id,
+                        "type": "reconnectRemoteMachine",
+                    }),
+                    cx,
+                );
+            },
+            cx,
+        ));
+    }
+    actions = actions.child(settings_button_sized(
+        &p,
+        copy_id.clone(),
+        if copied { "Copied" } else { "Copy details" },
+        Some(ICON_COPY),
+        ButtonVariant::Secondary,
+        ButtonSize::Sm,
+        false,
+        None,
+        move |tab: &mut RemoteTab, _window, cx| tab.copy(copy_id.clone(), details.clone(), cx),
+        cx,
+    ));
+    Some(
+        v_flex()
+            .id("remote-machine-status-panel")
+            .w_full()
+            .gap(px(2.0))
+            .p(px(12.0))
+            .rounded(px(MODAL_RADIUS_CONTROL))
+            .border_1()
+            .border_color(hsla(colors.border))
+            .child(
+                h_flex()
+                    .gap(px(8.0))
+                    .items_center()
+                    .child(status_dot(t))
+                    .child(
+                        div()
+                            .text_size(px(14.0))
+                            .line_height(px(20.0))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(hsla(colors.foreground))
+                            .child(title),
+                    ),
+            )
+            .children(reason.map(|reason| {
+                div()
+                    .pl(px(15.0))
+                    .text_size(px(13.0))
+                    .line_height(px(19.0))
+                    .text_color(hsla(colors.muted))
+                    .child(reason)
+            }))
+            .child(actions)
+            .into_any_element(),
+    )
+}
+
 fn dialog_machine_id(tab: &RemoteTab) -> Option<String> {
     tab.machine_dialog
         .as_ref()
         .and_then(|dialog| dialog.machine_id.clone())
+}
+
+/// The dialog's pairing line: the three words to compare, or why pairing stopped.
+fn computer_pairing_panel(t: &RemoteTokens, pairing: &ComputerPairing) -> AnyElement {
+    let frame = v_flex()
+        .w_full()
+        .gap(px(4.0))
+        .p(px(12.0))
+        .rounded(px(MODAL_RADIUS_CONTROL))
+        .border_1()
+        .border_color(hsla(t.edge(0.70)));
+    match pairing {
+        ComputerPairing::Starting => frame
+            .child(detail(t, "Asking the other computer to let this one in…", true))
+            .into_any_element(),
+        ComputerPairing::Waiting {
+            words, computer, ..
+        } => frame
+            .items_center()
+            .child(detail(
+                t,
+                format!("Approve this computer on {computer}. Check it shows the same three words:"),
+                true,
+            ))
+            .child(
+                div()
+                    .text_size(px(18.0))
+                    .line_height(px(26.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(hsla(t.foreground))
+                    .child(words.join(" · ")),
+            )
+            .child(detail(
+                t,
+                "It's under Settings > Remote > Paired devices there, waiting for Touch ID, Windows Hello or the system password.",
+                true,
+            ))
+            .into_any_element(),
+        ComputerPairing::Failed(message) => frame
+            .child(
+                div()
+                    .text_color(hsla(t.p.destructive))
+                    .child(message.clone()),
+            )
+            .into_any_element(),
+    }
 }

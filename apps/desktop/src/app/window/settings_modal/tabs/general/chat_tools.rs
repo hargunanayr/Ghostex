@@ -3,13 +3,13 @@
 use super::super::super::catalog::SettingOption;
 use super::super::super::catalog::settings_catalog;
 use super::super::super::fields::{
-    RowSpec, SELECT_WIDTH, SliderBinding, SliderSaver, ignored_ports_field, reset_key,
-    segmented_field, setting_row, settings_section, settings_select_with_unavailable,
-    slider_number_field_with,
+    RowSpec, SELECT_WIDTH, SliderBinding, SliderSaver, grok_logins_field, ignored_ports_field,
+    reset_key, segmented_field, setting_row, settings_section, settings_select_with_unavailable,
+    slider_number_field_with, text_field,
 };
 use super::super::super::page::PageBlock;
 use super::super::super::store::SettingsStore;
-use super::super::orchestrator_playbook::{playbook_control, playbook_scope};
+use super::super::orchestrator_playbook::{playbook_control, playbook_overrides};
 use super::{GeneralCx, GeneralTab, save};
 use gpui::{AnyElement, App, Context, Entity, IntoElement as _, SharedString, Window};
 use serde_json::{Map, json};
@@ -144,19 +144,19 @@ fn chat_section(
         ));
     }
     rows.extend(page.toggle(g, s, "sessionChatFileEditPreviews", "Show file edit previews", "Show the first seven code lines in each file edit. Turn off to show only the path and change counts.", false, cx));
-    rows.extend(page.toggle(g, s, "chatToolCallCards", "Tool call cards (preview)", "Show each run of tool calls as one card: it counts the calls, says what each one is doing and then did, with its result and time, explains a failure, and folds to one line once the agent writes again. Off keeps the current look.", false, cx));
+    rows.extend(page.toggle(g, s, "chatToolCallCards", "Tool call cards (preview)", "Show each run of tool calls as one line that says which call is running now; click it to see every call with its result, time and the reason for any failure. Off keeps the current look.", false, cx));
     rows.extend(page.toggle(g, s, "sessionChatKeepComposerExpanded", "Keep chat box expanded while scrolling", "Keep the desktop chat box at full size while you scroll the transcript instead of shrinking it as you scroll up and growing it back at the end.", false, cx));
     rows.extend(page.toggle(g, s, "sessionChatConfirmEscapeInterrupt", "Press Escape twice to interrupt", "While the agent is working, the first Escape asks you to press Escape again within 2 seconds before it interrupts. Turn off to interrupt on the first Escape.", false, cx));
     // CDXC:Settings 2026-11-02 SEE-ALSO: the user's words on Default to Detailed view (an Advanced row) are in packages/settings-catalog/src/general/chat.rs.
     rows.extend(page.toggle(g, s, "sessionChatDetailedView", "Default to Detailed view", "New chats open in Detailed view, with the work under each agent reply shown. Off, they open in Normal view. More actions > View in a chat picks Summary, Normal or Detailed for that chat.", false, cx));
     rows.extend(page.toggle(g, s, "chatCatchMeUp", "Catch me up button", "Show a Catch me up button at the top right of the chat box while it is empty. It has your Title Generation Agent (a small, cheap model) read the session's last 30 agent messages and shows where the session stands: what needs you, what is done, in progress or untested.", false, cx));
     rows.extend(page.toggle(g, s, "chatSendOnPick", "Send when you pick an answer", "When a question card asks one question, picking an answer sends it right away, without Send answers. Cards with several questions, multiple-choice questions, Other and text answers still wait for Send.", false, cx));
-    rows.extend(page.toggle(g, s, "chatAnswersWaitForIdle", "Wait for turn end before sending form answers", "Send answers from question forms and chat pages only after the agent finishes its turn. Off sends them like a normal chat message, which the agent can read after its current tool call finishes.", false, cx));
+    rows.extend(page.toggle(g, s, "chatAnswersWaitForIdle", "Wait for turn end before sending form answers", "Send answers from Ghostex forms and Ghostex pages only after the agent finishes its turn. Off sends them like a normal chat message, which the agent can read after its current tool call finishes.", false, cx));
     if g.visible(s, "chatPageOpenTarget") {
         let spec = g.spec(
             "chatPageOpenTarget",
-            "Open chat pages in",
-            "Where a page an agent shows in chat (a mockup, a question form, a comparison) opens when you click its card: a popup over the chat, the Files view, or your default web browser. Answers you send from the page reach the agent the same way in all three. The phone always opens pages in its own viewer.",
+            "Open Ghostex pages in",
+            "Where a Ghostex page (gx page) an agent shows in chat, such as a mockup or a comparison, opens when you click its card: a popup over the chat, the Files view, or your default web browser. Answers you send from the page reach the agent the same way in all three. The phone always opens pages in its own viewer.",
         );
         rows.extend(page.segmented(
             g,
@@ -184,12 +184,12 @@ fn chat_section(
             cx,
         ));
     }
-    rows.extend(page.toggle(g, s, "agentGhostexNote", "Tell agents about Ghostex", "Agent sessions Ghostex starts get a short note that they run in Ghostex: it can show pages, questions and charts in the chat, install Ghostex skills, and `ghostex agent-guide` explains the rest. Agents use it only when you ask for one of those things. Applies to sessions started or resumed after you change it.", false, cx));
+    rows.extend(page.toggle(g, s, "agentGhostexNote", "Tell agents about Ghostex", "Agent sessions Ghostex starts get a short note that they run in Ghostex: it can show Ghostex pages, forms and visuals in the chat, install Ghostex skills, and `ghostex agent-guide` explains the rest. Agents use it only when you ask for one of those things. Applies to sessions started or resumed after you change it.", false, cx));
     rows.extend(page.toggle(g, s, "orchestratorAllEfforts", "Every effort level in coordinator pickers", "Also lists the levels above XHigh (Max, Ultra and the like) in the coordinator effort pickers, where the agent has them. Coordinators work best on High or XHigh.", false, cx));
     rows.extend(orchestrator_playbook_row(page, g, s, cx));
     rows.extend(read_aloud_rows(page, g, s, window, cx));
     rows.extend(page.toggle(g, s, "sessionDetailsClaudeTaskTools", "Claude task list", "Turn on Claude's task list tools, so Claude can keep a checklist that the Session details panel shows. Recent Claude models only get them when Ghostex asks. Applies to Claude sessions started or woken after you change it.", false, cx));
-    settings_section(&g.p, "Chat", None, None, rows)
+    settings_section(&g.p, g.section_title("chat", "Chat"), None, None, rows)
         .map(|section| PageBlock::section("chat", section))
 }
 
@@ -268,9 +268,8 @@ fn read_aloud_rows(
 /// than the usual select.
 const READ_ALOUD_VOICE_WIDTH: f32 = 280.0;
 
-/// The orchestrator playbook for all projects: its state, the switch that turns an edited copy
-/// off, and the Edit button that opens its editor (tabs/orchestrator_playbook.rs). The playbook
-/// lives in gxserver, not in the settings file.
+/// The playbook overrides for every coordinator: their first line and the Edit button that opens
+/// their editor (tabs/orchestrator_playbook.rs). They live in gxserver, not in the settings file.
 fn orchestrator_playbook_row(
     page: &mut GeneralTab,
     g: &GeneralCx,
@@ -281,16 +280,15 @@ fn orchestrator_playbook_row(
     if !g.visible(section, KEY) {
         return None;
     }
-    let scope = playbook_scope(page, None, cx);
-    let spec = RowSpec::new("Coordinator playbook").description(
-        "How every coordinator works: the playbook it follows. Edit it for all projects here, or for one project and its worktrees in Settings > Projects. Coordinators, existing ones too, follow the edited playbook from their next guide read. The switch turns an edited playbook off without losing it.",
+    let known = playbook_overrides(page, cx);
+    let spec = RowSpec::new("Playbook overrides").description(
+        "Your own instructions for every coordinator, such as \"Never push without asking\". Coordinators read them after Ghostex's playbook and follow them over it, and Ghostex's playbook keeps getting its updates. Existing coordinators follow them from their next message.",
     );
     let rpc_available = page.store.read(cx).request().gxserver_rpc_available;
     let control = playbook_control(
         &g.p,
         "orchestrator-playbook",
-        None,
-        scope.as_ref(),
+        known.as_ref(),
         rpc_available,
         cx,
     );
@@ -352,8 +350,48 @@ fn browser_section(
         false,
         cx,
     ));
-    settings_section(&g.p, "Browser", None, None, rows)
-        .map(|section| PageBlock::section("browser", section))
+    // The Grok extension's rows (claude_web/grok.rs), shown while it is on: the catalog hides a
+    // feature's `settingKeys` while the feature is off.
+    if g.visible("browser", "grokWebStartPage") {
+        let spec = g.spec(
+            "grokWebStartPage",
+            "Grok start page",
+            "The page the Grok view opens on, for every Grok login: grok.com, or a page of your own such as one of your Grok bots. Left empty, or not a web address, it opens grok.com.",
+        );
+        let value = g.values.string("grokWebStartPage");
+        rows.push(text_field(
+            page,
+            &g.p,
+            "grokWebStartPage",
+            spec,
+            Some(reset_key::<GeneralTab>("grokWebStartPage")),
+            &value,
+            Some("https://grok.com/"),
+            None,
+            None,
+            window,
+            cx,
+        ));
+    }
+    if g.visible("browser", "grokWebLogins") {
+        let spec = g.spec(
+            "grokWebLogins",
+            "Grok logins",
+            "The logins the bar above the Grok page switches between, each signed in on its own. Removing one signs it out.",
+        );
+        let value = g.values.value("grokWebLogins");
+        rows.push(grok_logins_field(
+            page, &g.p, spec, None, &value, window, cx,
+        ));
+    }
+    settings_section(
+        &g.p,
+        g.section_title("browser", "Browser"),
+        None,
+        None,
+        rows,
+    )
+    .map(|section| PageBlock::section("browser", section))
 }
 
 fn dev_servers_section(
@@ -396,9 +434,7 @@ fn dev_servers_section(
             cx,
         ));
     }
-    settings_section(
-        &g.p,
-        "Dev Servers",
+    settings_section(&g.p, g.section_title("terminalDevServers", "Dev Servers"),
         Some(SharedString::from(
             "Choose how Ghostex discovers running dev servers and which ports stay hidden. Detected URLs follow Browser \u{2192} Open links in.",
         )),
@@ -466,7 +502,7 @@ fn editor_section(
         false,
         cx,
     ));
-    settings_section(&g.p, "Editor", None, None, rows)
+    settings_section(&g.p, g.section_title("editor", "Editor"), None, None, rows)
         .map(|section| PageBlock::section("editor", section))
 }
 
@@ -665,15 +701,22 @@ fn file_opening_section(
     rows.extend(page.toggle(
         g,
         s,
+        "changesHideTestFiles",
+        "Hide test files in Changes",
+        "Leave test files out of the Changes view to review an agent's change without its tests. The flask button in the Changes toolbar switches this too.",
+        false,
+        cx,
+    ));
+    rows.extend(page.toggle(
+        g,
+        s,
         "docsOpenFilesAsTabs",
         "Show open files as tabs",
         "Show the files open in Files as a row of tabs above the document instead of the Open Files list in the files sidebar.",
         true,
         cx,
     ));
-    settings_section(
-        &g.p,
-        "File opening",
+    settings_section(&g.p, g.section_title("fileOpening", "File opening"),
         Some(SharedString::from(
             "Choose where files open from Quick Access, agent chat links and terminal links. An editor app shows here once it is installed on this computer. If a view is unavailable, Ghostex uses the other one.",
         )),
@@ -719,8 +762,14 @@ fn marked_handovers_section(
     rows.extend(page.toggle(g, s, "markedHandovers", "Marked handovers in every session", "Coordinators and their threads start each part of the message they hand back with a marker such as ✅ Done or 🧪 Untested, and end it with what needs you (⚠️ Read this, 🛑 Blocked, 💡 Suggestions, ❓ Needs you), so you never miss it. Turn this on to have every other agent session do the same. Applies to sessions started or resumed after you change it.", false, cx));
     rows.extend(page.marked_sections_style_row(g, s, window, cx));
     rows.extend(page.toggle(g, s, "orchestratorPlainReplies", "Coordinators answer without markers", "Coordinators answer normally, without marking the sections of their handovers. Their threads still mark the reports they send to the coordinator. Applies to coordinators started or resumed after you change it.", false, cx));
-    settings_section(&g.p, "Marked handovers", None, None, rows)
-        .map(|section| PageBlock::section("markedHandovers", section))
+    settings_section(
+        &g.p,
+        g.section_title("markedHandovers", "Marked handovers"),
+        None,
+        None,
+        rows,
+    )
+    .map(|section| PageBlock::section("markedHandovers", section))
 }
 
 /// The Files & Links page (the old Tools group: CDXC:Settings 2026-10-29 in model.rs): where

@@ -25,11 +25,7 @@ fn voice_agent_is_a_built_in_feature_on_by_default() {
 #[test]
 fn voice_agent_needs_no_experimental_gate() {
     assert_eq!(built_in_extensions::gate_key(VOICE_AGENT), None);
-    let experimental_off = |key: &str| match key {
-        "showBetaFeatures" => Some(false),
-        _ => None,
-    };
-    assert!(built_in_extensions::on_with(VOICE_AGENT, experimental_off));
+    assert!(built_in_extensions::on_with(VOICE_AGENT, |_| None));
 }
 
 #[test]
@@ -62,15 +58,24 @@ fn turning_it_off_hides_its_hotkeys_but_not_dictate() {
 }
 
 #[test]
-fn turning_it_off_keeps_the_page_with_dictates_keys_and_history() {
-    assert_eq!(built_in_extensions::feature_owning_page("voiceAgent"), None);
-    assert!(built_in_extensions::page_shown_with(
+fn turning_it_off_hides_its_page_and_keeps_dictations_keys_and_history() {
+    assert_eq!(
+        built_in_extensions::feature_owning_page("voiceAgent"),
+        Some(VOICE_AGENT)
+    );
+    assert!(!built_in_extensions::page_shown_with(
         "voiceAgent",
+        saved(Some(true))
+    ));
+    assert!(built_in_extensions::page_shown_with(
+        "dictation",
         saved(Some(true))
     ));
     let hidden = built_in_extensions::hidden_setting_keys_with(saved(Some(true)));
     for call_row in [
         "voiceAgentProvider",
+        "voiceAgentXaiKey",
+        "voiceAgentOpenaiKey",
         "voiceAgentXaiVoice",
         "voiceAgentOpenaiVoice",
         "voiceAgentSpeed",
@@ -79,10 +84,14 @@ fn turning_it_off_keeps_the_page_with_dictates_keys_and_history() {
     ] {
         assert!(hidden.contains(&call_row), "{call_row} hides");
     }
-    // Dictate uses the xAI key, or the OpenAI key when no xAI key is saved.
-    assert!(!hidden.contains(&"voiceAgentXaiKey"));
-    assert!(!hidden.contains(&"voiceAgentOpenaiKey"));
-    assert!(!hidden.contains(&"voiceAgentDictationHistory"));
+    // Dictation shows the key its engine needs, and its history, either way.
+    for dictation_row in [
+        "dictateXaiKey",
+        "dictateOpenaiKey",
+        "voiceAgentDictationHistory",
+    ] {
+        assert!(!hidden.contains(&dictation_row), "{dictation_row} stays");
+    }
     let shown = built_in_extensions::hidden_setting_keys_with(saved(None));
     assert!(!shown.contains(&"voiceAgentProvider"));
 }

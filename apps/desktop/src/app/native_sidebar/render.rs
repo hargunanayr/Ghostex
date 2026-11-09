@@ -65,6 +65,11 @@ impl GhostexGpuiApp {
                     header.child(div().h(px(4.0 * appearance.scale)).flex_shrink_0())
                 })
                 .children(self.render_native_sidebar_space_row(&snapshot, &appearance, false, cx))
+                // CDXC:Chief 2026-11-08 DECISION: User (Q1922): Main Hub shows in the Unified sidebar too, under its header, drawn as in the Project sidebar (native_sidebar/chief.rs); its block lines up with the Unified group headers' box.
+                .when(!snapshot.spaces_enabled, |header| {
+                    header.child(div().h(px(6.0 * appearance.scale)).flex_shrink_0())
+                })
+                .children(self.render_native_sidebar_chief(&snapshot, &appearance, true, cx))
                 .into_any_element()
         });
         let unified_list = unified.as_ref().map(|unified| {
@@ -353,6 +358,8 @@ impl GhostexGpuiApp {
                                                             .filter(|group| {
                                                                 !session_groups.nests(group)
                                                             })
+                                                            // A GBot is drawn inside Main Hub's group (gbots_rows.rs).
+                                                            .filter(|group| group.gbot().is_none())
                                                             .map(|group| {
                                                                 // CDXC:Spaces 2026-10-06 WHY: padding, not a margin, so this block's measured bounds (where a press is a row's and not the empty list space that starts a Space drag) cover the project header's box, which reaches left over its chevron; as a margin, a click on the chevron armed the Space drag and showed the grabbing hand.
                                                                 div()
@@ -499,6 +506,8 @@ impl GhostexGpuiApp {
             .children(self.render_native_sidebar_menu(window, cx))
             // The floating links card, where a build draws it in the page (the desktop's is a window).
             .children(self.render_session_links_page_card(cx))
+            // The Main Hub card, where a build draws it in the page (the desktop's is a window).
+            .children(self.render_main_hub_page_card(cx))
             .into_any_element()
     }
 }

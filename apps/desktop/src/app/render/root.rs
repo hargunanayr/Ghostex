@@ -23,7 +23,8 @@ use gpui_component::v_flex;
 
 use crate::app::actions::*;
 use crate::app::claude_web::{
-    ManageClaudeWebAccounts, SelectClaudeWebAccount, SignOutClaudeWebAccount,
+    AddGrokWebLogin, ManageClaudeWebAccounts, ManageGrokWebLogins, SelectClaudeWebAccount,
+    SelectGrokWebLogin, SignOutClaudeWebAccount,
 };
 use crate::app::consts::*;
 use crate::app::helpers::*;
@@ -255,6 +256,10 @@ impl Render for GhostexGpuiApp {
         let work_area_frame = work_area_frame_active();
         #[cfg(target_os = "macos")]
         crate::app::element::sync_work_area_frame_traffic_lights(window);
+        // Read before the header and the floating sidebar lay out from `window_controls_shown`.
+        self.main_window_fullscreen = window.is_fullscreen();
+        #[cfg(target_os = "macos")]
+        self.sync_window_controls_visibility();
         let titlebar_popup_dismissal_active =
             self.titlebar_popup_menu.is_some() || self.titlebar_extension_popup.is_some();
 
@@ -829,11 +834,14 @@ impl Render for GhostexGpuiApp {
                     }
                 }),
             )
-            .on_action(
-                cx.listener(|this, action: &RunGpuiTitlebarAction, window, cx| {
-                    this.run_gpui_titlebar_action_index(action.action_index as usize, window, cx);
-                }),
-            )
+            .map(|this| {
+                crate::app::titlebar::actions_menu_rows::on_start_menu_picks(
+                    this,
+                    cx.listener(|this, pick: &crate::app::titlebar::actions_menu_rows::StartMenuPick, window, cx| {
+                        this.run_start_menu_pick(pick.clone(), window, cx);
+                    }),
+                )
+            })
             .on_action(
                 cx.listener(|this, action: &RunGpuiTitlebarGitMenuAction, _window, cx| {
                     this.run_gpui_titlebar_git_menu_row(action.row_index as usize, cx);
@@ -865,11 +873,6 @@ impl Render for GhostexGpuiApp {
                         GpuiTitlebarGitMenuActionId::SyncRemote.selector(),
                         cx,
                     );
-                }),
-            )
-            .on_action(
-                cx.listener(|this, _: &ConfigureGpuiTitlebarActions, window, cx| {
-                    this.open_gpui_settings_actions_modal_from_titlebar(window, cx);
                 }),
             )
             .on_action(
@@ -913,6 +916,12 @@ impl Render for GhostexGpuiApp {
                 never reach.
                 */
                 this.open_gpui_settings_extensions_page(Some(window), cx);
+            }))
+            .on_action(cx.listener(|this, action: &ToggleGpuiExtensionPin, _window, cx| {
+                this.update_extension_pin(action.extension_id.clone(), action.pinned, cx);
+            }))
+            .on_action(cx.listener(|this, action: &DisableGpuiExtension, _window, cx| {
+                this.disable_extension(action.extension_id.clone(), cx);
             }))
             .on_action(cx.listener(|this, _: &OpenGpuiAccountsModal, window, cx| {
                 this.open_gpui_settings_accounts_page(Some(window), cx);
@@ -1193,6 +1202,15 @@ impl Render for GhostexGpuiApp {
             }))
             .on_action(cx.listener(|this, _: &ManageClaudeWebAccounts, _window, cx| {
                 this.open_gpui_settings_tab_from_new_thread_picker("accounts", cx);
+            }))
+            .on_action(cx.listener(|this, action: &SelectGrokWebLogin, _window, cx| {
+                this.select_grok_web_login(&action.login_id, cx);
+            }))
+            .on_action(cx.listener(|this, _: &AddGrokWebLogin, _window, cx| {
+                this.add_grok_web_login(cx);
+            }))
+            .on_action(cx.listener(|this, _: &ManageGrokWebLogins, _window, cx| {
+                this.manage_grok_web_logins(cx);
             }))
             .on_action(
                 cx.listener(|this, action: &SelectBrowserProfile, window, cx| {

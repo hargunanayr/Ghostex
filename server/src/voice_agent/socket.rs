@@ -20,7 +20,7 @@ use super::conversation::{ClientFrame, Conversation, Input};
 use super::focus::FocusScope;
 use super::provider::{self, ConnectError, Provider};
 use super::{announcements, dictation, keys, prompt, registry, tools};
-use crate::auth::{is_authorized_client_headers, is_authorized_client_token};
+use crate::auth::{is_authorized_session_client_headers, is_authorized_session_client_token};
 use crate::protocol::{protocol_mismatch_error, rpc_error};
 use crate::server::{
     is_expected_protocol_version, json_response, query_value, read_protocol_version, request_id,
@@ -47,11 +47,19 @@ pub(crate) async fn handle_voice(
         );
     };
     let query_token = query_value(&uri, "authToken");
-    let authorized =
-        is_authorized_client_headers(&headers, &state.auth_token, &state.device_api_tokens)
-            || query_token.as_deref().is_some_and(|token| {
-                is_authorized_client_token(token, &state.auth_token, &state.device_api_tokens)
-            });
+    let authorized = is_authorized_session_client_headers(
+        &headers,
+        &state.auth_token,
+        &state.device_api_tokens,
+        &state.security.session_tokens,
+    ) || query_token.as_deref().is_some_and(|token| {
+        is_authorized_session_client_token(
+            token,
+            &state.auth_token,
+            &state.device_api_tokens,
+            &state.security.session_tokens,
+        )
+    });
     if !authorized {
         return json_response(
             StatusCode::UNAUTHORIZED,
@@ -62,6 +70,11 @@ pub(crate) async fn handle_voice(
             ),
         );
     }
+    // The voice agent's tools act with this token, not the token file (`loopback::ToolCaller`).
+    let caller_token = crate::auth::bearer_token(&headers)
+        .map(str::to_string)
+        .or_else(|| query_token.clone())
+        .unwrap_or_default();
     let version = read_protocol_version(&headers, &uri, None);
     if !is_expected_protocol_version(version.as_ref()) {
         return json_response(
@@ -111,7 +124,7 @@ pub(crate) async fn handle_voice(
                     focus,
                     client_remote,
                 };
-                run_conversation_socket(state, socket, conversation_id, start).await
+                run_conversation_socket(state, socket, conversation_id, start, caller_token).await
             }
             _ => {
                 fail(
@@ -159,6 +172,7 @@ async fn run_conversation_socket(
     mut socket: WebSocket,
     conversation_id: Option<String>,
     start: Start,
+    caller_token: String,
 ) {
     let (tx, resumed) = match conversation_id {
         Some(id) => match registry::sender(&id) {
@@ -178,6 +192,7 @@ async fn run_conversation_socket(
             None => return,
         },
     };
+    let _ = tx.send(Input::Caller(caller_token));
     let attach_id = NEXT_ATTACH.fetch_add(1, Ordering::Relaxed);
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<ClientFrame>();
     if tx

@@ -339,6 +339,14 @@ pub struct ChatSideState {
     /// where its card was. Absent means unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relayed_answers: Option<Value>,
+    /// Autopilot for this chat (`{ on, covered }`, server/src/autopilot/mod.rs): on for
+    /// everything, and whether it covers this session. Absent means unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub autopilot: Option<Value>,
+    /// Ghostex Collab for this chat (`{ shared: false }` or who watches, who types and the guest
+    /// messages waiting; server/collab/src/shares.rs). Absent means unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collab: Option<Value>,
     /// How the messages this session's agent sent with `ghostex agents send` and left waiting
     /// ended, by `sendRequestId` (`{ "<id>": { state: "delivered" | "failed", failure? } }`;
     /// server/src/agent_message_deliveries.rs). Absent means unchanged.
@@ -533,6 +541,10 @@ pub struct ReadSessionChatResult {
     /// Whether the Show all effort levels setting is on, the same way as `catch_up`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub all_orchestrator_efforts: Option<bool>,
+    /// The icons of the agents turned on in Settings › Agents (an agent with no icon gives its
+    /// id), the same way as `catch_up`; the model menu shows only their providers' tabs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled_agent_icons: Option<Vec<String>>,
     /// The Handover heading color strength setting (0 to 100), the same way as `catch_up`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub marked_heading_strength: Option<f64>,

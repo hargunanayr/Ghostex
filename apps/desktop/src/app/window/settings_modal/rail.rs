@@ -122,7 +122,7 @@ pub(crate) fn rail_pages(store: &SettingsStore) -> Vec<RailPage> {
     let query = store.search_query().to_string();
     let active_tab = store.active_tab();
     let general = store.general_search();
-    let power_visible = store.bool("showBetaFeatures");
+    let power_visible = store.keep_awake_on();
     let hotkey_sections = hotkey_section_searches(&query, &|id| {
         ghostex_settings_catalog::built_in_extensions::hotkey_shown_with(id, |key| {
             Some(store.bool(key))
@@ -166,6 +166,7 @@ pub(crate) fn rail_pages(store: &SettingsStore) -> Vec<RailPage> {
                 && match tab {
                     SettingsTabId::OsIntegration => store.os_integration_visible(),
                     SettingsTabId::Connectors => store.connectors_visible(),
+                    SettingsTabId::Collab => store.collab_installed(),
                     _ => true,
                 }
         })
@@ -258,7 +259,17 @@ fn rail_fold(
     )
 }
 
-/// A tier's label above its pages (CDXC:Settings 2026-10-29 in model.rs).
+/// A group's label above its pages (CDXC:Settings 2026-11-08 in model.rs).
+///
+/// CDXC:Settings 2026-11-08 DECISION:
+/// User: "Please more separation here the labels for different sections are blending with the
+/// different pages here". A label sat about as close to the last page of the group above as to its
+/// own first page, so it read as part of that group. A later group's label now opens with the
+/// rail's hairline (the one over the Extensions group at the bottom) and clearly more room above
+/// it than below, and its own pages sit tight under it, so each group reads as one block.
+/// Later: "pls add more gap here between label and the items and make them not capitalized
+/// (sentence case)". The labels are drawn as written, in sentence case ("Agents & accounts"), at
+/// 12px with 4px more room under them, still closer to their own pages than to the group above.
 fn render_tier_label(p: &SettingsPalette, tier: RailTier, spaced: bool) -> AnyElement {
     if tier == RailTier::Top {
         return div().into_any_element();
@@ -267,13 +278,18 @@ fn render_tier_label(p: &SettingsPalette, tier: RailTier, spaced: bool) -> AnyEl
         .w_full()
         .min_w_0()
         .pl(px(10.0))
-        .pb(px(2.0))
-        .when(spaced, |this| this.pt(px(10.0)))
-        .text_size(px(11.0))
-        .line_height(px(14.0))
+        .when(spaced, |this| {
+            this.mt(px(8.0))
+                .pt(px(12.0))
+                .border_t_1()
+                .border_color(hsla(p.hairline))
+        })
+        .pb(px(4.0))
+        .text_size(px(12.0))
+        .line_height(px(16.0))
         .font_weight(FontWeight::MEDIUM)
         .text_color(hsla(p.muted))
-        .child(tier.title().to_uppercase())
+        .child(tier.title())
         .into_any_element()
 }
 
@@ -703,10 +719,12 @@ pub(crate) fn render_rail(
         } else if tab.in_extensions_group() {
             extension_pages.push(element);
         } else {
-            if tier != Some(tab.tier()) {
-                groups.push(render_tier_label(p, tab.tier(), tier.is_some()));
-                tier = Some(tab.tier());
+            // A label opens each group's run of shown pages, so a group whose pages are all hidden
+            // shows none (CDXC:Settings 2026-11-08 in model.rs).
+            if let Some(label) = RailTier::label_before(tier, tab) {
+                groups.push(render_tier_label(p, label, tier.is_some()));
             }
+            tier = Some(tab.tier());
             groups.push(element);
         }
     }

@@ -106,6 +106,24 @@ impl GhostexGpuiApp {
     }
 
     /// Settings > Accounts, showing `provider`'s (`claude`, `codex`) accounts when one is named.
+    /// Opens Settings on page `tab` (a `SettingsTabId` id).
+    pub(crate) fn open_gpui_settings_tab(
+        &mut self,
+        tab: &str,
+        window: Option<&mut Window>,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let modal = GpuiAppModalKind::Settings;
+        let sidebar_state_message = self.gpui_app_modal_sidebar_state_message_for_open(modal, cx);
+        let open_message = serde_json::json!({
+            "initialTab": tab,
+            "modal": modal.modal_id(),
+            "type": "open",
+            "latestSidebarStateMessage": sidebar_state_message.clone(),
+        });
+        self.open_gpui_app_modal_window(modal, open_message, sidebar_state_message, window, cx);
+    }
+
     pub(crate) fn open_gpui_settings_accounts_page_for_provider(
         &mut self,
         provider: Option<&str>,
@@ -276,6 +294,127 @@ impl GhostexGpuiApp {
             return Vec::new();
         }
         self.titlebar_actions_snapshot.clone()
+    }
+
+    /// The Global Actions the Start menu lists under its "Global" heading; empty while the Actions
+    /// extension is off, like the project's own.
+    pub(crate) fn visible_gpui_titlebar_global_actions(&self) -> Vec<GpuiTitlebarAction> {
+        if !self.built_in_extension_enabled(ghostex_settings_catalog::built_in_extensions::ACTIONS)
+        {
+            return Vec::new();
+        }
+        gpui_titlebar_global_actions_from_sidebar_hud(
+            self.gx_store.runtime_facts.hud().map(|hud| hud.as_ref()),
+        )
+    }
+
+    /// A Start menu row's click, forwarded from the window that hosts the menu.
+    pub(crate) fn run_start_menu_pick(
+        &mut self,
+        pick: crate::app::titlebar::actions_menu_rows::StartMenuPick,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        use crate::app::titlebar::actions_menu_rows::StartMenuPick;
+        match pick {
+            StartMenuPick::Project(index) => self.run_gpui_titlebar_action_index(index, window, cx),
+            StartMenuPick::Global(command_id) => {
+                self.run_gpui_titlebar_global_action(&command_id, window, cx)
+            }
+            StartMenuPick::Configure => {
+                self.open_gpui_settings_actions_modal_from_titlebar(window, cx)
+            }
+        }
+    }
+
+    /// A Start menu Global Action row: resolved by `plan_sidebar_command_run` with the global
+    /// scope, as a project row's pinned Global Action and `ghostex run-action <id> --scope global`
+    /// are, and run in the active project (a Terminal Action in its folder).
+    ///
+    /// CDXC:AgentLauncher 2026-11-08 WHY: the Action runner records what it ran as the project's
+    /// last-used Start Action, which is what the Start button's one click repeats. Only the
+    /// project's own Actions may take that place, so the project's choice is put back after a
+    /// Global run instead of being replaced by an id the button cannot find.
+    pub(crate) fn run_gpui_titlebar_global_action(
+        &mut self,
+        command_id: &str,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if !self.built_in_extension_enabled(ghostex_settings_catalog::built_in_extensions::ACTIONS)
+        {
+            self.show_global_action_failed_toast(
+                "Actions is turned off",
+                "Turn it on in Settings > Extensions to run Actions.",
+                cx,
+            );
+            return;
+        }
+        let plan = ghostex_gx_core::plan_sidebar_command_run(
+            self.gx_store.runtime_facts.hud().map(|hud| hud.as_ref()),
+            &serde_json::json!({ "commandId": command_id, "scope": "global" }),
+            self.gx_store.core.focus().active_project.as_ref(),
+        );
+        let payload = match plan {
+            ghostex_gx_core::SidebarCommandRun::Unsupported => {
+                self.show_global_action_failed_toast(
+                    "Global Action not found",
+                    "It may have been removed. Check it in Settings > Actions.",
+                    cx,
+                );
+                return;
+            }
+            ghostex_gx_core::SidebarCommandRun::OpenSettings => {
+                self.open_gpui_settings_actions_modal_from_titlebar(window, cx);
+                return;
+            }
+            ghostex_gx_core::SidebarCommandRun::Run { action, .. } => action,
+        };
+        let Ok(action) = gpui_sidebar_command_action_from_json(&payload.to_string()) else {
+            self.show_global_action_failed_toast(
+                "Couldn't run Global Action",
+                "Its saved command or address could not be read. Open it in Settings > Actions and save it again.",
+                cx,
+            );
+            return;
+        };
+        let project_choice = self.active_action_command_id.clone();
+        self.run_gpui_titlebar_action(action, window, cx);
+        if self.active_action_command_id != project_choice {
+            if let Some(choice) = project_choice.as_deref() {
+                self.persist_gpui_titlebar_project_selection(
+                    GPUI_TITLEBAR_ACTION_SELECTIONS_SETTINGS_KEY,
+                    choice,
+                );
+            }
+            self.active_action_command_id = project_choice;
+            cx.notify();
+        }
+    }
+
+    /// A Start menu Global Action that could not run says so instead of doing nothing.
+    fn show_global_action_failed_toast(
+        &mut self,
+        title: &str,
+        description: &str,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.app_toast_id_counter = self.app_toast_id_counter.wrapping_add(1);
+        self.upsert_gpui_app_toast(
+            GpuiAppToast {
+                id: format!("gpui-app-toast-{}", self.app_toast_id_counter),
+                level: GpuiAppToastLevel::Error,
+                title: title.to_string(),
+                description: Some(description.to_string()),
+                copy_text: None,
+                action: None,
+                loading: false,
+                persistent: false,
+                duration_ms: GPUI_APP_TOAST_DEFAULT_DURATION_MS,
+                epoch: 0,
+            },
+            cx,
+        );
     }
 
     /// The settings poll's read of the titlebar's Actions: only when the sidebar HUD moved since

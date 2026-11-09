@@ -38,7 +38,7 @@ pub fn document(state: &ChatState, context: &ChatContext, into: &mut Document) {
     };
     into.terminal_notice = match (state.session.terminal_notice.as_ref(), notice.as_ref()) {
         (Some(raw), Some(notice)) => {
-            let mut decorated = decorate_notice(raw, notice);
+            let mut decorated = decorate_notice(raw, notice, state.session.agent.as_deref());
             if let Some(object) = decorated.as_object_mut() {
                 crate::questions::account_wait::decorate(
                     object,
@@ -52,6 +52,7 @@ pub fn document(state: &ChatState, context: &ChatContext, into: &mut Document) {
         _ => Tri::Null,
     };
     into.notice_visible = gates::notice_visible(state);
+    into.approval_pending = crate::questions::pending_approval::project(state);
     // CDXC:SessionChat 2026-10-31 WHY: a failed row's own line carries Retry too, so while the card that stands for it is on screen the row says only that it was not sent. Two buttons that do the same thing would be one too many (GitHub #374).
     into.send_failure_card_prompt_id = notice
         .as_ref()
@@ -106,8 +107,9 @@ pub fn document(state: &ChatState, context: &ChatContext, into: &mut Document) {
         },
     };
 
-    into.question_forms = crate::questions::forms::project(state);
-    into.open_questions = crate::questions::open_questions::project(state, context);
+    // `questionForms` is assembled beside this family (`document::assemble`), from a kept copy
+    // while its inputs hold (`forms::project_kept`).
+    // `openQuestions` is assembled beside this family too (`open_questions::project_with`).
     into.resource_modal = crate::questions::resource_modal::project(state, context);
     into.later_questions = crate::questions::open_questions::later_waiting(state);
 
@@ -133,7 +135,7 @@ fn approval_ask(tool: &str) -> &'static str {
 
 /// The folded notice plus what the card needs: the collapsed row count, the dialog's own
 /// presentation, and the answer each row and each action sends.
-fn decorate_notice(raw: &Value, notice: &TerminalNotice) -> Value {
+fn decorate_notice(raw: &Value, notice: &TerminalNotice, agent: Option<&str>) -> Value {
     let mut object = raw.as_object().cloned().unwrap_or_default();
     object.insert("tone".to_string(), json!(notice_tone::notice_tone(notice)));
     object.insert(
@@ -143,7 +145,7 @@ fn decorate_notice(raw: &Value, notice: &TerminalNotice) -> Value {
     // The exact rows a folded card shows (positions into `choices`), so every renderer folds the same way.
     object.insert(
         "collapsedChoices".to_string(),
-        json!(collapsed_choice_positions(notice)),
+        json!(collapsed_choice_positions(notice, agent)),
     );
     // The visible rows Cmd+Enter and Escape answer, so the card puts each hint on its row.
     object.insert(
@@ -152,12 +154,12 @@ fn decorate_notice(raw: &Value, notice: &TerminalNotice) -> Value {
     );
     object.insert(
         "secondaryChoice".to_string(),
-        json!(notice.secondary_choice_position()),
+        json!(notice.secondary_choice_position(agent)),
     );
     // CDXC:SessionChat 2026-09-29 WHY:
     // A collapsed command approval showed only "Would you like to run the following command?" and its buttons, so "Yes, proceed" was one click away from a command the card never named. The `$ ` lines of the dialog body are what is being approved; the renderers draw them under the title while the card is collapsed.
-    // A picker card with no dialog (Grok Build's) names its command in `approvalCommand` instead.
-    // SEE-ALSO: apps/desktop/src/app/native_chat/notice.rs, apps/mobile/app/src/chat/native/cards/NoticeCard.tsx, server/src/session_chat_grok_permission.rs.
+    // A picker card with no dialog (Grok Build's and OMP's) names its command in `approvalCommand` instead.
+    // SEE-ALSO: apps/desktop/src/app/native_chat/notice.rs, apps/mobile/app/src/chat/native/cards/NoticeCard.tsx, server/src/session_chat_grok_permission.rs, server/src/session_chat_omp_blocking.rs.
     let mut commands: Vec<String> = raw
         .get("dialog")
         .and_then(|dialog| dialog.get("body"))

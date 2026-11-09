@@ -118,8 +118,9 @@ static Class GhostexGpuiCEFFocusSuperclass(id self);
 static void GhostexGpuiCEFBrowserViewCut(id self, SEL _cmd, id sender);
 static void GhostexGpuiCEFBrowserViewCopy(id self, SEL _cmd, id sender);
 static void GhostexGpuiCEFBrowserViewPaste(id self, SEL _cmd, id sender);
-static void GhostexGpuiCEFBrowserViewInsertText(id self, SEL _cmd, id string,
-                                                NSRange replacementRange);
+static void GhostexGpuiCEFChromiumInsertText(id self, SEL _cmd, id string,
+                                             NSRange replacementRange);
+static void GhostexGpuiCEFInstallChromiumTextInputFilter(void);
 static BOOL GhostexGpuiCEFEventIsCommandA(NSEvent *event);
 static BOOL GhostexGpuiCEFEventIsCommandF(NSEvent *event);
 static BOOL GhostexGpuiCEFEventIsCommandOptionF(NSEvent *event);
@@ -601,6 +602,12 @@ GhostexGpuiEditHistoryMenuTargetShared(void) {
    AppKit offers an arrow, Home/End, PageUp/PageDown, Delete or Forward Delete press to performKeyEquivalent: first, and the window's GPUIView, the parent of every CEF view, hands any key that types no text and has no Control or Command to its own input context, which reports it handled. Chromium's keyDown never ran, and the input method committed the key as a blank character into the focused web text field: in the page window a question form's note box got a space for every arrow, Option+Left or Option+Delete instead of moving the caret or deleting a word. With a Chromium view as first responder these keys, bare or with Shift and Option, go straight to its keyDown, the path a key that is no key equivalent takes, so Chromium and any input method composing in the page edit as usual. This supersedes the 2026-10-24 fix that covered only the bare keys. The router above has already claimed any configured Ghostex hotkey; Control and Command variants never reach GPUIView's input context and keep their normal path, and Escape and the F-keys stay with GPUI, which binds them.
    */
   NSWindow *navigationWindow = event.window ?: NSApp.keyWindow;
+  // A web view whose parents were never prepared still gets the stray-key filter before its first
+  // key (CDXC:Hotkeys 2026-11-08 at GhostexGpuiCEFChromiumInsertText); a no-op once installed.
+  if (event.type == NSEventTypeKeyDown &&
+      GhostexGpuiResponderIsChromiumContent(navigationWindow.firstResponder)) {
+    GhostexGpuiCEFInstallChromiumTextInputFilter();
+  }
   if (GhostexGpuiCEFEventIsWebTextEditingKey(event) &&
       GhostexGpuiResponderIsChromiumContent(navigationWindow.firstResponder)) {
     [navigationWindow.firstResponder keyDown:event];
@@ -1430,6 +1437,9 @@ static void GhostexGpuiCEFRetryBrowserViewFocusSubclass(NSView *view) {
 }
 
 static void GhostexGpuiCEFInstallBrowserViewFocusSubclass(NSView *view) {
+  if (GhostexGpuiResponderIsChromiumContent(view)) {
+    GhostexGpuiCEFInstallChromiumTextInputFilter();
+  }
   Class originalClass = object_getClass(view);
   if (!originalClass ||
       GhostexGpuiCEFFocusSubclassInHierarchy(originalClass)) {
@@ -1480,14 +1490,6 @@ static void GhostexGpuiCEFInstallBrowserViewFocusSubclass(NSView *view) {
                     (IMP)GhostexGpuiCEFBrowserViewPaste, "v@:@");
     class_addMethod(subclass, @selector(performKeyEquivalent:),
                     (IMP)GhostexGpuiCEFBrowserViewPerformKeyEquivalent, "c@:@");
-    // Only Chromium's render widget is the page's text input client.
-    Method insertText = class_getInstanceMethod(
-        originalClass, @selector(insertText:replacementRange:));
-    if (insertText && GhostexGpuiResponderIsChromiumContent(view)) {
-      class_addMethod(subclass, @selector(insertText:replacementRange:),
-                      (IMP)GhostexGpuiCEFBrowserViewInsertText,
-                      method_getTypeEncoding(insertText));
-    }
     class_addMethod(subclass, @selector(addSubview:),
                     (IMP)GhostexGpuiCEFBrowserViewAddSubview, "v@:@");
     class_addMethod(subclass, @selector(viewDidChangeEffectiveAppearance),
@@ -1659,10 +1661,15 @@ static BOOL GhostexGpuiCEFBrowserViewPerformKeyEquivalent(id self, SEL _cmd,
 
 /*
  CDXC:Hotkeys 2026-10-27 WHY:
- GitHub #326: an arrow, Home/End or Page Up/Down press in the Code view also typed its layout code (0x1E for Up) into the file, and into the Command Palette's box, which re-filtered the list so the arrows never moved its selection. The macOS input method committed the key event's raw character as text, and Chromium's insertText: hands committed text to the page as is, past Blink's rule that keys never type control characters. A commit made only of control or AppKit function-key characters is dropped here (the rule and its tests are GhostexGpuiCEFTextIsStrayKeyCharacter in cef/macos.rs); Enter, Tab, Backspace, Escape and Ctrl+letter keep reaching the page through Chromium's key event, and every CEF page (Code, Browser, Docs, Settings) shares this view.
+ GitHub #326: an arrow, Home/End or Page Up/Down press in the Code view also typed its layout code (0x1E for Up) into the file, and into the Command Palette's box, which re-filtered the list so the arrows never moved its selection. The macOS input method committed the key event's raw character as text, and Chromium's insertText: hands committed text to the page as is, past Blink's rule that keys never type control characters. A commit made only of control or AppKit function-key characters is dropped here (the rule and its tests are GhostexGpuiCEFTextIsStrayKeyCharacter in cef/macos.rs); Enter, Tab, Backspace, Escape and Ctrl+letter keep reaching the page through Chromium's key event.
+
+ CDXC:Hotkeys 2026-11-08 WHY:
+ User: "using my arrow keys here in this thing broke again. when i do left arrow its adding a space/invisible char". A note typed in a Ghostex page's window came back with U+001C U+001F U+001D in it: the same commit, in a page this filter never reached. It used to be added to the focus subclass each CEF view gets, and that subclass is skipped while AppKit's Touch Bar finder KVO-observes the view (the 2026-10-24 #291 check above): the finder observes every responder from the key window's first responder up, and a page window's web view is the first responder of a key window, so it kept the KVO class and never got the filter. The filter now replaces Chromium's own -[RenderWidgetHostViewCocoa insertText:replacementRange:] once, so every Chromium web view (the page window, Code, Browser, Docs, Settings, DevTools, observed or not, whenever it was created) shares it without any class change on the view.
  */
-static void GhostexGpuiCEFBrowserViewInsertText(id self, SEL _cmd, id string,
-                                                NSRange replacementRange) {
+static IMP g_ghostexGpuiCEFChromiumInsertText = NULL;
+
+static void GhostexGpuiCEFChromiumInsertText(id self, SEL _cmd, id string,
+                                             NSRange replacementRange) {
   NSString *text =
       [string isKindOfClass:NSAttributedString.class] ? [string string] : string;
   if ([text isKindOfClass:NSString.class] && text.length > 0 &&
@@ -1673,13 +1680,32 @@ static void GhostexGpuiCEFBrowserViewInsertText(id self, SEL _cmd, id string,
       return;
     }
   }
-  struct objc_super superInfo = {
-      .receiver = self,
-      .super_class = GhostexGpuiCEFFocusSuperclass(self),
-  };
-  void (*sendSuper)(struct objc_super *, SEL, id, NSRange) =
-      (void *)objc_msgSendSuper;
-  sendSuper(&superInfo, _cmd, string, replacementRange);
+  ((void (*)(id, SEL, id, NSRange))g_ghostexGpuiCEFChromiumInsertText)(
+      self, _cmd, string, replacementRange);
+}
+
+static void GhostexGpuiCEFInstallChromiumTextInputFilter(void) {
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    Class contentClass = NSClassFromString(@"RenderWidgetHostViewCocoa");
+    SEL selector = @selector(insertText:replacementRange:);
+    Method method =
+        contentClass ? class_getInstanceMethod(contentClass, selector) : NULL;
+    if (!method) {
+      return;
+    }
+    IMP original = method_getImplementation(method);
+    // Chromium defines the method on this class; adding it here only matters if a
+    // future Chromium inherits it, which must never patch the superclass.
+    if (class_addMethod(contentClass, selector,
+                        (IMP)GhostexGpuiCEFChromiumInsertText,
+                        method_getTypeEncoding(method))) {
+      g_ghostexGpuiCEFChromiumInsertText = original;
+    } else {
+      g_ghostexGpuiCEFChromiumInsertText = method_setImplementation(
+          method, (IMP)GhostexGpuiCEFChromiumInsertText);
+    }
+  });
 }
 
 static void GhostexGpuiCEFBrowserViewAddSubview(id self, SEL _cmd,

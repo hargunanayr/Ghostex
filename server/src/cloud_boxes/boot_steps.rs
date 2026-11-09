@@ -1,7 +1,8 @@
 //! The steps after a box has a machine, shared by create and resume: install the Linux package,
 //! boot box mode, send logins and ticked secrets, and prepare the session. Every function blocks.
 
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use ghostex_gx_protocol::cloud_box::{
     box_files, box_private_dir, box_verbs, BoxBootResult, BoxBootTicket, BoxInjectedAccount,
@@ -132,14 +133,15 @@ fn codex_accounts(state: &AppState) -> Vec<BoxInjectedAccount> {
     let Ok(registry) = crate::accounts::store::read(&db) else {
         return Vec::new();
     };
-    let root = crate::accounts::launch::xswap_root(&state.paths.home_dir).join("accounts");
+    drop(db);
+    let homes = codex_account_homes(&state.paths.home_dir);
     registry
         .accounts
         .into_iter()
         .filter(|account| allowed.contains(&account.id))
         .filter_map(|account| {
             let auth =
-                std::fs::read_to_string(root.join(&account.selector).join("auth.json")).ok()?;
+                std::fs::read_to_string(homes.get(&account.selector)?.join("auth.json")).ok()?;
             Some(BoxInjectedAccount {
                 account_id: account.id,
                 agent: "codex".to_string(),
@@ -147,6 +149,47 @@ fn codex_accounts(state: &AppState) -> Vec<BoxInjectedAccount> {
                 kind: "codexAuthJson".to_string(),
                 value: auth,
             })
+        })
+        .collect()
+}
+
+/// Each codex-swap account's Codex home by its number (a Codex account's `selector`), the way
+/// codex-swap finds it: `xswap list --json` answers each account's `home`, which is the main
+/// `~/.codex` for the account signed in there and the account's own folder
+/// (`accounts/<number>-<suffix>`) otherwise. Without xswap, the saved homes in codex-swap's
+/// `accounts.json`. Blocking.
+///
+/// CDXC:CloudBoxes 2026-11-07 WHY:
+/// Boxes read `accounts/<number>/auth.json`, a folder codex-swap never makes (its folders are
+/// `2-hfB4GL`), so no Codex login reached a box and Codex there asked to sign in.
+pub(super) fn codex_account_homes(home: &Path) -> HashMap<String, PathBuf> {
+    if crate::accounts::helpers::executable(home, "xswap").is_some() {
+        if let Ok(listed) =
+            crate::accounts::helpers::json_command(home, "xswap", &["list", "--json"])
+        {
+            let homes = homes_by_number(&listed);
+            if !homes.is_empty() {
+                return homes;
+            }
+        }
+    }
+    std::fs::read(crate::accounts::launch::xswap_root(home).join("accounts.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .map(|saved| homes_by_number(&saved))
+        .unwrap_or_default()
+}
+
+/// `{accounts: [{number, home}]}` (both `xswap list --json` and `accounts.json`) by number.
+fn homes_by_number(value: &Value) -> HashMap<String, PathBuf> {
+    value["accounts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|row| {
+            let number = row["number"].as_u64()?;
+            let home = PathBuf::from(row["home"].as_str()?);
+            home.is_absolute().then(|| (number.to_string(), home))
         })
         .collect()
 }
@@ -214,20 +257,26 @@ pub(super) fn secrets_file(
     }
 }
 
+/// The private folder a box's last boot reported (`BoxBootResult::private_dir`), else the
+/// provider's usual one.
+pub(super) fn private_dir(ops: &Ops, reported: Option<&str>) -> String {
+    reported
+        .filter(|dir| dir.starts_with('/'))
+        .map(str::to_string)
+        .unwrap_or_else(|| box_private_dir(&ops.provider()).to_string())
+}
+
 /// Writes `secrets.json` into the box's private folder. `false` when there was nothing to send.
 pub(super) fn send_secrets(
     ops: &Ops,
     target: &Target,
+    private_dir: &str,
     secrets: &BoxSecretsFile,
 ) -> Result<bool, String> {
     if secrets.accounts.is_empty() && secrets.files.is_empty() && secrets.vars.is_empty() {
         return Ok(false);
     }
-    let path = format!(
-        "{}/{}",
-        box_private_dir(&ops.provider()),
-        box_files::SECRETS
-    );
+    let path = format!("{private_dir}/{}", box_files::SECRETS);
     let bytes = serde_json::to_vec(secrets).map_err(|error| error.to_string())?;
     ops.write_file(target, &path, &bytes)?;
     Ok(true)
@@ -303,6 +352,9 @@ pub(super) fn prepare_request(
             }
         })
         .collect();
+    let agent_id = text("agentId").unwrap_or_else(|| "claude".to_string());
+    let (agent_model, agent_effort) =
+        draft_model_choice(&draft.project_id, &draft.session_id, &session, &agent_id);
     Ok(BoxPrepareSessionRequest {
         box_id: box_id.to_string(),
         repo_url,
@@ -314,7 +366,9 @@ pub(super) fn prepare_request(
         base_branch,
         branch: Some(branch),
         worktree,
-        agent_id: text("agentId").unwrap_or_else(|| "claude".to_string()),
+        agent_id,
+        agent_model,
+        agent_effort,
         account_id: text("accountId"),
         title: text("title"),
         first_message,
@@ -324,6 +378,62 @@ pub(super) fn prepare_request(
         home_session_id: Some(draft.session_id.clone()),
         snapshot_id,
     })
+}
+
+/// The model and effort a box session starts on, as its home draft would launch here: the pick
+/// remembered for the draft (what its model pill shows, and what a resume runs), else the exact
+/// `--model`/`--effort` (Codex: `-m`, `model_reasoning_effort`) its launch command names, else the
+/// remembered default a new session of the agent starts on. Claude and Codex only.
+///
+/// CDXC:CloudBoxes 2026-11-07 WHY:
+/// A box chat started on the box's own default: the draft was set to Opus 5.5, but the box's
+/// gxserver created the session with no model, and its Claude (signed in with a box token, so
+/// with no saved model of its own) ran Sonnet 5.5. The pick now travels in the prepare request
+/// as `agentModel`/`agentEffort`, the way a local create pins it, and the box's pill reads it from
+/// the box session's launch command.
+/// SEE-ALSO: server/src/agents/launch_plan.rs (`pin_remembered_agent_model`,
+/// `apply_requested_agent_model`), server/src/session_chat_options/launch_selection.rs (the pill),
+/// server/src/cloud_boxes/box_mode/prepare_session.rs.
+fn draft_model_choice(
+    project_id: &str,
+    session_id: &str,
+    session: &Value,
+    agent_id: &str,
+) -> (Option<String>, Option<String>) {
+    use crate::session_chat_options::{session_chat_option_agent, SessionChatOptionAgent};
+    let agent = crate::session_chat_follower::session_chat_agent_for_session(session)
+        .unwrap_or_else(|| agent_id.to_string());
+    let (agent, family) = match session_chat_option_agent(Some(&agent)) {
+        Some(SessionChatOptionAgent::Claude) => (SessionChatOptionAgent::Claude, "claude"),
+        Some(SessionChatOptionAgent::Codex) => (SessionChatOptionAgent::Codex, "codex"),
+        _ => return (None, None),
+    };
+    let command = session
+        .pointer("/launchSettings/agentLaunchPlan/command")
+        .or_else(|| session.pointer("/runtimeSettings/agentCommand"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let command_effort = || {
+        crate::session_chat_options::launch_command_selection(agent, command)
+            .and_then(|selection| selection.effort)
+            .map(|choice| choice.value)
+    };
+    let agent_session_id = session
+        .pointer("/runtimeSettings/agentSessionId")
+        .and_then(Value::as_str);
+    if let Some(pin) =
+        crate::agent_model_pins::session_choice(project_id, session_id, family, agent_session_id)
+    {
+        return (Some(pin.model), pin.effort.or_else(command_effort));
+    }
+    let model = crate::accounts::wake_account::command_model(command, family);
+    let effort = command_effort();
+    if model.is_none() && effort.is_none() {
+        if let Some(pin) = crate::agent_model_pins::launch_default(family) {
+            return (Some(pin.model), pin.effort);
+        }
+    }
+    (model, effort)
 }
 
 /// CDXC:CloudBoxes 2026-11-02 DECISION:
@@ -374,9 +484,10 @@ fn session_branch(
 pub(super) fn send_images(
     ops: &Ops,
     target: &Target,
+    private_dir: &str,
     local_paths: &[String],
 ) -> Result<Vec<String>, String> {
-    let folder = format!("{}/images", box_private_dir(&ops.provider()));
+    let folder = format!("{private_dir}/images");
     let mut on_box = Vec::new();
     for (index, local) in local_paths.iter().enumerate() {
         let Ok(bytes) = std::fs::read(local) else {
@@ -417,13 +528,10 @@ fn box_home(provider: &CloudProviderId) -> &'static str {
 pub(super) fn prepare_session(
     ops: &Ops,
     target: &Target,
+    private_dir: &str,
     request: &BoxPrepareSessionRequest,
 ) -> Result<BoxPrepareSessionResult, String> {
-    let path = format!(
-        "{}/{}",
-        box_private_dir(&ops.provider()),
-        box_files::PREPARE_SESSION_REQUEST
-    );
+    let path = format!("{private_dir}/{}", box_files::PREPARE_SESSION_REQUEST);
     let bytes = serde_json::to_vec(request).map_err(|error| error.to_string())?;
     ops.write_file(target, &path, &bytes)?;
     let value = run_box_verb(
@@ -466,7 +574,7 @@ pub(super) fn write_back_logins(
         crate::storage::open_gxserver_database(&state.paths).map_err(|error| error.to_string())?;
     let registry = crate::accounts::store::read(&db).map_err(|error| error.message)?;
     drop(db);
-    let root = crate::accounts::launch::xswap_root(&state.paths.home_dir).join("accounts");
+    let homes = codex_account_homes(&state.paths.home_dir);
     let mut saved = 0;
     let mut acked = Vec::new();
     for item in result
@@ -485,7 +593,14 @@ pub(super) fn write_back_logins(
             acked.push(item.id.clone());
             continue;
         };
-        let path = root.join(&account.selector).join("auth.json");
+        let Some(path) = homes
+            .get(&account.selector)
+            .map(|home| home.join("auth.json"))
+        else {
+            // codex-swap no longer lists the account: nowhere to save it.
+            acked.push(item.id.clone());
+            continue;
+        };
         let current = std::fs::read_to_string(&path).ok();
         let box_newer = match (
             codex_last_refresh(&item.value),
@@ -513,4 +628,138 @@ pub(super) fn write_back_logins(
         run_box_verb(ops, target, box_verbs::WRITE_BACK, &["--ack", &ack], 120)?;
     }
     Ok(saved)
+}
+
+#[cfg(test)]
+mod codex_home_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn codex_homes_come_from_codex_swaps_own_list() {
+        // `xswap list --json`: the account signed in to ~/.codex reports that home.
+        let listed = json!({"schemaVersion": 1, "accounts": [
+            {"number": 1, "home": "/Users/me/.local/share/codex-swap/accounts/1-gLfbI3",
+                "savedHome": "/Users/me/.local/share/codex-swap/accounts/1-gLfbI3"},
+            {"number": 2, "home": "/Users/me/.codex",
+                "savedHome": "/Users/me/.local/share/codex-swap/accounts/2-hfB4GL"},
+            {"number": 3, "home": "relative/is/ignored"},
+        ]});
+        let homes = homes_by_number(&listed);
+        assert_eq!(
+            homes.get("1"),
+            Some(&PathBuf::from(
+                "/Users/me/.local/share/codex-swap/accounts/1-gLfbI3"
+            ))
+        );
+        assert_eq!(homes.get("2"), Some(&PathBuf::from("/Users/me/.codex")));
+        assert_eq!(homes.get("3"), None);
+
+        // codex-swap's accounts.json has the same shape for its saved homes.
+        let saved = json!({"schemaVersion": 1, "mainHome": "/Users/me/.codex", "accounts": [
+            {"number": 2, "home": "/Users/me/.local/share/codex-swap/accounts/2-hfB4GL"},
+        ]});
+        assert_eq!(
+            homes_by_number(&saved).get("2"),
+            Some(&PathBuf::from(
+                "/Users/me/.local/share/codex-swap/accounts/2-hfB4GL"
+            ))
+        );
+    }
+}
+
+#[cfg(test)]
+mod draft_model_tests {
+    use super::*;
+    use crate::domain::DomainRepository;
+    use crate::paths::get_gxserver_paths;
+    use crate::storage::{initialize_gxserver_storage, open_gxserver_database};
+    use serde_json::json;
+
+    /// A box chat's model and effort are the ones its home draft shows, for Claude and Codex.
+    #[test]
+    fn a_box_session_starts_on_the_drafts_model_and_effort() {
+        let home = tempfile::tempdir().unwrap();
+        let paths = get_gxserver_paths(Some(home.path().join("ghostex")));
+        initialize_gxserver_storage(&paths).unwrap();
+        let db = open_gxserver_database(&paths).unwrap();
+        let repository = DomainRepository::new(&db, "box-model-test");
+        let project = repository
+            .create_project(
+                json!({"path": home.path(), "name": "Box Model Test"})
+                    .as_object()
+                    .unwrap(),
+            )
+            .unwrap();
+        let project_id = project["projectId"].as_str().unwrap().to_string();
+        let draft = |agent: &str, command: &str| {
+            let session = repository
+                .create_session(
+                    json!({
+                        "projectId": project_id,
+                        "agentId": agent,
+                        "kind": "agent",
+                        "runtimeSettings": {"agentCommand": command},
+                    })
+                    .as_object()
+                    .unwrap(),
+                    false,
+                )
+                .unwrap();
+            let session_id = session["sessionId"].as_str().unwrap().to_string();
+            let session = repository
+                .get_session(&project_id, &session_id)
+                .unwrap()
+                .unwrap();
+            (session_id, session)
+        };
+        let choice = |session_id: &str, session: &Value, agent: &str| {
+            draft_model_choice(&project_id, session_id, session, agent)
+        };
+
+        let (claude, session) = draft("claude", "claude --model claude-opus-5-5 --effort high");
+        assert_eq!(
+            choice(&claude, &session, "claude"),
+            (
+                Some("claude-opus-5-5".to_string()),
+                Some("high".to_string())
+            )
+        );
+
+        let (codex, session) = draft(
+            "codex",
+            "codex --no-daemon -m gpt-6.1-sol -c model_reasoning_effort=xhigh",
+        );
+        assert_eq!(
+            choice(&codex, &session, "codex"),
+            (Some("gpt-6.1-sol".to_string()), Some("xhigh".to_string()))
+        );
+
+        // A pick made in the draft's pill after it was created wins over its launch command.
+        crate::agent_model_pins::record_session_choice(
+            &project_id,
+            &claude,
+            "claude",
+            crate::agent_model_pins::ModelPin {
+                model: "claude-fable-5-1".to_string(),
+                effort: Some("medium".to_string()),
+                ..Default::default()
+            },
+        );
+        let session = repository
+            .get_session(&project_id, &claude)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            choice(&claude, &session, "claude"),
+            (
+                Some("claude-fable-5-1".to_string()),
+                Some("medium".to_string())
+            )
+        );
+
+        // Nothing named and no remembered default: the box's own default.
+        let (plain, session) = draft("claude", "claude");
+        assert_eq!(choice(&plain, &session, "claude"), (None, None));
+    }
 }

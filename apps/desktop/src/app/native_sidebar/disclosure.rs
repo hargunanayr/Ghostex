@@ -44,6 +44,20 @@ impl SidebarDisclosures {
                 );
             }
         }
+        // Main Hub's GBots heading folds every bot (native_sidebar/gbots_rows.rs).
+        for section in &snapshot.gbots {
+            next.insert(
+                format!("group:{}", section.storage_id),
+                (section.collapsed, Vec::new()),
+            );
+            // And each department's sub-heading its bots (native_sidebar/gbots_departments.rs).
+            for department in &section.departments {
+                next.insert(
+                    format!("group:{}", department.storage_id),
+                    (department.collapsed, Vec::new()),
+                );
+            }
+        }
         for collection in &snapshot.collections {
             next.insert(
                 format!("collection:{}", collection.collection_id),

@@ -3,6 +3,7 @@ mod accounts;
 pub mod actions;
 mod agent_cli;
 mod agent_guide;
+mod agent_hooks;
 pub mod agent_sync;
 mod agentbox_cli;
 mod agents;
@@ -10,10 +11,12 @@ pub mod app_update;
 pub mod args;
 pub mod attach;
 pub mod automations;
+mod autopilot;
 pub mod board;
 mod box_cli;
 pub mod browser_mcp;
 mod built_in_extensions;
+mod chief;
 mod claude_cloud_cli;
 mod cloud_attach;
 mod cloud_cli;
@@ -26,6 +29,13 @@ pub mod diagnostics;
 pub mod editors;
 pub mod extensions;
 mod feedback;
+mod gbots_cli;
+mod gbots_day_watch_cli;
+mod gbots_department_cli;
+mod gbots_memory_cli;
+mod gbots_problem_cli;
+mod gbots_routine_cli;
+mod gbots_team_cli;
 mod ghost;
 pub mod guide;
 mod help_ask;
@@ -44,6 +54,7 @@ pub mod rpc;
 mod run_in_terminal;
 pub mod saved_prompts;
 mod secret;
+mod security;
 pub mod selector;
 mod session_chat_model;
 mod session_chat_rpc;
@@ -108,16 +119,21 @@ pub fn run() -> i32 {
 /// global help gate.
 const HELP_GATE_EXCLUDED: &[&str] = &[
     "account-login",
+    "chief",
+    "security",
     "agent-guide",
     "computers",
+    "autopilot",
     "help",
     "accounts",
     "agent-cli",
+    "agent-hooks",
     "agentbox",
     "agents",
     "app-update",
     "box",
     "claude-cloud",
+    "gbots",
     "cloud",
     "coordinator",
     "ghost",
@@ -182,6 +198,24 @@ fn dispatch(argv: &[String]) -> CliResult<i32> {
         launchers::open_session_link_command(command_name)?;
         return Ok(exit_code());
     }
+    // The agent-side chat channels (Pi, OMP, OpenCode, dsh) are JavaScript and cannot read a
+    // listener's owner, so they ask here before each request that carries the gxserver token:
+    // exit 3 with the refusal when another account holds that port (ghostex_paths::loopback_owner).
+    // Hidden: not a user command.
+    if command_name == "loopback-owner-check" {
+        return Ok(
+            match args
+                .first()
+                .map(|url| ghostex_paths::loopback_owner::check_url(url))
+            {
+                Some(Err(foreign)) => {
+                    eprintln!("{foreign}");
+                    3
+                }
+                _ => 0,
+            },
+        );
+    }
     if !is_known_command(command_name) {
         if launchers::is_existing_bare_path_argument(command_name) {
             actions::run_bridge_action(
@@ -234,10 +268,12 @@ fn is_known_command(name: &str) -> bool {
         "account-login",
         "accounts",
         "agent-cli",
+        "agent-hooks",
         "agentbox",
         "agents",
         "box",
         "claude-cloud",
+        "gbots",
         "cloud",
         "coordinator",
         "ghost",
@@ -398,6 +434,9 @@ fn is_known_command(name: &str) -> bool {
         "ports",
         "resources",
         "computers",
+        "chief",
+        "autopilot",
+        "security",
         "install-browser-skill",
         "install-browser-mcp-skill",
         "install-browser-use-skill",
@@ -463,14 +502,19 @@ fn run_command(name: &str, args: &[String]) -> CliResult<()> {
         "account-login" => account_login::run(args),
         "accounts" => accounts::run(args),
         "agent-cli" => agent_cli::run(args),
+        "agent-hooks" => agent_hooks::run(args),
         "agentbox" => {
             require_built_in(ghostex_settings_catalog::built_in_extensions::CLOUD_BOXES)?;
             agentbox_cli::run(args)
         }
         "agents" => agents::run(args),
         "computers" => computers::run(args),
+        "chief" => chief::run(args),
+        "autopilot" => autopilot::autopilot_command(args),
+        "security" => security::run(args),
         "box" => box_cli::run(args),
         "claude-cloud" => claude_cloud_cli::run(args),
+        "gbots" => gbots_cli::run(args),
         "cloud" => cloud_cli::run(args),
         // CDXC:Coordinators 2026-10-28 DECISION: user renamed Orchestrator back to Coordinator and made `coordinator` the real command group; `orchestrator` stays as an alias (see ghostex_cli/coordinator/command.rs).
         "coordinator" | "orchestrator" => coordinator::run(args),

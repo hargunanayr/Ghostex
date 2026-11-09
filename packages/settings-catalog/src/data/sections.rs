@@ -24,12 +24,6 @@ use crate::json::J;
 /// CDXC:Settings 2026-06-16-09:20:
 /// Empty-sidebar double-click creation remains a low-frequency interaction preference and should hide behind Show Advanced. The menu-bar indicator is preset-owned and stays beside the sidebar preset controls.
 ///
-/// CDXC:Settings 2026-06-28-07:41:
-/// Enable Experimental Features is the user-facing name for the persisted
-/// showBetaFeatures gate. Show Advanced is a persisted browsing-density
-/// preference, so keep the experimental gate hidden from ordinary settings
-/// browsing until users enable advanced density or search for it.
-///
 /// CDXC:MarkedHandovers 2026-10-21 DECISION:
 /// User: "make this advanced" about Marked sections style; it joins the emoji and heading-strength rows behind Show Advanced.
 ///
@@ -52,8 +46,12 @@ use crate::json::J;
 /// CDXC:Settings 2026-10-29 DECISION:
 /// User: "remove show advanced from bottom left ... group advanced settings at the bottom of each page together" in a section "collapsed by default ... called Advanced". The Show Advanced switch and `showAdvancedSettings` are gone; these keys now name the rows each page folds into its Advanced section at the bottom (apps/desktop settings_modal/search.rs `RowTier`). Search still finds them in place.
 pub const ADVANCED_MAIN_SETTING_KEYS: &[&str] = &[
+    "workAreaFrame",
+    "showWindowButtonsWhenSidebarCollapsed",
     "closeEmptySessionsOnNew",
     "autoCloseEmptySessionsMinutes",
+    "worktreeSessionsInProject",
+    "pinnedSessionOrder",
     "sessionChatDetailedView",
     "chatSendOnPick",
     "chatAnswersWaitForIdle",
@@ -124,8 +122,6 @@ pub const ADVANCED_MAIN_SETTING_KEYS: &[&str] = &[
     "attentionNotificationActions",
     "dimSleepingSessions",
     "wakeSleepingSessionsOnSelect",
-    "showBetaFeatures",
-    "fasterRendering",
     "markedHandoversStyle",
     "markedHandoversEmoji",
     "markedHandoversHeadingStrength",
@@ -146,7 +142,6 @@ pub const ADVANCED_MAIN_SETTING_KEYS: &[&str] = &[
     "terminalPaneHorizontalPaddingPx",
     "terminalPaneVerticalPaddingPx",
     "terminalBackgroundOpacity",
-    "terminalShadersEnabled",
     "terminalDevServerIgnoredPortRules",
     "resetExpirySystemNotifications",
     "actionCompletionSound",
@@ -382,6 +377,7 @@ pub const MAIN_SETTINGS_SCROLL_TARGET_SETTING_KEYS: &[(&str, &[&str])] = &[
             "terminalFontFamily",
             "interfaceScalePercent",
             "interfaceScaleAreasSeparately",
+            "linuxDisplayScale",
             "agentManagerZoomPercent",
             "sessionChatZoomPercent",
             "filesZoomPercent",
@@ -415,6 +411,7 @@ pub const MAIN_SETTINGS_SCROLL_TARGET_SETTING_KEYS: &[(&str, &[&str])] = &[
             "showActivePaneOutline",
             "workspaceActivePaneBorderColor",
             "workAreaFrame",
+            "showWindowButtonsWhenSidebarCollapsed",
             "appIconSourceId",
         ],
     ),
@@ -482,6 +479,8 @@ pub const MAIN_SETTINGS_SCROLL_TARGET_SETTING_KEYS: &[(&str, &[&str])] = &[
             "commandsPanelAutoMinimizeDelaySeconds",
             "groupWorkingSessions",
             "sidebarHideProjectsWithoutSessions",
+            "worktreeSessionsInProject",
+            "pinnedSessionOrder",
             "createSessionOnSidebarDoubleClick",
             "enableSessionParking",
             "sleepSessionWhenParking",
@@ -535,7 +534,6 @@ pub const MAIN_SETTINGS_SCROLL_TARGET_SETTING_KEYS: &[(&str, &[&str])] = &[
             "terminalMouseScrollMultiplierPrecision",
             "terminalMouseScrollMultiplierDiscrete",
             "terminalScrollToBottomWhenTyping",
-            "terminalShadersEnabled",
         ],
     ),
     (
@@ -545,6 +543,8 @@ pub const MAIN_SETTINGS_SCROLL_TARGET_SETTING_KEYS: &[(&str, &[&str])] = &[
             "agentPreviewBrowser",
             "sessionLinkOpenTarget",
             "browserPagesInViewRow",
+            "grokWebStartPage",
+            "grokWebLogins",
             "codeServerLinkVscodeUserConfig",
             "codeServerUseVscodeInsidersUserConfig",
             "codeServerNewWindowsAsTabs",
@@ -555,6 +555,7 @@ pub const MAIN_SETTINGS_SCROLL_TARGET_SETTING_KEYS: &[(&str, &[&str])] = &[
             "videoFileOpenTarget",
             "audioFileOpenTarget",
             "fileChangesOpenTarget",
+            "changesHideTestFiles",
             "docsOpenFilesAsTabs",
         ],
     ),
@@ -564,6 +565,7 @@ pub const MAIN_SETTINGS_SCROLL_TARGET_SETTING_KEYS: &[(&str, &[&str])] = &[
             "showNotificationOnTerminalBell",
             "completionSound",
             "showMacOSAttentionNotifications",
+            "attentionAlertsFor",
             "showFinishedWorkBorder",
             "finishedWorkBorderColor",
             "resetExpirySystemNotifications",
@@ -603,12 +605,7 @@ pub const MAIN_SETTINGS_SCROLL_TARGET_SETTING_KEYS: &[(&str, &[&str])] = &[
     ),
     (
         "advanced",
-        &[
-            "dimSleepingSessions",
-            "wakeSleepingSessionsOnSelect",
-            "showBetaFeatures",
-            "fasterRendering",
-        ],
+        &["dimSleepingSessions", "wakeSleepingSessionsOnSelect"],
     ),
     (
         "theming",
@@ -624,6 +621,7 @@ pub const MAIN_SETTINGS_SCROLL_TARGET_SETTING_KEYS: &[(&str, &[&str])] = &[
             "terminalFontFamily",
             "interfaceScalePercent",
             "interfaceScaleAreasSeparately",
+            "linuxDisplayScale",
             "agentManagerZoomPercent",
             "sessionChatZoomPercent",
             "filesZoomPercent",
@@ -657,6 +655,7 @@ pub const MAIN_SETTINGS_SCROLL_TARGET_SETTING_KEYS: &[(&str, &[&str])] = &[
             "showActivePaneOutline",
             "workspaceActivePaneBorderColor",
             "workAreaFrame",
+            "showWindowButtonsWhenSidebarCollapsed",
         ],
     ),
     ("sidebarTags", &["sidebarSessionTagListItems"]),
@@ -708,6 +707,7 @@ pub const MAIN_SETTINGS_SCROLL_TARGET_SETTING_KEYS: &[(&str, &[&str])] = &[
             "videoFileOpenTarget",
             "audioFileOpenTarget",
             "fileChangesOpenTarget",
+            "changesHideTestFiles",
             "docsOpenFilesAsTabs",
         ],
     ),
@@ -718,6 +718,8 @@ pub const MAIN_SETTINGS_SCROLL_TARGET_SETTING_KEYS: &[(&str, &[&str])] = &[
             "agentPreviewBrowser",
             "sessionLinkOpenTarget",
             "browserPagesInViewRow",
+            "grokWebStartPage",
+            "grokWebLogins",
         ],
     ),
     (
@@ -773,6 +775,7 @@ pub const MAIN_SETTINGS_SCROLL_TARGET_SETTING_KEYS: &[(&str, &[&str])] = &[
             "showNotificationOnTerminalBell",
             "completionSound",
             "showMacOSAttentionNotifications",
+            "attentionAlertsFor",
             "showFinishedWorkBorder",
             "finishedWorkBorderColor",
             "resetExpirySystemNotifications",
@@ -803,6 +806,7 @@ pub const MAIN_SETTINGS_SECTION_SETTING_KEYS: &[(&str, &[&str])] = &[
             "terminalFontFamily",
             "interfaceScalePercent",
             "interfaceScaleAreasSeparately",
+            "linuxDisplayScale",
             "agentManagerZoomPercent",
             "sessionChatZoomPercent",
             "filesZoomPercent",
@@ -836,6 +840,7 @@ pub const MAIN_SETTINGS_SECTION_SETTING_KEYS: &[(&str, &[&str])] = &[
             "showActivePaneOutline",
             "workspaceActivePaneBorderColor",
             "workAreaFrame",
+            "showWindowButtonsWhenSidebarCollapsed",
             "appIconSourceId",
         ],
     ),
@@ -903,6 +908,8 @@ pub const MAIN_SETTINGS_SECTION_SETTING_KEYS: &[(&str, &[&str])] = &[
             "commandsPanelAutoMinimizeDelaySeconds",
             "groupWorkingSessions",
             "sidebarHideProjectsWithoutSessions",
+            "worktreeSessionsInProject",
+            "pinnedSessionOrder",
             "createSessionOnSidebarDoubleClick",
             "enableSessionParking",
             "sleepSessionWhenParking",
@@ -954,7 +961,6 @@ pub const MAIN_SETTINGS_SECTION_SETTING_KEYS: &[(&str, &[&str])] = &[
             "terminalMouseScrollMultiplierPrecision",
             "terminalMouseScrollMultiplierDiscrete",
             "terminalScrollToBottomWhenTyping",
-            "terminalShadersEnabled",
         ],
     ),
     (
@@ -964,6 +970,8 @@ pub const MAIN_SETTINGS_SECTION_SETTING_KEYS: &[(&str, &[&str])] = &[
             "agentPreviewBrowser",
             "sessionLinkOpenTarget",
             "browserPagesInViewRow",
+            "grokWebStartPage",
+            "grokWebLogins",
             "codeServerLinkVscodeUserConfig",
             "codeServerUseVscodeInsidersUserConfig",
             "codeServerNewWindowsAsTabs",
@@ -974,6 +982,7 @@ pub const MAIN_SETTINGS_SECTION_SETTING_KEYS: &[(&str, &[&str])] = &[
             "videoFileOpenTarget",
             "audioFileOpenTarget",
             "fileChangesOpenTarget",
+            "changesHideTestFiles",
             "docsOpenFilesAsTabs",
         ],
     ),
@@ -983,6 +992,7 @@ pub const MAIN_SETTINGS_SECTION_SETTING_KEYS: &[(&str, &[&str])] = &[
             "showNotificationOnTerminalBell",
             "completionSound",
             "showMacOSAttentionNotifications",
+            "attentionAlertsFor",
             "showFinishedWorkBorder",
             "finishedWorkBorderColor",
             "resetExpirySystemNotifications",

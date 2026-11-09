@@ -11,8 +11,7 @@ use crate::extras::welcome::{
 };
 use crate::extras::{
     chat_pills, coordinator_threads, panels, relayed_approvals, save_markdown, search,
-    secret_requests, side_chats,
-    subagent, terminal_tail, working_card, working_strip,
+    secret_requests, side_chats, subagent, terminal_tail, working_card, working_strip,
 };
 use crate::state::{ChatContext, ChatState};
 
@@ -22,6 +21,19 @@ use crate::state::{ChatContext, ChatState};
 /// frame that can carry them and does not; the strips and panels here are their projections and
 /// are never gated on `working`, because subagents outlive the turn that spawned them.
 pub fn document(state: &ChatState, context: &ChatContext, into: &mut Document) {
+    let board = crate::document::SharedValue::from(crate::extras::coordinator_board::project(
+        state, context,
+    ));
+    document_with_board(state, context, into, board);
+}
+
+/// [`document`] with the coordinator's board already projected (`coordinator_board::project_kept`).
+pub fn document_with_board(
+    state: &ChatState,
+    context: &ChatContext,
+    into: &mut Document,
+    board: crate::document::SharedValue,
+) {
     let extras = &state.extras;
     into.terminal_activity = tri(state.session.terminal_activity.clone());
     into.agent_fleet = tri(state.session.agent_fleet.clone());
@@ -65,11 +77,25 @@ pub fn document(state: &ChatState, context: &ChatContext, into: &mut Document) {
     // User, of the strip reading "Resources 605 · Board · Workers · Stashed": "i asked u to swap the
     // placement of board and resources pills here, pls do it". Order: ?, Board, Resources, Workers.
     // This is the one place the order is set, so the desktop, the web build and the phone follow.
-    let board = crate::extras::coordinator_board::project(state, context);
     if let Some(pill) = crate::extras::coordinator_board::pill(&board) {
         into.chat_pills.insert(0, pill);
+        // Blocked, before the Board pill (just after the renderers' ? pill), while anything is
+        // blocked.
+        if let Some(blocked) = crate::extras::coordinator_board::blocked_pill(&board) {
+            into.chat_pills.insert(0, blocked);
+        }
     }
     into.coordinator_board = Tri::Value(board);
+    // Autopilot's switch, after the coordinator's pills (a session's own while Autopilot is on).
+    into.chat_pills
+        .extend(crate::extras::autopilot::pill(state));
+    // The phone's Share pill (the desktop has the header's Share button).
+    into.chat_pills.extend(crate::extras::collab::pill(state));
+    // The coordinator tips' pill closes the core's pills (before Stashed), on a coordinator only.
+    let intro = crate::extras::coordinator_intro::project(state);
+    into.chat_pills
+        .extend(crate::extras::coordinator_intro::pill(&intro));
+    into.coordinator_intro = Tri::Value(intro);
     let side_chats_panel = side_chats::project(state.session.side_chats.as_ref());
     if let Some(pill) = side_chats::pill(&side_chats_panel) {
         into.chat_pills.insert(0, pill);
@@ -92,7 +118,17 @@ pub fn document(state: &ChatState, context: &ChatContext, into: &mut Document) {
     into.coordinator_threads_panel = Tri::Value(threads_panel);
     into.side_chats_panel = Tri::Value(side_chats_panel);
     into.secret_requests = Tri::Value(secret_requests::project(state));
-    into.relayed_answer_lines = Tri::Value(relayed_approvals::audit_lines(state));
+    into.collab = Tri::Value(crate::extras::collab::project(state));
+    // An approval answered in this chat leaves its "Approved" / "Denied" line after the
+    // coordinator's (questions/pending_approval.rs), so the newest answer is the one drawn.
+    let mut answer_lines = relayed_approvals::audit_lines(state);
+    if let (Some(lines), Some(settled)) = (
+        answer_lines.as_array_mut(),
+        state.questions.settled_approval.as_ref(),
+    ) {
+        lines.push(settled.clone());
+    }
+    into.relayed_answer_lines = Tri::Value(answer_lines);
     into.side_chat_of = Tri::Value(side_chats::bar(
         state.session.side_chat_of.as_ref(),
         &state.identity.project_id,

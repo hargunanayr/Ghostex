@@ -48,6 +48,9 @@ pub(crate) struct ConnectedComputer {
     pub(crate) agent_access: bool,
     /// Whose switch turned Agent access off, for the refusal's wording.
     pub(crate) off_by: Option<OffBy>,
+    /// The id this computer's desktop app keeps for it (Settings > Remote > Remote machines), so a
+    /// message held for it (held_sends.rs) finds it even when the app only knew that id.
+    pub(crate) machine_id: Option<String>,
     expires_at: Instant,
 }
 
@@ -63,6 +66,19 @@ pub(crate) enum OffBy {
 impl ConnectedComputer {
     pub(crate) fn token(&self) -> &str {
         &self.token
+    }
+
+    /// Whether `url` (at this computer's address) may get its token: only a listener of this
+    /// account, or, for a computer that connected in, the OpenSSH Server holding its SSH way back
+    /// (ghostex_paths::loopback_owner::check_ssh_way_back_url).
+    pub(crate) fn check_listener(
+        &self,
+        url: &str,
+    ) -> Result<(), ghostex_paths::loopback_owner::ForeignListener> {
+        match self.direction {
+            Direction::Inbound => ghostex_paths::loopback_owner::check_ssh_way_back_url(url),
+            Direction::Outbound => ghostex_paths::loopback_owner::check_url(url),
+        }
     }
 
     /// What `listConnectedComputers` shows: never the token or the address it is reached at.
@@ -114,6 +130,8 @@ pub(crate) struct Registration {
     pub(crate) owner: bool,
     /// Agent access is off because the other computer's switch is (`offOnOtherComputer`).
     pub(crate) off_on_other_computer: bool,
+    /// The desktop app's own id for the computer (`machineId`), when it sent one.
+    pub(crate) machine_id: Option<String>,
 }
 
 impl Registration {
@@ -177,6 +195,7 @@ impl Registration {
             ttl,
             owner: flag("owner"),
             off_on_other_computer: flag("offOnOtherComputer"),
+            machine_id: text("machineId").map(|id| id.chars().take(MAX_NAME_CHARS).collect()),
         })
     }
 }
@@ -233,6 +252,7 @@ pub(crate) fn register(registration: Registration) -> bool {
     } else {
         (String::new(), String::new())
     };
+    let (server_id, name) = (registration.server_id.clone(), registration.name.clone());
     registry.computers.insert(
         registration.server_id.clone(),
         ConnectedComputer {
@@ -243,9 +263,15 @@ pub(crate) fn register(registration: Registration) -> bool {
             direction: registration.direction,
             agent_access,
             off_by,
+            machine_id: registration.machine_id,
             expires_at: now + registration.ttl,
         },
     );
+    drop(registry);
+    // A computer that is back may have messages waiting for it here.
+    if agent_access {
+        super::held_sends::note_registered(&server_id, &name);
+    }
     agent_access
 }
 
@@ -301,6 +327,13 @@ pub(crate) fn issue_grant(
     Ok(Some(token))
 }
 
+/// Whether `server_id` holds a live grant now (a renewal keeps it; the security log notes only new ones).
+pub(crate) fn has_grant(server_id: &str) -> bool {
+    let mut registry = registry();
+    prune(&mut registry, Instant::now());
+    registry.grants.contains_key(server_id)
+}
+
 /// Drops the token `server_id` was given, so its agents are refused from now on. `deny` (this
 /// computer's own app turning the switch off) also keeps it from being minted again for `ttl`.
 pub(crate) fn revoke_grant(server_id: &str, deny: bool, ttl: Duration) -> bool {
@@ -326,6 +359,29 @@ pub(crate) fn list() -> Vec<ConnectedComputer> {
     let mut registry = registry();
     prune(&mut registry, Instant::now());
     registry.computers.values().cloned().collect()
+}
+
+/// The connected computer a held message names: by its server id, or by the desktop app's own id
+/// for it when the message was held before this computer learned the server id.
+pub(crate) fn find_by_server_or_machine(
+    server_id: &str,
+    machine_id: Option<&str>,
+) -> Option<ConnectedComputer> {
+    let mut registry = registry();
+    prune(&mut registry, Instant::now());
+    if let Some(computer) = registry
+        .computers
+        .get(server_id)
+        .filter(|_| !server_id.is_empty())
+    {
+        return Some(computer.clone());
+    }
+    let machine_id = machine_id.filter(|id| !id.is_empty())?;
+    registry
+        .computers
+        .values()
+        .find(|computer| computer.machine_id.as_deref() == Some(machine_id))
+        .cloned()
 }
 
 pub(crate) fn find(server_id: &str) -> Option<ConnectedComputer> {

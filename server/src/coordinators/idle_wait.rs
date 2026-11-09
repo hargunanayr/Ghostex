@@ -10,7 +10,7 @@
 //! A thread (G7h13, 2026-11-05) ended its turn with "The Linux check and both watchers are still running in the background; I'll pick up the result when it lands." Its three jobs were stopped ten minutes later (Auto Sleep slept the session, see CDXC:SessionStatus 2026-11-06 in session_chat_terminal_activity/types.rs), their notifications sat queued in its transcript, and it stayed idle for three hours while the stall watch, which covers only working threads, said nothing. User, through the coordinator: an idle thread that has queued, undelivered task notifications or harness rows, or ended its last turn saying it waits on a background job, and has had no new turn for 10 minutes, gets the stall treatment: Ghostex nudges it ("Your background job looks finished: read its result and carry on.") and reports to the coordinator, again every 10 minutes until it moves, with the red dot after the nudge. A thread whose screen still shows its background work running is left alone for (b): its job has not finished, and Claude Code hands it the result itself when it does.
 //!
 //! CDXC:Coordinators 2026-11-06 DECISION:
-//! User, of a board that showed three threads as "parked" while one was put to sleep mid-command and another had stopped after "Now opening the fold.": "why is board not up to date?? what can we do to avoid this please?". Two more things leave a thread owing work after its turn: (c) its last message, which carries no handover marker, ends saying what it does next ("Now opening the fold."), so the agent stopped mid-task; (d) its transcript's newest turn never ended (the agent was put to sleep or died mid-turn, or a restart cut it off). Both get the same rounds as (a) and (b), with their own nudge, and while one holds, Auto Sleep leaves the thread awake and the board shows it under Moving with what it owes instead of as parked (board.rs, panel.rs).
+//! User, of a board that showed three threads as "parked" while one was put to sleep mid-command and another had stopped after "Now opening the fold.": "why is board not up to date?? what can we do to avoid this please?". Two more things leave a thread owing work after its turn: (c) its last message, which carries no handover marker, ends saying what it does next ("Now opening the fold."), so the agent stopped mid-task; (d) its transcript's newest turn never ended (the agent was put to sleep or died mid-turn, or a restart cut it off). Both get the same rounds as (a) and (b), with their own nudge, and while one holds, Auto Sleep leaves the thread awake and the board shows it under In progress with what it owes instead of as parked (board.rs, panel.rs).
 
 use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
@@ -94,6 +94,9 @@ pub struct IdleDue {
 /// One idle thread's clock, from the end of the turn its last report came from.
 pub struct IdleWatch {
     since: i64,
+    /// The last moment the clock was held while offline: rounds count from here when it is later
+    /// than `since` (CDXC:OfflineHold in network_status).
+    held_at: i64,
     path: Option<PathBuf>,
     checked_at: Option<i64>,
     reason: Option<IdleWaitReason>,
@@ -104,6 +107,7 @@ impl IdleWatch {
     pub fn new(since: i64) -> Self {
         Self {
             since,
+            held_at: 0,
             path: None,
             checked_at: None,
             reason: None,
@@ -124,6 +128,10 @@ impl IdleWatch {
         turn_open: bool,
         now: i64,
     ) -> Option<IdleDue> {
+        if crate::network_status::session_offline(session) {
+            self.hold(now);
+            return None;
+        }
         if self
             .checked_at
             .is_none_or(|checked| now - checked >= test_scaled(IDLE_CHECK_EVERY_MS))
@@ -137,14 +145,26 @@ impl IdleWatch {
             .filter(|reason| *reason != IdleWaitReason::JobRunning)?;
         let round = self.round(now);
         (round > self.reported_rounds).then(|| IdleDue {
-            since: self.since,
+            since: self.clock_from(),
             round,
             reason,
         })
     }
 
+    /// The computer (or the agent's API) is offline: a nudge could not help, so the idle clock
+    /// starts again from the last held moment.
+    pub fn hold(&mut self, now: i64) {
+        self.held_at = self.held_at.max(now);
+        self.reported_rounds = 0;
+    }
+
+    /// Where the rounds count from: the turn's end, or the end of an outage after it.
+    fn clock_from(&self) -> i64 {
+        self.since.max(self.held_at)
+    }
+
     fn round(&self, now: i64) -> u32 {
-        ((now - self.since).max(0) / idle_round_ms()) as u32
+        ((now - self.clock_from()).max(0) / idle_round_ms()) as u32
     }
 
     /// Why it is watched, as last checked, while something waits for it.
@@ -163,7 +183,7 @@ impl IdleWatch {
         let round = self.round(now);
         Some(SessionQuiet {
             last_output_at: Some(self.since),
-            quiet_since: self.since,
+            quiet_since: self.clock_from(),
             stalled: round >= 1,
             stuck: round >= IDLE_STUCK_ROUNDS,
         })
@@ -178,13 +198,23 @@ pub fn idle_wait_reason(
     turn_open: bool,
     path: &mut Option<PathBuf>,
 ) -> Option<IdleWaitReason> {
+    session_idle_reason(session, thread.last_report.as_deref(), turn_open, path)
+}
+
+/// BLOCKING. [`idle_wait_reason`] for any session, judged by its last words (a thread's are its
+/// last report); Autopilot reads every covered session this way (server/autopilot_runtime.rs).
+pub fn session_idle_reason(
+    session: &Value,
+    last: Option<&str>,
+    turn_open: bool,
+    path: &mut Option<PathBuf>,
+) -> Option<IdleWaitReason> {
     let queued = queued_harness_rows(session, path);
     if queued > 0 {
         return Some(IdleWaitReason::Queued(queued));
     }
     let background_runs =
         crate::presentation::session_background_work_detected_at(session).is_some();
-    let last = thread.last_report.as_deref();
     // Its job still runs: Claude Code hands it the result when it ends.
     if background_runs {
         return last
@@ -271,8 +301,55 @@ pub fn says_it_carries_on(message: &str) -> bool {
     STARTS.iter().any(|start| sentence.starts_with(start))
 }
 
+/// The sections of a handover report that say work goes on after the turn: 🔄 In progress and
+/// 🛫 Kicked off.
+const ONGOING_MARKERS: [char; 2] = ['\u{1f504}', '\u{1f6eb}'];
+
+/// The text of a handover report's ongoing sections (`ONGOING_MARKERS`): from a line that opens
+/// with one of them to the next line that opens with any handover marker.
+fn ongoing_sections(message: &str) -> String {
+    let mut ongoing = false;
+    let mut text = String::new();
+    for line in message.lines() {
+        let opening = line
+            .trim_start()
+            .trim_start_matches(['#', '>', ' '])
+            .chars()
+            .next();
+        if let Some(marker) = opening.filter(|ch| HANDOVER_MARKERS.contains(ch)) {
+            ongoing = ONGOING_MARKERS.contains(&marker);
+        }
+        if ongoing {
+            text.push_str(line);
+            text.push('\n');
+        }
+    }
+    text
+}
+
 /// Whether the end of a last message says the thread waits on a background job.
+///
+/// CDXC:Coordinators 2026-11-08 WHY:
+/// Coordinator: "Ghostex's parked-thread watcher just reported THIS thread as 'still idle 70
+/// minutes … waits on a background job' and showed the user a red dot + notification, but you had
+/// finished … (your last turn mentioned a background job that had long finished). A thread that's
+/// done/closed (or whose last turn is a finished report) must never be marked not moving or
+/// notify." The thread (G5yb5) had ended its turn at 12:08 UTC with a finished report about
+/// making restarts check for background jobs; its last 600 characters held "background job" and
+/// "still running" in its ⚠️ Read this and 🧪 Untested sections, which describe work, not a job it
+/// waits on. A message carrying handover markers is a report, so only its 🔄 In progress and
+/// 🛫 Kicked off sections can say it waits on a job (as `says_it_carries_on` already treats a
+/// report as finished); an unmarked message is read as before. A done or closed thread is not
+/// watched at all (`supervise` in server/coordinator_runtime.rs).
 pub fn says_it_waits(message: &str) -> bool {
+    if message.contains(HANDOVER_MARKERS) {
+        let ongoing = ongoing_sections(message);
+        return !ongoing.trim().is_empty() && says_it_waits_unmarked(&ongoing);
+    }
+    says_it_waits_unmarked(message)
+}
+
+fn says_it_waits_unmarked(message: &str) -> bool {
     const PHRASES: [&str; 16] = [
         "in the background",
         "background job",
@@ -367,4 +444,30 @@ fn queued_harness_rows(session: &Value, path: &mut Option<PathBuf>) -> usize {
         }
     }
     pending
+}
+
+#[cfg(test)]
+mod offline_tests {
+    use super::*;
+
+    const MIN: i64 = 60_000;
+
+    #[test]
+    fn an_outage_restarts_the_idle_clock() {
+        let mut watch = IdleWatch::new(0);
+        watch.reason = Some(IdleWaitReason::SaidWaiting);
+        watch.mark_reported(1);
+        // Offline from minute 5 to minute 60: never stalled meanwhile.
+        for minute in 5..=60 {
+            watch.hold(minute * MIN);
+            assert!(!watch.view(minute * MIN).expect("watched").stalled);
+        }
+        // The round already reported belongs to the stretch before.
+        assert_eq!(watch.reported_rounds, 0);
+        assert_eq!(watch.round(69 * MIN), 0);
+        assert_eq!(watch.round(70 * MIN), 1);
+        assert_eq!(watch.view(70 * MIN).expect("watched").quiet_since, 60 * MIN);
+        // Its identity stays the turn's end, so the supervisor keeps this watch.
+        assert_eq!(watch.since(), 0);
+    }
 }

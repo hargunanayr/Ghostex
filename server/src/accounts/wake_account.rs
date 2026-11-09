@@ -32,7 +32,8 @@ pub(crate) fn rebind_exhausted(
     let provider = account.provider;
     let mut runtime = runtime.as_object().cloned().unwrap_or_default();
     launch::assign(&mut runtime, &account, command)?;
-    runtime.remove("accountRecovery");
+    // Recorded as an automatic switch, so the error episode stays (api_errors::switch_recovery).
+    super::api_errors::switch_recovery(&mut runtime, None, true);
     // The resumed CLI repaints the old login's limit from the transcript, which must not read as the new login's limit (see `endpoint::select`).
     let switched_at = Utc::now();
     runtime.remove("accountSuppressedUsageNotice");
@@ -50,6 +51,7 @@ pub(crate) fn rebind_exhausted(
             "accountReady": true,
             "fromAccountId": current,
             "toAccountId": account.id,
+            "leftAt": switched_at.to_rfc3339(),
             "updatedAt": switched_at.to_rfc3339(),
         }),
     );
@@ -60,15 +62,12 @@ pub(crate) fn rebind_exhausted(
     for key in ["agentLaunchPlan", "agentResumePlan", "agentCommand"] {
         launch_settings.remove(key);
     }
-    let updated = repository.update_session(
-        json!({
-            "projectId": session["projectId"],
-            "sessionId": session["sessionId"],
-            "runtimeSettings": runtime,
-            "launchSettings": launch_settings,
-        })
-        .as_object()
-        .unwrap(),
+    let launch_settings = json!({ "launchSettings": launch_settings });
+    let updated = endpoint::update_session_changes(
+        repository,
+        &session,
+        &runtime,
+        launch_settings.as_object().cloned().unwrap_or_default(),
     )?;
     crate::session_chat_notice::suppress_account_usage_notice(
         session["projectId"].as_str().unwrap_or_default(),
@@ -226,7 +225,7 @@ fn at_limit(account: &DiscoveredAccount, model: &str, now: DateTime<Utc>) -> boo
 }
 
 /// The model the saved command launches with (`--model`, Codex's `-m`), which decides the usage windows that apply.
-fn command_model(command: &str, agent: &str) -> Option<String> {
+pub(crate) fn command_model(command: &str, agent: &str) -> Option<String> {
     let mut offset = 0;
     let mut take_value = false;
     let mut skip_value = false;

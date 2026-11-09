@@ -43,17 +43,22 @@ if (!($InstalledToolchains -match "^$([regex]::Escape($RustVersion))-")) {
 
 if ($Install -and !$env:GHOSTEX_ZIG) { & (Join-Path $PSScriptRoot 'release-gpui/prepare-zig.ps1') -Arch $Arch }
 if (!$env:GHOSTEX_ZIG) {
-    $CachedZig = Join-Path $RepoRoot 'build/toolchains/zig-0.17.0-x64/zig.exe'
+    $CachedZig = Join-Path $RepoRoot 'build/toolchains/zig-0.17.1-x64/zig.exe'
     if (Test-Path -LiteralPath $CachedZig) { $env:GHOSTEX_ZIG = $CachedZig }
     elseif (Get-Command zig -ErrorAction SilentlyContinue) { $env:GHOSTEX_ZIG = (Get-Command zig).Source }
 }
 $ZigCommand = if ($env:GHOSTEX_ZIG) { Get-Command $env:GHOSTEX_ZIG -CommandType Application -ErrorAction SilentlyContinue }
 if (!$ZigCommand) {
-    $Missing.Add('Zig 0.17.0 is missing. Run cargo xtask setup-windows, or set GHOSTEX_ZIG to its executable.')
-} elseif ((& $ZigCommand.Source version) -ne '0.17.0' -or $LASTEXITCODE -ne 0) {
-    $Missing.Add('GHOSTEX_ZIG must point to Zig 0.17.0.')
+    $Missing.Add('Zig 0.17.1 is missing. Run cargo xtask setup-windows, or set GHOSTEX_ZIG to its executable.')
+} elseif ((& $ZigCommand.Source version) -ne '0.17.1' -or $LASTEXITCODE -ne 0) {
+    $Missing.Add('GHOSTEX_ZIG must point to Zig 0.17.1.')
 } else {
     $env:GHOSTEX_ZIG = $ZigCommand.Source
+}
+
+# CDXC:Security 2026-11-08 WHY: Launch-VsDevShell re-reads the environment from VsDevCmd's `set` output, which keeps only the first line of a multi-line variable, so the PEM component signing key reached Node as its BEGIN line and sealing CEF failed with "DECODER routines::unsupported" (11.1.0's first Windows builds). Escaping its newlines keeps it on one line; component-signing.mjs turns `\n` back into newlines.
+if ($env:GHOSTEX_COMPONENT_SIGNING_KEY -match "`n") {
+    $env:GHOSTEX_COMPONENT_SIGNING_KEY = $env:GHOSTEX_COMPONENT_SIGNING_KEY -replace "`r?`n", '\n'
 }
 
 # Use the installed C++ toolchain from a normal PowerShell window too.
@@ -63,4 +68,4 @@ foreach ($Tool in @('cl', 'cmake', 'ninja', 'rc')) {
     if (!(Get-Command $Tool -ErrorAction SilentlyContinue)) { $Missing.Add("$Tool is missing from the Visual Studio build environment. Install the C++ workload, Windows SDK, and CMake tools.") }
 }
 if ($Missing.Count) { throw ("Windows build prerequisites are missing:`n" + ($Missing -join "`n")) }
-Write-Host "Windows $Arch build tools are ready (Rust $RustVersion, Zig 0.17.0, $RustcWrapper, MSVC, CMake, Ninja)."
+Write-Host "Windows $Arch build tools are ready (Rust $RustVersion, Zig 0.17.1, $RustcWrapper, MSVC, CMake, Ninja)."

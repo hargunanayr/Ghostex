@@ -59,7 +59,7 @@ function inlineCefHtmlAssets(): Plugin {
           if (!asset || asset.type !== 'asset') {
             throw new Error(`Ghostex CEF build did not emit CSS asset ${cssFileName}.`);
           }
-          const styleTag = `<style>\n${inlineStyleContent(String(asset.source))}\n</style>`;
+          const styleTag = `<style>\n${inlineStyleContent(rebaseCssUrlsOntoPage(String(asset.source), cssFileName))}\n</style>`;
           const linkPattern = new RegExp(`<link([^>]*?)href="${escapeRegExp(`./${cssFileName}`)}"([^>]*?)>`);
           html = linkPattern.test(html)
             ? html.replace(linkPattern, () => styleTag)
@@ -163,6 +163,23 @@ function escapeRegExp(value: string): string {
 
 function inlineScriptContent(value: string): string {
   return value.replace(/<\/script/gi, '<\\/script').replace(/<!--/g, '<\\!--');
+}
+
+/**
+ * CDXC:CefRuntime 2026-11-07 WHY:
+ * Vite writes a stylesheet's `url()` values relative to the stylesheet itself (`assets/x.css` asks for `./font.woff2`), but the stylesheet is inlined into a page at the bundle root, so every relative font and image it named resolved beside the page and failed: Excalidraw's Assistant fonts since dynamic-chunk CSS was first inlined (2026-07-08) and the Files page's Inter since 2026-09-06. Each relative `url()` is rewritten here to the same file seen from the page.
+ */
+function rebaseCssUrlsOntoPage(css: string, cssFileName: string): string {
+  const cssDirectory = path.posix.dirname(cssFileName);
+  if (cssDirectory === '.') {
+    return css;
+  }
+  return css.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/g, (match, quote: string, reference: string) => {
+    if (/^(?:[a-z][a-z\d+.-]*:|\/|#)/i.test(reference)) {
+      return match;
+    }
+    return `url(${quote}./${path.posix.normalize(path.posix.join(cssDirectory, reference))}${quote})`;
+  });
 }
 
 function inlineStyleContent(value: string): string {
@@ -401,6 +418,13 @@ function createCefSingleFileEsbuildPlugin(stagedImages: CefStagedImages): esbuil
         contents: '',
         loader: 'js',
       }));
+      /*
+       * CDXC:CefRuntime 2026-11-07 FIX:
+       * Vite reads `?raw` imports as text, but this single-file esbuild pass loaded them as JS modules, so the Files view's `agentation.generated.js?raw` (Annotate's bundled fork) had no default export and the React pages build failed. Load any `?raw` import as a text string here too, before the general JS loader below.
+       */
+      build.onLoad({ filter: /.*/ }, (args) =>
+        args.suffix === '?raw' ? { contents: fs.readFileSync(args.path, 'utf8'), loader: 'text' } : undefined
+      );
       build.onLoad({ filter: CEF_STAGED_IMAGE_FILTER }, (args) => {
         const contents = fs.readFileSync(args.path);
         if (contents.byteLength <= CEF_INLINE_IMAGE_BYTE_LIMIT) {

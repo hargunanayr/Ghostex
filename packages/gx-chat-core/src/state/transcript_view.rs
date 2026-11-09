@@ -32,9 +32,17 @@ use crate::transcript::deferred_work::{DeferredWalk, DeferredWorkCache};
 use crate::transcript::items::TranscriptItems;
 
 /// Items from the tail that are fully projected before the first publish; the rest backfill in
-/// batches of the same size.
+/// batches of [`BACKFILL_BATCH`].
 pub const EAGER_TAIL_ITEMS: usize = 12;
-pub const BACKFILL_BATCH: usize = 24;
+/// How many placeholders one backfill pass projects (`rows::advance`), newest first.
+///
+/// CDXC:SessionChat 2026-11-08 WHY:
+/// Every pass rebuilds the transcript list and assembles the document again, which on a long chat
+/// costs far more than projecting the rows themselves: at 24 per pass a 19,000-row chat scrolled
+/// far up kept the chat worker busy for 15 seconds after the rows arrived (the user's app "gets
+/// slower with time ... even pasting an image takes long"). 96 per pass took 8 seconds, and its
+/// slowest pass was no longer than at 48.
+pub const BACKFILL_BATCH: usize = 96;
 
 /// The conversation the main transcript belongs to.
 pub const ROOT_AGENT_PATH: &str = "/root";
@@ -134,6 +142,10 @@ pub struct TranscriptViewState {
     pub page_thumbnail_requests: BTreeMap<u64, String>,
     /// How many times in a row each page's picture was asked for and not there yet.
     pub page_thumbnail_attempts: BTreeMap<String, u32>,
+    /// The "GBot added" cards' live state, by change id ([`crate::transcript::gbot_cards`]).
+    pub gbot_cards: BTreeMap<String, crate::transcript::gbot_cards::GbotCardEntry>,
+    /// The `/api/gbots` calls those cards made, by request id, with the change asked about.
+    pub gbot_card_requests: BTreeMap<u64, String>,
     /// The summary mode the write in flight will adopt once it lands.
     pub pending_summary_mode: Option<bool>,
     /// The verbose override the write in flight will adopt once it lands.
@@ -270,6 +282,8 @@ impl Default for TranscriptViewState {
             picture_digests_revision: 0,
             page_thumbnail_requests: BTreeMap::new(),
             page_thumbnail_attempts: BTreeMap::new(),
+            gbot_cards: BTreeMap::new(),
+            gbot_card_requests: BTreeMap::new(),
             pending_summary_mode: None,
             pending_verbose_override: None,
             pending_simple_override: None,

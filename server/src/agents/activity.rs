@@ -287,6 +287,23 @@ pub(crate) fn ingest_agent_hook_event(
             params,
             &activity,
         );
+        let transcript_path = params
+            .get("agentSessionPath")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| {
+                session
+                    .pointer("/runtimeSettings/agentSessionPath")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            });
+        let session_chat_prompt_after = crate::session_chat_approval_call::settle_stored_approval(
+            &lifecycle.project_id,
+            &lifecycle.session_id,
+            params,
+            session_chat_prompt_after,
+            transcript_path.as_deref(),
+        );
         session_chat_prompt_changed =
             session_chat_prompt_before.as_deref() != session_chat_prompt_after.as_deref();
         if let Some(prompt_json) = session_chat_prompt_after.as_deref() {
@@ -996,8 +1013,18 @@ pub(crate) fn strip_first_prompt_title_claim_prefixes(value: &str) -> &str {
     }
 }
 
+/// A message Ghostex itself typed (Autopilot's rules, a coordinator's nudge, a heal): its lines open
+/// with "Ghostex:".
+///
+/// CDXC:SessionTitles 2026-11-08 DECISION:
+/// User, after "Ghostex: [Autopilot] your last…" became a GBots conversation's sidebar title: "bug pls fix". A Ghostex or Autopilot system message never names a session or conversation; titles come from the user's or the bot's real first message.
+pub(crate) fn is_ghostex_system_message(text: &str) -> bool {
+    text.trim_start().starts_with("Ghostex:")
+}
+
 pub(crate) fn is_first_prompt_claim_meta_prompt(prompt: &str) -> bool {
-    prompt.starts_with("# AGENTS")
+    is_ghostex_system_message(prompt)
+        || prompt.starts_with("# AGENTS")
         || prompt.contains("tool_use_id")
         || [
             "<command",
@@ -1140,11 +1167,11 @@ pub(crate) fn normalize_agent_hook_event_activity(params: &Map<String, Value>) -
             event,
             &Value::Object(params.clone()),
         )
-    } else if agent.as_deref() == Some("antigravity") {
-        // agy's stop keeps the turn working while background work will wake it again, and its
-        // question tool waits for the user (CDXC:AgentHooks 2026-10-23 in event_mapping.rs).
+    } else if let Some(agent @ ("antigravity" | "omp")) = agent.as_deref() {
+        // agy's stop keeps the turn working while background work will wake it again; agy's and
+        // OMP's question tools wait for the user (CDXC:AgentHooks 2026-10-23 in event_mapping.rs).
         crate::agent_hooks::event_mapping::activity_for_hook_event(
-            "antigravity",
+            agent,
             event.and_then(Value::as_str).unwrap_or_default(),
             &Value::Object(params.clone()),
         )

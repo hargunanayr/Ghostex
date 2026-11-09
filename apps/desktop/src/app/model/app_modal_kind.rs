@@ -51,6 +51,12 @@ pub(crate) enum GpuiAppModalKind {
     UpdateAvailable,
     /// Name, agent, goal and first request of a new coordinator (new_coordinator_modal_lifecycle.rs).
     NewCoordinator,
+    /// Name, instructions and agent of a new GBot (new_gbot_modal_lifecycle.rs).
+    NewGbot,
+    /// A GBot's Profile, Instructions and Memory, from its row (gbot_settings_modal_lifecycle.rs).
+    GbotSettings,
+    /// Import Team… and Export Team… from Main Hub's GBots heading (gbot_team_modal_lifecycle.rs).
+    GbotTeam,
     /// Make an existing session a coordinator, with an optional goal (new_coordinator_modal_lifecycle.rs).
     MakeCoordinator,
     /// An orchestrator's Goal & Instructions or Memory editor (coordinator_details_modal_lifecycle.rs).
@@ -71,6 +77,12 @@ pub(crate) enum GpuiAppModalKind {
     /// "Paste potentially unsafe text?" for terminal paste protection (terminal_input/paste_and_shortcuts.rs).
     TerminalPasteConfirm,
     CloseSessionsConfirm,
+    /// "Start a new chat with Main Hub?" before New Chat or Change Agent
+    /// (native_sidebar/chief.rs).
+    ChiefNewChat,
+    /// The one-time 11.0.1 security notice: pair phones and computers again
+    /// (security_upgrade_modal_lifecycle.rs). Opened directly when gxserver says it is due.
+    SecurityUpgrade,
 }
 
 impl GpuiAppModalKind {
@@ -78,6 +90,7 @@ impl GpuiAppModalKind {
         match value {
             "addProject" => Some(Self::AddProject),
             "agentHooksRequired" => Some(Self::AgentHooksRequired),
+            "securityUpgrade" => Some(Self::SecurityUpgrade),
             "settings" => Some(Self::Settings),
             "hotkeys" => Some(Self::Hotkeys),
             "missingProjectFolder" => Some(Self::MissingProjectFolder),
@@ -114,6 +127,9 @@ impl GpuiAppModalKind {
             }
             "updateAvailable" => Some(Self::UpdateAvailable),
             "newCoordinator" => Some(Self::NewCoordinator),
+            "newGbot" => Some(Self::NewGbot),
+            "gbotSettings" => Some(Self::GbotSettings),
+            "gbotTeam" => Some(Self::GbotTeam),
             "makeCoordinator" => Some(Self::MakeCoordinator),
             "coordinatorDetails" => Some(Self::CoordinatorDetails),
             "ghost" => Some(Self::Ghost),
@@ -123,6 +139,7 @@ impl GpuiAppModalKind {
             "addSessionLink" => Some(Self::AddSessionLink),
             "terminalPasteConfirm" => Some(Self::TerminalPasteConfirm),
             "closeSessionsConfirm" => Some(Self::CloseSessionsConfirm),
+            "chiefNewChat" => Some(Self::ChiefNewChat),
             _ => None,
         }
     }
@@ -131,6 +148,7 @@ impl GpuiAppModalKind {
         match self {
             Self::AddProject => "addProject",
             Self::AgentHooksRequired => "agentHooksRequired",
+            Self::SecurityUpgrade => "securityUpgrade",
             Self::Settings => "settings",
             Self::Hotkeys => "hotkeys",
             Self::MissingProjectFolder => "missingProjectFolder",
@@ -165,6 +183,9 @@ impl GpuiAppModalKind {
             Self::Extension(id) => extension_modal_id(id),
             Self::UpdateAvailable => "updateAvailable",
             Self::NewCoordinator => "newCoordinator",
+            Self::NewGbot => "newGbot",
+            Self::GbotSettings => "gbotSettings",
+            Self::GbotTeam => "gbotTeam",
             Self::MakeCoordinator => "makeCoordinator",
             Self::CoordinatorDetails => "coordinatorDetails",
             Self::Ghost => "ghost",
@@ -174,6 +195,7 @@ impl GpuiAppModalKind {
             Self::AddSessionLink => "addSessionLink",
             Self::TerminalPasteConfirm => "terminalPasteConfirm",
             Self::CloseSessionsConfirm => "closeSessionsConfirm",
+            Self::ChiefNewChat => "chiefNewChat",
         }
     }
 
@@ -182,6 +204,7 @@ impl GpuiAppModalKind {
             Self::BrowserHistory => "Ghostex Browser History",
             Self::AddProject => "Ghostex Add Project",
             Self::AgentHooksRequired => "Ghostex Install Required Hooks",
+            Self::SecurityUpgrade => "Ghostex Pair Your Devices Again",
             Self::Settings => "Ghostex Settings",
             Self::Hotkeys => "Ghostex Hotkeys",
             Self::MissingProjectFolder => "Ghostex Project Folder Missing",
@@ -213,6 +236,9 @@ impl GpuiAppModalKind {
             Self::Extension(_) => "Ghostex Extension",
             Self::UpdateAvailable => "Ghostex Update",
             Self::NewCoordinator => "Ghostex New Coordinator",
+            Self::NewGbot => "Ghostex New GBot",
+            Self::GbotSettings => "Ghostex GBot Settings",
+            Self::GbotTeam => "Ghostex GBots Team",
             Self::MakeCoordinator => "Ghostex Make Coordinator",
             Self::CoordinatorDetails => "Ghostex Coordinator",
             Self::Ghost => "Ghostex Ghost",
@@ -222,6 +248,7 @@ impl GpuiAppModalKind {
             Self::AddSessionLink => "Ghostex Add a Link",
             Self::TerminalPasteConfirm => "Ghostex Paste",
             Self::CloseSessionsConfirm => "Ghostex Close",
+            Self::ChiefNewChat => "Ghostex New Chat",
         }
     }
 
@@ -323,6 +350,10 @@ impl GpuiAppModalKind {
                 px(APP_MODAL_HOST_RENAME_SESSION_WINDOW_WIDTH),
                 px(APP_MODAL_HOST_AGENT_HOOKS_REQUIRED_WINDOW_HEIGHT),
             ),
+            Self::SecurityUpgrade => size(
+                px(crate::app::window::SECURITY_UPGRADE_MODAL_WIDTH),
+                px(crate::app::window::SECURITY_UPGRADE_MODAL_INITIAL_HEIGHT),
+            ),
             /*
             CDXC:AppModal 2026-07-26-07:20:
             Settings, Hotkeys, Configure Agents, Configure Actions, and Open Targets all render the one tabbed Settings dialog in the modal host, so they must keep the full Settings frame even though their legacy standalone stylesheets are narrower.
@@ -397,6 +428,18 @@ impl GpuiAppModalKind {
                 px(crate::app::window::GHOST_MODAL_WIDTH),
                 px(crate::app::window::GHOST_MODAL_INITIAL_HEIGHT),
             ),
+            Self::NewGbot => size(
+                px(crate::app::window::NEW_GBOT_MODAL_WIDTH),
+                px(crate::app::window::NEW_GBOT_MODAL_INITIAL_HEIGHT),
+            ),
+            Self::GbotSettings => size(
+                px(crate::app::window::GBOT_SETTINGS_MODAL_WIDTH),
+                px(crate::app::window::GBOT_SETTINGS_MODAL_INITIAL_HEIGHT),
+            ),
+            Self::GbotTeam => size(
+                px(crate::app::window::GBOT_TEAM_MODAL_WIDTH),
+                px(crate::app::window::GBOT_TEAM_MODAL_INITIAL_HEIGHT),
+            ),
             Self::Feedback => size(
                 px(crate::app::window::FEEDBACK_MODAL_WIDTH),
                 px(crate::app::window::FEEDBACK_MODAL_INITIAL_HEIGHT),
@@ -419,6 +462,10 @@ impl GpuiAppModalKind {
             Self::CloseSessionsConfirm => size(
                 px(crate::app::window::CLOSE_SESSIONS_CONFIRM_MODAL_WIDTH),
                 px(crate::app::window::CLOSE_SESSIONS_CONFIRM_MODAL_INITIAL_HEIGHT),
+            ),
+            Self::ChiefNewChat => size(
+                px(crate::app::window::CHIEF_NEW_CHAT_MODAL_WIDTH),
+                px(crate::app::window::CHIEF_NEW_CHAT_MODAL_INITIAL_HEIGHT),
             ),
             Self::RemoteGxserverInstall => size(
                 px(APP_MODAL_HOST_REMOTE_GXSERVER_INSTALL_WINDOW_WIDTH),
@@ -533,8 +580,10 @@ impl GpuiAppModalKind {
             | Self::SessionNote
             | Self::RemoteSetup
             | Self::Feedback
+            | Self::NewGbot
             | Self::TerminalPasteConfirm
             | Self::CloseSessionsConfirm
+            | Self::ChiefNewChat
             | Self::Onboarding => serde_json::json!({
                 "modal": self.modal_id(),
                 "type": "open",
@@ -552,6 +601,8 @@ impl GpuiAppModalKind {
             | Self::MakeCoordinator
             | Self::CoordinatorDetails
             | Self::Ghost
+            | Self::GbotSettings
+            | Self::GbotTeam
             | Self::CreateLinearTicket
             | Self::WorkLinkPicker
             | Self::AddSessionLink => serde_json::Value::Null,
@@ -582,6 +633,7 @@ impl GpuiAppModalKind {
             // also the template the bridge's field allowlist fills in.
             Self::Worktree
             | Self::AgentHooksRequired
+            | Self::SecurityUpgrade
             | Self::DeleteWorktree
             | Self::RenameWorktree
             | Self::SidebarSpaceEditor

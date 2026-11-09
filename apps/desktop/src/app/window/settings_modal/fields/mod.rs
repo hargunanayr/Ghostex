@@ -14,11 +14,14 @@ pub(crate) mod diagnostic_logging;
 pub(crate) mod dialog;
 pub(crate) mod dialog_sheet;
 pub(crate) mod font_picker;
+pub(crate) mod grok_logins;
+pub(crate) mod home_secret_folders;
 pub(crate) mod hotkey_recorder;
 pub(crate) mod hover_actions;
 pub(crate) mod icon_picker;
 pub(crate) mod ignored_ports;
 pub(crate) mod media;
+pub(crate) mod notice;
 pub(crate) mod qr;
 pub(crate) mod reorder;
 pub(crate) mod row;
@@ -43,6 +46,8 @@ pub(crate) use diagnostic_logging::*;
 pub(crate) use dialog::*;
 pub(crate) use dialog_sheet::*;
 pub(crate) use font_picker::*;
+pub(crate) use grok_logins::*;
+pub(crate) use home_secret_folders::*;
 pub(crate) use hotkey_recorder::*;
 pub(crate) use hover_actions::*;
 pub(crate) use icon_picker::*;
@@ -98,6 +103,7 @@ pub(crate) struct FieldStates {
     pub(crate) reorders: HashMap<SharedString, ReorderState>,
     pub(crate) colors: HashMap<SharedString, ColorFieldState>,
     pub(crate) ignored_ports: Option<IgnoredPortsState>,
+    pub(crate) home_secret_folders: Option<HomeSecretFoldersState>,
     pub(crate) tag_list: Option<TagListState>,
     pub(crate) hover_actions: HoverActionsState,
     pub(crate) diagnostic_logging: DiagnosticLoggingState,

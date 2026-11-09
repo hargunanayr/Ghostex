@@ -1,6 +1,7 @@
 //! A finished turn: its "Worked for 2m 5s" summary with the turn's counts beside it, the work log
-//! behind it, the "N files changed" fold, the artifacts and answered questions it keeps in view,
-//! and the final reply. What the summary says is decided in gx-chat-core `work_summary.rs`.
+//! behind it, the artifacts and answered questions it keeps in view, the final reply, and the
+//! "N files changed" card that closes the turn (file_change_list.rs). What the summary says is
+//! decided in gx-chat-core `work_summary.rs`.
 //!
 //! At rest the row is one column with a 10px gap. While the
 //! turn is folding, or its log is opening or closing, `disclosure_motion.rs` reports a frame and
@@ -23,6 +24,8 @@ use gpui::{
 use serde_json::json;
 use std::{cell::Cell, rc::Rc};
 
+/// Space between the rows of an opened turn's log.
+const LOG_GAP: f32 = 8.0;
 /// Space between the parts of a finished turn.
 const PART_GAP: f32 = 10.0;
 /// Space between two transcript list items, the gap every row wrapper ends with, which the live
@@ -63,6 +66,7 @@ impl NativeChatView {
             work,
             questions,
             sent_messages,
+            gbot_cards,
             workflows,
             artifacts,
             final_message,
@@ -101,6 +105,8 @@ impl NativeChatView {
             }
             (!rows.is_empty()).then_some(rows)
         } else if expanded || motion.is_some() {
+            // The changed files are not in the log: the card at the turn's end lists them.
+            let mut parts: Vec<AnyElement> = Vec::new();
             // React hung the whole log off the rail the "Worked for" heading opened
             // (`SessionChatExpansion`), so the turn's work reads as one indented block.
             self.hide_file_changes = true;
@@ -109,21 +115,35 @@ impl NativeChatView {
                 log.push(notice);
             }
             self.in_work_fold = true;
+            // A row that opens on its tool card right under one that closes on its own is a row gap
+            // away from it, like any two one-line cards (`SINGLE_LINE_CARD.gap_above`); the log
+            // already puts its own 8px between rows.
+            let mut card_above = false;
             for message in work {
-                log.push(self.message_row(message, p, window, cx));
+                let row = self.message_row(message, p, window, cx);
+                let card_first = message["toolCard"].is_object()
+                    && super::transcript::text(message, "text").trim().is_empty();
+                let extra = SINGLE_LINE_CARD.gap_above(card_above, card_first, LOG_GAP) - LOG_GAP;
+                log.push(if extra > 0.0 {
+                    div().mt(px(extra * s)).child(row).into_any_element()
+                } else {
+                    row
+                });
+                card_above = message["toolCard"].is_object();
             }
             self.in_work_fold = false;
-            (!log.is_empty()).then(|| {
-                vec![disclosure_body(
+            if !log.is_empty() {
+                parts.push(disclosure_body(
                     p,
                     DisclosureRail::Work,
-                    8.0,
+                    LOG_GAP,
                     id.clone(),
                     "Collapse completed work",
                     log,
                     cx,
-                )]
-            })
+                ));
+            }
+            (!parts.is_empty()).then_some(parts)
         } else {
             None
         };
@@ -140,6 +160,9 @@ impl NativeChatView {
             tail.push((cards, true));
         }
         if let Some(cards) = self.sent_agent_message_cards(sent_messages, p, cx) {
+            tail.push((cards, true));
+        }
+        if let Some(cards) = self.gbot_cards(gbot_cards, p, cx) {
             tail.push((cards, true));
         }
         if let Some(cards) = self.workflow_cards(workflows, p, cx) {
@@ -306,7 +329,7 @@ impl NativeChatView {
     }
 
     /// The row while it folds, opens or closes. Each part carries the gap above it, so a part
-    /// eased to nothing leaves no gap behind.
+    /// eased to nothing leaves no gap behind. The changed files card closes the row, after the tail.
     #[allow(clippy::too_many_arguments)]
     fn moving_completed_work_row(
         &mut self,
@@ -370,6 +393,9 @@ impl NativeChatView {
                     self.disclosure_motion.borrow_mut().height(id, "log"),
                     frame.log,
                     div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(PART_GAP * s))
                         .pt(px(PART_GAP * s))
                         .opacity(frame.rows_opacity)
                         .children(log)

@@ -10,7 +10,8 @@ pub(crate) const GPUI_APP_TOAST_GAP: f32 = 10.0;
 pub(crate) const GPUI_APP_TOAST_BOTTOM_MARGIN: f32 = 47.0;
 pub(crate) const GPUI_APP_TOAST_MAX_VISIBLE: usize = 4;
 pub(crate) const GPUI_APP_TOAST_DEFAULT_DURATION_MS: u64 = 8_000;
-pub(crate) const GPUI_APP_TOAST_CLOSE_SIZE: f32 = 18.0;
+pub(crate) const GPUI_APP_TOAST_CLOSE_SIZE: f32 =
+    super::round_close_button::ROUND_CLOSE_BUTTON_SIZE;
 pub(crate) const GPUI_APP_TOAST_CLOSE_OUTSET: f32 = GPUI_APP_TOAST_CLOSE_SIZE / 2.0;
 pub(crate) const GPUI_APP_TOAST_CLOSE_WINDOW_INSET: f32 = 5.0;
 pub(crate) const GPUI_APP_TOAST_CLOSE_TOP_INSET: f32 = 5.0;
@@ -147,6 +148,9 @@ pub(crate) struct GpuiAppToast {
     pub(crate) level: GpuiAppToastLevel,
     pub(crate) title: String,
     pub(crate) description: Option<String>,
+    /// The raw error behind Copy details. A toast with it, or with an `action`, is never drawn as
+    /// a toast: it waits in the notice modal (app/notice_modal_host.rs, CDXC:AppModal 2026-11-08
+    /// in window/notice_modal.rs).
     pub(crate) copy_text: Option<String>,
     /// A button that takes the user to where the toast's problem is fixed.
     pub(crate) action: Option<GpuiAppToastAction>,
@@ -156,8 +160,8 @@ pub(crate) struct GpuiAppToast {
     pub(crate) epoch: u64,
 }
 
-/// What a toast's action button opens. The host runs it (`run_gpui_app_toast_action`) and the
-/// toast closes.
+/// What a notice's button opens. The host runs it (`run_gpui_app_toast_action`) and the notice
+/// closes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum GpuiAppToastAction {
     /// Settings > Accounts, on this agent's accounts (`claude`, `codex`) when one is named.
@@ -184,6 +188,22 @@ pub(crate) enum GpuiAppToastAction {
     /// Undo on a settings sync note: this computer's value of a synced setting comes back on every
     /// computer (`id` is the note's, server/src/settings_sync/).
     UndoSyncedChange { id: String },
+    /// Undo on "Chief turned off": turns the Chief extension back on (native_sidebar/chief.rs).
+    UndoChiefDisable,
+    /// Set to 100% on the one-time Linux note that Ghostex now follows the desktop's display
+    /// scale: Interface scale back to 100% (app/display_scale_offer.rs).
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    ResetInterfaceScale,
+    /// An approval notice's Approve (`deny: false`) or Deny: GitHub #495,
+    /// app/owner_security/ui.rs.
+    SecurityApproval {
+        request: Box<ghostex_gx_protocol::approval::ApprovalRequest>,
+        deny: bool,
+        /// The remote computer that asked; `None` for this computer.
+        machine_id: Option<String>,
+        /// That computer's name as the notice shows it; `None` for this computer.
+        computer: Option<String>,
+    },
 }
 
 impl GpuiAppToastAction {
@@ -192,7 +212,10 @@ impl GpuiAppToastAction {
             Self::OpenAccounts { .. } => "Open Accounts",
             Self::OpenViewSettings => "Open Settings",
             Self::OpenUpdateDownloadPage => "Open download page",
-            Self::UndoSyncedChange { .. } => "Undo",
+            Self::UndoSyncedChange { .. } | Self::UndoChiefDisable => "Undo",
+            Self::ResetInterfaceScale => "Set to 100%",
+            Self::SecurityApproval { deny: false, .. } => "Approve",
+            Self::SecurityApproval { deny: true, .. } => "Deny",
             Self::NativeProjectPathAction { label, .. } | Self::RunInNewTerminal { label, .. } => {
                 label
             }
@@ -386,14 +409,7 @@ pub(crate) fn gpui_app_toast_estimated_height(toast: &GpuiAppToast) -> f32 {
                 } * GPUI_APP_TOAST_DESCRIPTION_LINE_HEIGHT
         })
         .unwrap_or(0.0);
-    GPUI_APP_TOAST_VERTICAL_PADDING * 2.0
-        + title_height
-        + description_height
-        + if toast.copy_text.is_some() || toast.action.is_some() {
-            34.0
-        } else {
-            0.0
-        }
+    GPUI_APP_TOAST_VERTICAL_PADDING * 2.0 + title_height + description_height
 }
 
 pub(crate) fn gpui_app_toast_stack_height(toasts: &[GpuiAppToast]) -> f32 {
@@ -551,9 +567,8 @@ impl GpuiAppToastWindow {
                     });
                 }),
             )
-            .child(titlebar_svg_icon(
-                COMMAND_ICON_XMARK,
-                8.0,
+            .child(super::round_close_button::round_close_x_icon(
+                1.0,
                 gpui_app_toast_close_button_icon_color(light),
             ))
             .when_some(region, |button, region| {
@@ -575,85 +590,13 @@ impl GpuiAppToastWindow {
     }
 }
 
-impl GpuiAppToastWindow {
-    /// The toast's action button (Open Accounts): runs the action in the app and closes the toast.
-    fn render_action_button(
-        &self,
-        toast_id: String,
-        action: GpuiAppToastAction,
-        ink: Hsla,
-    ) -> AnyElement {
-        let app = self.app.clone();
-        let label = action.label().to_string();
-        div()
-            .id(format!("toast-action-{toast_id}"))
-            .mt(px(6.0))
-            .h(px(26.0))
-            .px(px(8.0))
-            .flex()
-            .items_center()
-            .rounded(px(4.0))
-            .border_1()
-            .border_color(ink.opacity(0.25))
-            .text_size(px(12.0))
-            .text_color(ink)
-            .cursor_pointer()
-            .hover(move |button| button.bg(ink.opacity(0.094)))
-            .on_click(move |_, _, cx| {
-                cx.stop_propagation();
-                let app = app.clone();
-                let toast_id = toast_id.clone();
-                let action = action.clone();
-                cx.defer(move |cx| {
-                    let _ = app.update(cx, |app, cx| {
-                        app.remove_gpui_app_toast(&toast_id, cx);
-                        app.run_gpui_app_toast_action(&action, cx);
-                    });
-                });
-            })
-            .child(label)
-            .into_any_element()
-    }
-}
-
 /// The frames a toast window's frosted region is built from, collected while it draws.
 type ToastFrames = std::rc::Rc<std::cell::RefCell<Vec<(Bounds<Pixels>, Pixels)>>>;
 
-/// The toast's round × is a see-through light gray in both appearances, with a dark gray ×.
-///
-/// CDXC:Theming 2026-11-04 DECISION:
-/// User, of the toast's close button: solid black stood out against the frosted toasts; it should be light gray so it fits the see-through UI. The fill keeps some of what is behind it in dark and light alike, its hover is a step stronger, and the × is dark gray so it still reads on the light fill.
-pub(crate) fn gpui_app_toast_close_button_color(light: bool) -> Hsla {
-    if light {
-        rgb(0xe2e2e2).opacity(0.80).into()
-    } else {
-        rgb(0xc9c9c9).opacity(0.72).into()
-    }
-}
-
-pub(crate) fn gpui_app_toast_close_button_hover_color(light: bool) -> Hsla {
-    if light {
-        rgb(0xd2d2d2).opacity(0.92).into()
-    } else {
-        rgb(0xdedede).opacity(0.88).into()
-    }
-}
-
-pub(crate) fn gpui_app_toast_close_button_border_color(light: bool) -> Hsla {
-    if light {
-        rgb(0x000000).opacity(0.10).into()
-    } else {
-        rgb(0xffffff).opacity(0.28).into()
-    }
-}
-
-pub(crate) fn gpui_app_toast_close_button_icon_color(light: bool) -> Hsla {
-    if light {
-        rgb(0x4a4a4a).into()
-    } else {
-        rgb(0x2b2b2b).into()
-    }
-}
+pub(crate) use super::round_close_button::{
+    gpui_app_toast_close_button_border_color, gpui_app_toast_close_button_color,
+    gpui_app_toast_close_button_hover_color, gpui_app_toast_close_button_icon_color,
+};
 
 /// Whether toasts sit on their own blurred window.
 ///
@@ -806,46 +749,6 @@ impl Render for GpuiAppToastWindow {
                                                         )
                                                         .child(description),
                                                 )
-                                            })
-                                            .when_some(toast.copy_text.clone(), |column, report| {
-                                                column.child(
-                                                    div()
-                                                        .id(format!(
-                                                            "toast-copy-diagnostics-{}",
-                                                            toast.id
-                                                        ))
-                                                        .mt(px(6.0))
-                                                        .h(px(26.0))
-                                                        .px(px(8.0))
-                                                        .flex()
-                                                        .items_center()
-                                                        .rounded(px(4.0))
-                                                        .border_1()
-                                                        .border_color(colors.title.opacity(0.25))
-                                                        .text_size(px(12.0))
-                                                        .text_color(colors.title)
-                                                        .cursor_pointer()
-                                                        .hover(move |button| {
-                                                            button.bg(colors.title.opacity(0.094))
-                                                        })
-                                                        .on_click(move |_, _, cx| {
-                                                            cx.stop_propagation();
-                                                            gpui_copy_to_clipboard(
-                                                                ClipboardItem::new_string(
-                                                                    report.clone(),
-                                                                ),
-                                                                cx,
-                                                            );
-                                                        })
-                                                        .child("Copy details"),
-                                                )
-                                            })
-                                            .when_some(toast.action.clone(), |column, action| {
-                                                column.child(self.render_action_button(
-                                                    toast.id.clone(),
-                                                    action,
-                                                    colors.title,
-                                                ))
                                             }),
                                     ),
                             ),

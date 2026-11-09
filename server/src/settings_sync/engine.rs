@@ -1,13 +1,15 @@
 //! One sync step on this computer: take its own edits into the entries, merge another computer's
 //! entries, and write back what the entries now say.
 
+use std::collections::BTreeMap;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use ghostex_gx_core::settings_sync::{
-    apply_spaces_entries, category_enabled, derive_spaces_edits, describe_setting_key,
-    describe_spaces_key, entries_digest, hlc_wall_ms, key_category, local_edit, member_key,
-    merge_entries, merge_spaces_by_name, next_hlc, removed_key, spaces_named_apart, LocalSpaces,
-    SyncEntry, GROUP_CATEGORY, SYNC_CATEGORIES,
+    apply_spaces_entries, category_enabled, derive_spaces_edits, describe_list_key,
+    describe_setting_key, describe_spaces_key, entries_digest, is_seed_hlc, key_category,
+    local_edit, member_key, merge_entries, merge_spaces_by_name, next_hlc, removed_key,
+    repair_folded_spaces, spaces_moves, spaces_named_apart, LocalSpaces, SyncEntry, GROUP_CATEGORY,
+    SYNC_CATEGORIES,
 };
 use rusqlite::Connection;
 use serde_json::{json, Value};
@@ -17,6 +19,9 @@ use crate::server::AppState;
 
 use super::spaces_bridge::{read_local_spaces, write_local_spaces, LocalSpacesRead};
 use super::store::{SpacesBaseline, SyncNote, SyncStore};
+
+/// The category a phone neither gets nor keeps.
+pub(super) const PHONE_LEFT_OUT: &str = "skills";
 
 pub(super) struct Engine<'a> {
     pub(super) state: &'a AppState,
@@ -45,10 +50,12 @@ pub(super) fn with_engine<T>(
             code: "internalError",
             message: format!("SQLite gxserver state error: {error}"),
         })?;
+    let loaded = SyncStore::load(&db)?;
+    let loaded_text = serde_json::to_string(&loaded).ok();
     let mut engine = Engine {
         state,
         db: &db,
-        store: SyncStore::load(&db)?,
+        store: loaded,
         settings: crate::session_lifecycle::read_sidebar_settings(&state.paths),
         server_id: state.metadata.server_id.clone(),
         name: crate::connected_computers::this_computer_name(),
@@ -56,7 +63,10 @@ pub(super) fn with_engine<T>(
         settings_patch: serde_json::Map::new(),
     };
     let result = step(&mut engine)?;
-    engine.store.save(&db)?;
+    // Skills make the stored row a few megabytes; a step that changed nothing doesn't rewrite it.
+    if serde_json::to_string(&engine.store).ok() != loaded_text {
+        engine.store.save(&db)?;
+    }
     send_settings_patch(state, std::mem::take(&mut engine.settings_patch));
     Ok(result)
 }
@@ -165,7 +175,15 @@ impl Engine<'_> {
         if !self.enabled("spaces/") {
             return Ok(());
         }
+        if !self.store.spaces_keyed_by_folder {
+            self.repair_folded_spaces()?;
+        }
         let read = read_local_spaces(self.db, &self.server_id, &self.store.entries)?;
+        // CDXC:SettingsSync 2026-11-08 WHY:
+        // Until every project's git origin and repository root are probed (a moment after gxserver starts) its key falls back to its folder name (`dir:trading`), and once they are its real key looked new next to that baseline: every start wrote each project's place again with a fresh stamp, so a computer with nothing filed undid the other computers' Spaces each time it started (found proving #488's follow-up on two throwaway gxservers). Spaces wait for the probe.
+        if !read.remotes_probed {
+            return Ok(());
+        }
         let baseline = self.store.spaces_baseline.clone();
         let edits = derive_spaces_edits(
             local(&read),
@@ -176,11 +194,130 @@ impl Engine<'_> {
             }),
             &self.store.entries,
         );
+        // This computer's first Spaces sync: what it has goes in as seeds (CDXC:SettingsSync
+        // 2026-11-08 in gx-core hlc.rs), filling only what no computer synced yet.
+        let first = baseline.is_none();
+        let seed = ghostex_gx_core::settings_sync::seed_hlc_since(&self.server_id, now_ms());
         for (key, value) in edits {
-            self.edit(&key, value);
+            match value {
+                Some(value) if first => {
+                    if !self.store.entries.contains_key(&key) {
+                        self.store.entries.insert(
+                            key.clone(),
+                            SyncEntry {
+                                key,
+                                value: Some(value),
+                                hlc: seed.clone(),
+                                parent: None,
+                                origin: self.server_id.clone(),
+                                origin_name: self.name.clone(),
+                            },
+                        );
+                    }
+                }
+                value => {
+                    self.edit(&key, value);
+                }
+            }
         }
         self.store.spaces_baseline = Some(baseline_of(read));
         Ok(())
+    }
+
+    /// Once, when Spaces sync starts keying projects by repository and folder here: puts the
+    /// projects of a repository that 11.0.0's sync folded into one Space back where the backup
+    /// taken before sync first wrote this computer's Spaces had them (#488). It waits until every
+    /// project's repository root is known, since until then the keys carry no folders.
+    fn repair_folded_spaces(&mut self) -> Result<(), DomainStateError> {
+        let read = read_local_spaces(self.db, &self.server_id, &self.store.entries)?;
+        if !read.remotes_probed {
+            return Ok(());
+        }
+        self.store.spaces_keyed_by_folder = true;
+        if !self.store.spaces_backed_up {
+            return Ok(());
+        }
+        let Some((path, backup)) = first_spaces_backup(self.state) else {
+            return Ok(());
+        };
+        let (Some(spaces), Some(collections)) = (
+            backup.get("sidebarSpaces"),
+            backup.get("sidebarProjectCollections"),
+        ) else {
+            return Ok(());
+        };
+        let Some(repaired) = repair_folded_spaces(local(&read), spaces, collections) else {
+            return Ok(());
+        };
+        eprintln!(
+            "[gxserver] settings sync: put back the Spaces of projects that share a repository from {} (#488)",
+            path.display()
+        );
+        write_local_spaces(self.state, self.db, &repaired.spaces, &repaired.collections)?;
+        let moved = self.describe_moves(&read, &repaired.spaces, &repaired.collections)?;
+        if let Some(moved) = moved {
+            let file = path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default();
+            self.store.add_move(
+                format!("Put back where they were before Ghostex 11.0.0's sync moved them (from backups/{file}): {moved}"),
+                now_ms(),
+            );
+        }
+        Ok(())
+    }
+
+    /// Which projects the new documents move, as one sentence (`product-x, ai and 3 more to
+    /// Product; trading out of its Space`), or `None` when none moves.
+    fn describe_moves(
+        &self,
+        read: &LocalSpacesRead,
+        spaces: &Value,
+        collections: &Value,
+    ) -> Result<Option<String>, DomainStateError> {
+        let moves = spaces_moves(&read.spaces, &read.collections, spaces, collections);
+        if moves.is_empty() {
+            return Ok(None);
+        }
+        let names: BTreeMap<String, String> =
+            crate::domain::DomainRepository::new(self.db, &self.server_id)
+                .list_projects()?
+                .iter()
+                .filter_map(|project| {
+                    Some((
+                        project.get("projectId")?.as_str()?.to_string(),
+                        project.get("name")?.as_str()?.to_string(),
+                    ))
+                })
+                .collect();
+        let mut by_place: Vec<(Option<String>, Vec<String>)> = Vec::new();
+        for moved in moves {
+            let name = names.get(&moved.project).cloned().unwrap_or(moved.project);
+            match by_place.iter_mut().find(|(to, _)| *to == moved.to) {
+                Some((_, names)) => names.push(name),
+                None => by_place.push((moved.to, vec![name])),
+            }
+        }
+        let parts: Vec<String> = by_place
+            .into_iter()
+            .map(|(to, names)| {
+                let listed = match names.len() {
+                    1 => names[0].clone(),
+                    2..=4 => format!(
+                        "{} and {}",
+                        names[..names.len() - 1].join(", "),
+                        names[names.len() - 1]
+                    ),
+                    count => format!("{} and {} more", names[..3].join(", "), count - 3),
+                };
+                match to {
+                    Some(to) => format!("{listed} to {to}"),
+                    None => format!("{listed} out of every Space"),
+                }
+            })
+            .collect();
+        Ok(Some(parts.join("; ")))
     }
 
     /// Merges another computer's entries, returning the new notes. On the first sync with that
@@ -215,10 +352,11 @@ impl Engine<'_> {
             .into_iter()
             // A value a computer only seeded (CDXC:SettingsSync in categories.rs) was never an edit
             // there, so losing it is no news.
-            .filter(|conflict| hlc_wall_ms(&conflict.lost.hlc) > 0)
+            .filter(|conflict| !is_seed_hlc(&conflict.lost.hlc))
             .filter_map(|conflict| {
                 let text = describe_spaces_key(&conflict, &self.store.entries)
-                    .or_else(|| describe_setting_key(&conflict))?;
+                    .or_else(|| describe_setting_key(&conflict))
+                    .or_else(|| describe_list_key(&conflict))?;
                 Some(SyncNote {
                     conflict,
                     text,
@@ -240,6 +378,9 @@ impl Engine<'_> {
             return Ok(());
         }
         let read = read_local_spaces(self.db, &self.server_id, &self.store.entries)?;
+        if !read.remotes_probed {
+            return Ok(());
+        }
         let applied = apply_spaces_entries(&self.store.entries, local(&read));
         if applied.spaces != read.spaces || applied.collections != read.collections {
             if !self.store.spaces_backed_up {
@@ -247,6 +388,23 @@ impl Engine<'_> {
                 self.store.spaces_backed_up = true;
             }
             write_local_spaces(self.state, self.db, &applied.spaces, &applied.collections)?;
+            // CDXC:SettingsSync 2026-11-08 WHY:
+            // #488: a sync that moved 14 projects at once left no trace but the backup file. One sync step moving several projects now leaves a line in Settings > Sync saying which went where, and when.
+            let moved = spaces_moves(
+                &read.spaces,
+                &read.collections,
+                &applied.spaces,
+                &applied.collections,
+            )
+            .len();
+            if moved >= SEVERAL_MOVES {
+                if let Some(text) =
+                    self.describe_moves(&read, &applied.spaces, &applied.collections)?
+                {
+                    self.store
+                        .add_move(format!("Sync moved {moved} projects: {text}"), now_ms());
+                }
+            }
             let written = read_local_spaces(self.db, &self.server_id, &self.store.entries)?;
             self.store.spaces_baseline = Some(baseline_of(written));
         }
@@ -275,6 +433,26 @@ impl Engine<'_> {
             .collect()
     }
 
+    /// What a phone gets: everything but Skills, whose files are too big to keep on a phone, so a
+    /// phone never carries skills between computers.
+    pub(super) fn outgoing_to_phone(&self) -> Vec<SyncEntry> {
+        self.outgoing()
+            .into_iter()
+            .filter(|entry| key_category(&entry.key) != PHONE_LEFT_OUT)
+            .collect()
+    }
+
+    /// The fingerprint of the entries of the categories both this computer and one that syncs
+    /// `theirs` sync, so two computers that hold the same can tell without sending them.
+    pub(super) fn digest_with(&self, theirs: &[String]) -> String {
+        entries_digest(self.store.entries.values().filter(|entry| {
+            self.enabled(&entry.key)
+                && theirs
+                    .iter()
+                    .any(|prefix| *prefix == key_category(&entry.key))
+        }))
+    }
+
     pub(super) fn digest(&self) -> String {
         entries_digest(
             self.store
@@ -299,6 +477,29 @@ fn baseline_of(read: LocalSpacesRead) -> SpacesBaseline {
         collections: read.collections,
         repos: read.repos,
     }
+}
+
+/// How many projects one sync step moves before Settings > Sync lists it.
+const SEVERAL_MOVES: usize = 3;
+
+/// The oldest Spaces backup sync saved here (the one taken before it first wrote them), with
+/// its path.
+fn first_spaces_backup(state: &AppState) -> Option<(std::path::PathBuf, Value)> {
+    let folder = state.paths.root_dir.join("backups");
+    let path = std::fs::read_dir(&folder)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    name.starts_with("settings-sync-spaces-") && name.ends_with(".json")
+                })
+        })
+        .min()?;
+    let backup = serde_json::from_slice(&std::fs::read(&path).ok()?).ok()?;
+    Some((path, backup))
 }
 
 /// This computer's Spaces and groups as they were before sync first touched them, in

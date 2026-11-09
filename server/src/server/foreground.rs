@@ -100,6 +100,10 @@ pub async fn run_gxserver_foreground(
         }
     }
 
+    // Before the storage opens and anything changes the pairing data (security_upgrade.rs).
+    if let Err(error) = crate::security_upgrade::snapshot_before_pairing_changes(&paths) {
+        eprintln!("gxserver: the security upgrade notice could not be prepared: {error:#}");
+    }
     let storage = initialize_gxserver_storage(&paths)?;
     crate::storage::hold_gxserver_database_open(&paths)?;
     let config = read_gxserver_config(&paths)?;
@@ -183,10 +187,13 @@ pub async fn run_gxserver_foreground(
         presentation_event_sequence.clone(),
     );
 
+    let security = load_security_state(&paths, metadata.server_id.as_str(), &logger);
+    crate::security::install(&security);
     let state = Arc::new(AppState {
         accounts: Arc::new(crate::accounts::runtime::AccountRuntime::default()),
         auth_token: auth.token,
         device_api_tokens: load_device_api_tokens(&paths),
+        security,
         cef_devtools: Default::default(),
         automation_runtime,
         delayed_send_runtime,
@@ -203,16 +210,21 @@ pub async fn run_gxserver_foreground(
         migration,
         paths: paths.clone(),
         presentation_event_sequence,
+        push: Arc::new(crate::push::PushRuntime::start(
+            paths.clone(),
+            logger.clone(),
+        )),
         remote_pairing_runtime: RemotePairingRuntime::new(),
         repository_clone_jobs: RepositoryCloneJobManager::default(),
         session_chat_followers: Arc::new(Mutex::new(HashMap::new())),
         session_chat_option_cache: Arc::new(Mutex::new(HashMap::new())),
         shutdown_tx: shutdown_tx.clone(),
         stale_activity_timers: Arc::new(Mutex::new(HashMap::new())),
-        tailcat_runtime: TailcatRuntime::new(),
+        tailcat_runtime: TailcatRuntime::with_logger(logger.clone()),
         version,
         zmx_title_observers: Arc::new(Mutex::new(HashMap::new())),
     });
+    crate::audit::install_notifier(state.clone());
     /*
     CDXC:Build 2026-06-24-20:22:
     The JSON RPC catch-all needs the raw Request so server can preserve the
@@ -346,6 +358,7 @@ pub async fn run_gxserver_foreground(
     crate::work_mode::load_work_source_store_at_startup(&paths, &logger);
     crate::work_mode::replace_project_workspaces_at_startup(&paths, &metadata.server_id);
     startup_gate.step("starting its background runtimes");
+    state.automation_runtime.attach_app_state(&state);
     state.automation_runtime.start(shutdown_tx.subscribe());
     state.delayed_send_runtime.start(
         shutdown_tx.subscribe(),
@@ -359,27 +372,38 @@ pub async fn run_gxserver_foreground(
     explicit reason and waits for the user. Never silently re-sent.
     */
     let _ = crate::session_chat_queue::recover_session_chat_queue_after_restart(&paths);
+    crate::collab_shim::migrate_at_start(&paths);
     crate::accounts::recovery::start(state.clone());
     crate::accounts::reset_watch::start(state.clone());
     crate::accounts::claude_swap_switch::start(state.clone());
     session_auto_sleep_sweep::start_session_auto_sleep_sweep(state.clone());
     empty_session_cleanup_runtime::start_empty_session_auto_close_sweep(state.clone());
+    crate::chief::start_chief_sweep(state.clone());
     storage_cleanup_sweep::start_storage_cleanup_sweep(state.clone());
     sidebar_spaces_switch::start_sidebar_spaces_switch_watch(state.clone());
     crate::settings_sync::start_settings_sync(state.clone());
+    crate::connected_computers::start_held_send_delivery(state.clone());
     workspaces_switch::start_workspaces_switch_watch(state.clone());
     crate::connectors::start_connectors(state.clone());
+    super::security_http::start_security_events(state.clone());
     bot_sync::start_bot_project_sync(state.clone());
     close_after_done_runtime::start_close_after_done_runtime(state.clone());
     coordinator_runtime::start_coordinator_runtime(state.clone());
     ghost_habit_runtime::start_ghost_habit_runtime(state.clone());
     session_stall_runtime::start_session_stall_runtime(state.clone());
+    network_status_runtime::start_network_status_runtime(state.clone());
+    autopilot_runtime::start_autopilot_runtime(state.clone());
+    crate::collab_shim::http::approvals::start(state.clone());
+    crate::collab_shim::sidecar::start_supervisor(state.clone());
     coordinator_remote_runtime::start_coordinator_remote_runtime(state.clone());
     tokio::spawn(peer_http::start_peer_listener(state.clone()));
     agent_message_delivery_runtime::start_agent_message_delivery_runtime(state.clone());
     crate::agentbox::start_agentbox_activity_poller(state.clone());
     crate::cloud_boxes::start_cloud_boxes_scheduler(state.clone());
     crate::claude_cloud::start_claude_cloud_poller(state.clone());
+    crate::gbots::retire_previous_gbots(state.clone());
+    crate::gbots::start_gbots_sweep(state.clone());
+    crate::gbots::start_gbots_problem_watch(state.clone());
     /*
     CDXC:SessionChat 2026-08-21:
     The queue scheduler is built HERE rather than beside the other runtimes
@@ -400,6 +424,7 @@ pub async fn run_gxserver_foreground(
         session_chat_queue_compacting_refresher(&state),
         session_chat_queue_waker(&state),
         crate::session_chat_queue_runtime::session_chat_queue_stuck_notifier(&state),
+        crate::session_chat_queue_runtime::session_chat_queue_input_box_reloader(&state),
     )
     .start(shutdown_tx.subscribe());
     crate::session_chat_send_failure::spawn_send_failure_task(
@@ -436,6 +461,8 @@ pub async fn run_gxserver_foreground(
     */
     startup_gate.step("starting remote access");
     start_tailcat_from_persisted_state(&paths, &state.tailcat_runtime);
+    // What gxserver was doing if it ever stops answering (server/stall_watch.rs).
+    super::stall_watch::start(paths.logs_dir.clone());
     startup_gate.step("watching sessions");
     crate::program_status::init_program_status_logger(state.logger.clone(), &metadata.server_id);
     sync_zmx_title_observers_for_all_sessions(&state, "server-start");
@@ -513,6 +540,7 @@ pub async fn run_gxserver_foreground(
     if let Some(task) = loopback_v6_task {
         task.abort();
     }
+
     let metadata_cleanup_result = metadata_cleanup_rx.await;
     if let Some(task) = superseded_retire_task {
         task.abort();
@@ -656,11 +684,44 @@ pub(super) fn classify_existing_gxserver(
 }
 
 /// The paired phones' token hashes at startup; an unreadable database starts with none, so only the
-/// main token works until the next pair or remove reloads them.
+/// main token works until the next pair or remove reloads them. Phones paired before 11.0.1 lose
+/// their unrestricted SSH key lines here (CDXC:RemotePairing 2026-11-08 in paired_devices.rs).
 fn load_device_api_tokens(paths: &GxserverPaths) -> crate::auth::DeviceApiTokens {
     let tokens = crate::auth::DeviceApiTokens::default();
     if let Ok(db) = crate::storage::open_gxserver_database(paths) {
+        let _ = crate::remote_access::retire_legacy_pairings(&db);
         let _ = crate::remote_access::reload_device_api_tokens(&db, &tokens);
     }
     tokens
+}
+
+/// The keys and session tokens saved in `auth/security.json`. A file that can't be read is
+/// moved aside and gxserver starts with none (the desktop enrolls its key again), rather than
+/// refusing to start.
+fn load_security_state(
+    paths: &GxserverPaths,
+    server_id: &str,
+    logger: &GxserverLogger,
+) -> crate::security::SecurityState {
+    match crate::security::SecurityState::load(&paths.auth_dir, server_id) {
+        Ok(state) => state,
+        Err(error) => {
+            let file = crate::security::persist::security_file(&paths.auth_dir);
+            let aside =
+                file.with_extension(format!("json.unreadable-{}", crate::security::now_ms()));
+            let _ = std::fs::rename(&file, &aside);
+            let _ = logger.log(GxserverLogInput {
+                level: crate::logging::LogLevel::Error,
+                event: "securityStateUnreadable".to_string(),
+                server_id: None,
+                request_id: None,
+                client: None,
+                duration_ms: None,
+                error: Some(error.to_string()),
+                details: Some(json!({ "movedTo": aside.display().to_string() })),
+            });
+            crate::security::SecurityState::load(&paths.auth_dir, server_id)
+                .unwrap_or_else(|_| crate::security::SecurityState::new(server_id))
+        }
+    }
 }

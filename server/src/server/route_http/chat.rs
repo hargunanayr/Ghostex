@@ -31,6 +31,7 @@ pub(super) async fn route_chat_http(
         request_id,
         body_json,
         token_extension_id,
+        caller,
     } = request;
     Ok(match endpoint.path.as_str() {
         "/api/readSessionChat" => {
@@ -74,10 +75,7 @@ pub(super) async fn route_chat_http(
         "/api/readDictateSettings"
         | "/api/setDictateSettings"
         | "/api/readDictateEngine"
-        | "/api/listSpeechModels"
-        | "/api/downloadSpeechModel"
-        | "/api/cancelSpeechModelDownload"
-        | "/api/deleteSpeechModel"
+        | "/api/deleteOldSpeechModels"
         | "/api/skipDictationPolish" => {
             crate::voice_agent::handle_dictate_http(&state, endpoint.path, request_id, &body_json)
                 .await
@@ -470,6 +468,7 @@ pub(super) async fn route_chat_http(
                 request_id,
                 body_json,
                 token_extension_id,
+                caller,
             })
         }
     })

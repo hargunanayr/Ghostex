@@ -223,6 +223,35 @@ pub const GHOSTTY_THEME_SETTING_OPTIONS: &[Opt] = &[
     opt("Fun Forrest", "Fun Forrest"),
     opt("Galaxy", "Galaxy"),
     opt("Galizur", "Galizur"),
+    opt("Ghostex Alucard", "Ghostex Alucard"),
+    opt("Ghostex Catppuccin Frappé", "Ghostex Catppuccin Frappe"),
+    opt("Ghostex Catppuccin Latte", "Ghostex Catppuccin Latte"),
+    opt(
+        "Ghostex Catppuccin Macchiato",
+        "Ghostex Catppuccin Macchiato",
+    ),
+    opt("Ghostex Catppuccin Mocha", "Ghostex Catppuccin Mocha"),
+    opt("Ghostex Dracula", "Ghostex Dracula"),
+    opt("Ghostex Everforest Dark", "Ghostex Everforest Dark"),
+    opt("Ghostex Everforest Light", "Ghostex Everforest Light"),
+    opt(
+        "Ghostex Gruvbox Material Dark",
+        "Ghostex Gruvbox Material Dark",
+    ),
+    opt(
+        "Ghostex Gruvbox Material Light",
+        "Ghostex Gruvbox Material Light",
+    ),
+    opt("Ghostex Kanagawa Dragon", "Ghostex Kanagawa Dragon"),
+    opt("Ghostex Kanagawa Lotus", "Ghostex Kanagawa Lotus"),
+    opt("Ghostex Kanagawa Wave", "Ghostex Kanagawa Wave"),
+    opt("Ghostex Nord", "Ghostex Nord"),
+    opt("Ghostex Solarized Dark", "Ghostex Solarized Dark"),
+    opt("Ghostex Solarized Light", "Ghostex Solarized Light"),
+    opt("Ghostex Tokyo Night Day", "Ghostex Tokyo Night Day"),
+    opt("Ghostex Tokyo Night Moon", "Ghostex Tokyo Night Moon"),
+    opt("Ghostex Tokyo Night Night", "Ghostex Tokyo Night Night"),
+    opt("Ghostex Tokyo Night Storm", "Ghostex Tokyo Night Storm"),
     opt("Ghostty Default Style Dark", "Ghostty Default Style Dark"),
     opt("GitHub", "GitHub"),
     opt("GitHub Dark", "GitHub Dark"),
@@ -634,6 +663,13 @@ pub const SIDEBAR_SPACE_SWITCH_BEHAVIOR_OPTIONS: &[Opt] = &[
     opt("Don't switch projects", "keep"),
 ];
 
+/// CDXC:Sidebar 2026-11-07 DECISION in gx-core sidebar_view/inputs.rs: Manual (the default, first)
+/// keeps the dragged order; Most recently updated orders pinned sessions by when they came back.
+pub const PINNED_SESSION_ORDER_OPTIONS: &[Opt] = &[
+    opt("Manual (drag to rearrange)", "manual"),
+    opt("Most recently updated", "recent"),
+];
+
 /// CDXC:Sidebar 2026-10-30 DECISION:
 /// User: keep today's sidebar exactly as it is and call it "Project sidebar"; the new one is "Unified sidebar". They switch only in Settings › Sidebar, and the Project sidebar is the default.
 pub const SIDEBAR_VIEW_OPTIONS: &[Opt] = &[
@@ -675,11 +711,13 @@ pub const CHAT_PAGE_OPEN_TARGET_OPTIONS: &[Opt] = &[
     opt("System browser", "system-browser"),
 ];
 
+/// Which agent alerts play the finished sound and show a system notification (`attentionAlertsFor`), in the Settings control's order.
+pub const ATTENTION_ALERTS_FOR_OPTIONS: &[Opt] =
+    &[opt("All", "all"), opt("Needs you only", "needsYou")];
+
 /// What a coordinator chat's Board pill opens (`coordinatorBoardView`), in the Settings control's order.
-pub const COORDINATOR_BOARD_VIEW_OPTIONS: &[Opt] = &[
-    opt("Side list", "list"),
-    opt("Columns", "columns"),
-];
+pub const COORDINATOR_BOARD_VIEW_OPTIONS: &[Opt] =
+    &[opt("Side list", "list"), opt("Columns", "columns")];
 
 /// Where agents open a page they built for the user (`agentPreviewBrowser`), in the Settings control's order.
 pub const AGENT_PREVIEW_BROWSER_OPTIONS: &[Opt] = &[

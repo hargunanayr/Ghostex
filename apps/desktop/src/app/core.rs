@@ -463,6 +463,9 @@ pub struct GhostexGpuiApp {
     pub(crate) local_workspace_session_mappings:
         HashMap<GpuiLocalWorkspaceSessionKey, TerminalSessionId>,
     pub(crate) local_workspace_attach_pending: HashSet<GpuiLocalWorkspaceSessionKey>,
+    /// Pending attaches whose early chat (the `attachSessionMetadata` preview) has started, so a
+    /// Chat intent armed while one runs starts it once (workspace_events.rs).
+    pub(crate) local_workspace_attach_chat_previewed: HashSet<GpuiLocalWorkspaceSessionKey>,
     /// Sessions whose attach gxserver refused because of their account (`accountUnavailable`),
     /// with the account id they were on then. See `local_workspace_attach_refused_still` in
     /// workspace_events.rs.
@@ -586,6 +589,8 @@ pub struct GhostexGpuiApp {
     /// unknown must never read as "empty" to a pass that destroys pages.
     pub(crate) session_chat_composer_empty_reports: HashMap<TerminalSessionId, bool>,
     pub(crate) pending_session_chat_composer_insert: HashMap<TerminalSessionId, String>,
+    /// The Storybook page whose page bridge Annotate's Send is heard on (`app/storybook.rs`).
+    pub(crate) storybook_annotation_bridge: Option<gpui::WeakEntity<CefSurface>>,
     /// Chat-to-terminal drafts waiting for the exact terminal owner to remount.
     /// Each entry names the Saved Prompts row that holds the same text, so
     /// dropping the entry (teardown, a session that never comes back) leaves a
@@ -845,6 +850,8 @@ pub struct GhostexGpuiApp {
     pub(crate) command_pane_side: GpuiCommandPaneSide,
     pub(crate) sidebar_width: f32,
     pub(crate) sidebar_collapsed: bool,
+    /// The main window is in full screen, as of its last render (`window_controls_shown`, `window_controls_reserved`).
+    pub(crate) main_window_fullscreen: bool,
     /// Whether the sidebar's account usage strip is showing. Hidden by default; the Commands row's chart button is what shows and hides it.
     pub(crate) sidebar_usage_visible: bool,
     pub(crate) sidebar_drag: Option<SidebarDragState>,
@@ -886,6 +893,15 @@ pub struct GhostexGpuiApp {
     pub(crate) app_toasts: Vec<GpuiAppToast>,
     pub(crate) app_toast_epoch: u64,
     pub(crate) app_toast_id_counter: u64,
+    /// Toasts with a button wait here, shown in the centred notice modal (notice_modal_host.rs).
+    pub(crate) app_notices: crate::app::notice_modal_host::AppNotices,
+    /// The 11.0.1 security notice was asked for this run (gx_store/security_notice.rs).
+    pub(crate) security_upgrade_notice_checked: bool,
+    /// The open security notice's Show code was clicked: its poll asks for the live pairing code.
+    pub(crate) security_notice_code_shown: bool,
+    /// The open security notice's Easy Connect computer pairings, by Settings > Remote id.
+    pub(crate) security_notice_computer_pairing:
+        Vec<(String, crate::app::window::NoticeComputerPairing)>,
     pub(crate) agents_terminal_runtime_osc_states:
         HashMap<AgentsTerminalRuntimeSessionId, GpuiTerminalRuntimeOscState>,
     pub(crate) command_terminal_runtime_osc_states:

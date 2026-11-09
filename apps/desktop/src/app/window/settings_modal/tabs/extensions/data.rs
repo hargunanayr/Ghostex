@@ -33,6 +33,8 @@ pub(crate) struct OfficialExtension {
     pub(crate) app_wide: bool,
     pub(crate) requires_agent_cli: Option<String>,
     pub(crate) requires_extension: Option<String>,
+    /// A small label beside the title ("Beta").
+    pub(crate) badge: Option<String>,
 }
 
 pub(crate) fn text(value: &Value, key: &str) -> String {
@@ -102,6 +104,7 @@ pub(crate) fn official_extensions() -> &'static [OfficialExtension] {
                         app_wide: item.get("appWide").and_then(Value::as_bool) == Some(true),
                         requires_agent_cli: optional_text(item, "requiresAgentCli"),
                         requires_extension: optional_text(item, "requiresExtension"),
+                        badge: optional_text(item, "badge"),
                     })
                     .collect()
             })
@@ -174,14 +177,16 @@ pub(crate) fn official_icon(id: &str) -> &'static str {
         "automate" => "modals/settings/bolt.svg",
         "sessionBoard" => "modals/settings/layout-kanban.svg",
         "botAutomations" => "modals/settings/rss.svg",
-        "bots" => "modals/settings/robot.svg",
+        "bots" | "gbots" => "modals/settings/robot.svg",
         "claudeWeb" => "agent-icons/claude.svg",
+        "grokWeb" => "agent-icons/grok-build.svg",
         "code" => "modals/space-editor/brand-vscode.svg",
         "storybook" => "modals/settings/code-dots.svg",
         "docs" => "modals/settings/file-text.svg",
         "changes" => "modals/settings/git-commit.svg",
         "extensionsButton" => "modals/settings/puzzle.svg",
         "connectors" => "modals/settings/plug-connected.svg",
+        "chief" => "titlebar/ghostex-flower.svg",
         "osIntegration" => "modals/settings/device-desktop.svg",
         "debugging" => "modals/settings/bug.svg",
         "help" => "modals/settings/help-circle.svg",
@@ -190,6 +195,16 @@ pub(crate) fn official_icon(id: &str) -> &'static str {
         "resources" => "modals/settings/device-desktop.svg",
         "terminal" => "modals/settings/terminal-2.svg",
         "tips" => icon::INFO_CIRCLE,
+        // They drew the globe below until 2026-11-09 (User, Q2037: their own icons).
+        "voiceAgent" => "titlebar/headset.svg",
+        "readAloud" => "titlebar/volume.svg",
+        "sessionDetailsPanel" => "titlebar/panel-right.svg",
+        "sessionNotes" => "modals/settings/note.svg",
+        "keepAwake" => "titlebar/coffee.svg",
+        "allAutomations" => "modals/settings/bolt.svg",
+        "terminalShaders" => "modals/settings/sparkles.svg",
+        "fasterRendering" => "titlebar/rocket.svg",
+        "toolCallLines" => "titlebar/list-details.svg",
         _ => "modals/settings/world.svg",
     }
 }

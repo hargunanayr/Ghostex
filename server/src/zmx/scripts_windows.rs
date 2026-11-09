@@ -135,6 +135,7 @@ pub(crate) fn build_zmx_exists_command(name: &str, program: &str) -> String {
 }
 
 pub(crate) fn build_zmx_run_command(input: ZmxRunCommandInput) -> String {
+    let environment = input.launch_environment();
     start(
         &input.zmx_executable_path,
         &input.session_name,
@@ -144,6 +145,7 @@ pub(crate) fn build_zmx_run_command(input: ZmxRunCommandInput) -> String {
         input.gxserver_auth_token_file,
         input.gxserver_base_url,
         input.gxserver_protocol_version,
+        environment,
     )
 }
 pub(crate) fn build_zmx_shell_provider_command(input: ZmxShellProviderCommandInput) -> String {
@@ -156,6 +158,7 @@ pub(crate) fn build_zmx_shell_provider_command(input: ZmxShellProviderCommandInp
         input.gxserver_auth_token_file,
         input.gxserver_base_url,
         input.gxserver_protocol_version,
+        super::scripts::session_token_environment(input.session_token.as_deref()),
     )
 }
 
@@ -171,8 +174,13 @@ fn start(
     token_file: Option<String>,
     base_url: Option<String>,
     version: Option<u64>,
+    coordinator_environment: Vec<(&'static str, String)>,
 ) -> String {
     let mut environment = HashMap::new();
+    // A coordinator's or thread's markers (coordinators/launch_env.rs).
+    for (key, value) in coordinator_environment {
+        environment.insert(key.to_string(), value);
+    }
     for (key, value) in [
         ("GHOSTEX_GLOBAL_SESSION_REF", global_ref),
         ("GHOSTEX_GXSERVER_AUTH_TOKEN_FILE", token_file),

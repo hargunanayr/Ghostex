@@ -141,8 +141,13 @@ pub(super) fn read_view(session: &Value, flags: &Flags) -> CliResult<Value> {
 fn create(parsed: &ParsedArgs) -> CliResult<()> {
     let base = server_flags(&parsed.flags);
     let caller = agents::caller().ok();
+    // `--path <folder>`: gxserver adds the folder as a project and creates the coordinator there
+    // (gbots/project.rs `add_create_project_path`).
+    let folder = flag_text(&parsed.flags, "path")
+        .filter(|_| flag_text(&parsed.flags, "projectId").is_none());
     let project_id = match flag_text(&parsed.flags, "projectId") {
         Some(project_id) => project_id,
+        None if folder.is_some() => String::new(),
         None => caller
             .as_ref()
             .map(|caller| agents::text(caller, "projectId").to_string())
@@ -195,9 +200,8 @@ fn create(parsed: &ParsedArgs) -> CliResult<()> {
             "ZCode agents take no effort choice; drop --effort.".into(),
         ));
     }
-    let created = call_gxserver_rpc(
-        "/api/createAgentSession",
-        &crate::coordinators::coordinator_create_params(crate::coordinators::CoordinatorLaunch {
+    let mut create =
+        crate::coordinators::coordinator_create_params(crate::coordinators::CoordinatorLaunch {
             agent_rows: &agent_rows,
             project_id: &project_id,
             agent_id: &agent_id,
@@ -206,9 +210,11 @@ fn create(parsed: &ParsedArgs) -> CliResult<()> {
             task: task.clone(),
             model: flag_text(&parsed.flags, "model"),
             effort: flag_text(&parsed.flags, "effort"),
-        }),
-        &flags,
-    )?;
+        });
+    if let Some(folder) = &folder {
+        create["projectPath"] = json!(folder);
+    }
+    let created = call_gxserver_rpc("/api/createAgentSession", &create, &flags)?;
     let session = created
         .get("session")
         .cloned()
@@ -251,11 +257,35 @@ fn create(parsed: &ParsedArgs) -> CliResult<()> {
     Ok(())
 }
 
+/// The flags `promote` resolves its session with: `--server`, and `--computer <name>` so a short
+/// ref (`G7kuo`, a title) names a session on that connected computer.
+///
+/// CDXC:Coordinators 2026-11-07 FIX: `--computer` was dropped here (`server_flags` keeps only
+/// `--server`), so `ghostex coordinator promote <ref> --computer <name>` looked the ref up on this
+/// computer and failed unless it was a full global ref. A Discord reporter could promote a remote
+/// computer's session only by hand-typing that global ref; the user promised the desktop command
+/// too ("I'll add that command too looks like it's not showing in ui"). The other computer's
+/// gxserver promotes it and installs the orchestrator skill there (`promote_coordinator` in
+/// server/src/server/coordinator_runtime.rs, reached through the connected-computer relay).
+fn promote_flags(parsed: &ParsedArgs) -> CliResult<Flags> {
+    let mut flags = server_flags(&parsed.flags);
+    let Some(computer) = flag_text(&parsed.flags, "computer") else {
+        return Ok(flags);
+    };
+    if parsed.rest.is_empty() {
+        return Err(CliError::Other(
+            "--computer needs the session to promote: ghostex coordinator promote <session-ref> --computer <name>.".to_string(),
+        ));
+    }
+    flags.insert_text("computer", &computer);
+    Ok(flags)
+}
+
 /// `promote [<session-ref>]`: makes an existing session of a supported agent (the calling session when
 /// no ref is given) a coordinator without restarting or interrupting it; see
 /// `promote_session_to_coordinator` in server/src/coordinators/promote.rs.
 fn promote(parsed: &ParsedArgs) -> CliResult<()> {
-    let base = server_flags(&parsed.flags);
+    let base = promote_flags(parsed)?;
     let (session, flags) = match parsed.rest.first().map(String::as_str) {
         Some(reference) => resolve_session(reference, &base)?,
         None => {
@@ -495,6 +525,10 @@ pub(super) fn print_status(view: &Value, all: bool) {
     if !notice.is_empty() {
         println!("{notice}");
     }
+    let network = agents::text(view, "networkNotice");
+    if !network.is_empty() {
+        println!("{network}");
+    }
     println!(
         "Coordinator: {} ({})",
         agents::text(coordinator, "title"),
@@ -706,16 +740,61 @@ fn update(command: &str, parsed: &ParsedArgs) -> CliResult<()> {
         return Ok(());
     }
     match command {
+        // A GBot's chat: the note went into its bot's memory (server/src/gbots/memory/ops.rs).
+        "remember" if view["gbotsMemory"].is_object() => {
+            let added = &view["gbotsMemory"];
+            if added["added"].as_bool() == Some(false) {
+                println!("{}", added["message"].as_str().unwrap_or("Already kept."));
+            } else {
+                println!(
+                    "Kept in your memory (MEMORY.md), which every chat of yours reads. Next time use `ghostex gbots memory add`."
+                );
+            }
+        }
         "remember" => {
             let count = view["coordinator"]["memory"]
                 .as_array()
                 .map(Vec::len)
                 .unwrap_or(0);
-            println!("Saved as note {count}. Every new thread receives it.");
+            println!(
+                "Saved as note {count}. Include it in a thread's brief when the thread needs it."
+            );
         }
         "forget" => println!("Note removed."),
         "set-goal" => println!("Goal updated."),
         _ => println!("Standing instructions updated. They reach threads started from now on."),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod promote_flags_tests {
+    use super::promote_flags;
+    use crate::ghostex_cli::args::parse_args;
+
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(|arg| arg.to_string()).collect()
+    }
+
+    #[test]
+    fn computer_reaches_the_session_lookup() {
+        let parsed = parse_args(&args(&["G7kuo", "--computer", "Mac mini"]));
+        let flags = promote_flags(&parsed).unwrap();
+        assert_eq!(flags.text("computer").as_deref(), Some("Mac mini"));
+    }
+
+    #[test]
+    fn without_computer_only_server_is_kept() {
+        let parsed = parse_args(&args(&["G7kuo", "--server", "local", "--goal", "Ship"]));
+        let flags = promote_flags(&parsed).unwrap();
+        assert_eq!(flags.text("server").as_deref(), Some("local"));
+        assert!(!flags.contains("computer"));
+        assert!(!flags.contains("goal"));
+    }
+
+    #[test]
+    fn computer_without_a_session_ref_is_refused() {
+        let parsed = parse_args(&args(&["--computer", "Mac mini"]));
+        assert!(promote_flags(&parsed).is_err());
+    }
 }

@@ -5,8 +5,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
+pub mod agent_homes;
 pub mod durable_file;
 pub mod loopback_owner;
+#[cfg(target_os = "macos")]
+pub mod macos_launch_agent;
 pub mod portable;
 pub mod powershell;
 pub mod same_folder;
@@ -122,6 +125,11 @@ impl GhostexPaths {
     /// Written once the one-time copy out of the Ghostty app's config has run.
     pub fn terminal_ghostty_config_migration_marker_file(&self) -> PathBuf {
         self.state_dir.join("terminal-ghostty-config-migrated")
+    }
+
+    /// Written once the work area frame's on-by-default change has run over an existing settings file.
+    pub fn work_area_frame_default_marker_file(&self) -> PathBuf {
+        self.state_dir.join("work-area-frame-default-migrated")
     }
 
     pub fn gxserver_config_dir(&self) -> PathBuf {

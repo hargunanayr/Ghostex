@@ -177,6 +177,26 @@ impl NativeSidebarGroup {
             .get("botGatewayRunning")?
             .as_bool()
     }
+
+    /// The bot row's status, and `None` on every group that is not a bot's.
+    pub(crate) fn bot_status(&self) -> Option<BotStatus> {
+        self.bot_gateway_running().map(|running| {
+            if running {
+                BotStatus::HermesRunning
+            } else {
+                BotStatus::Stopped
+            }
+        })
+    }
+}
+
+/// What a bot row's dot says.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BotStatus {
+    /// A Hermes bot whose gateway runs.
+    HermesRunning,
+    /// A stopped gateway.
+    Stopped,
 }
 
 /// The Hermes agent's own mark color, the one its tabs and launcher rows draw.
@@ -187,12 +207,15 @@ pub(crate) fn hermes_color() -> gpui::Hsla {
 /// CDXC:Bots 2026-09-26 DECISION:
 /// User: a bot row shows a letter tile in Hermes yellow and a gateway dot (green running, grey stopped) instead of a project's icon, git stats and status counts, so bots read as bots.
 /// The tile and the dot are drawn by project_header.rs.
-pub(crate) fn bot_gateway_dot(running: bool, appearance: &SidebarAppearance) -> AnyElement {
+pub(crate) fn bot_status_dot(status: BotStatus, appearance: &SidebarAppearance) -> AnyElement {
     let scale = appearance.scale;
     div()
         .size(px(7.0 * scale))
         .flex_shrink_0()
         .rounded_full()
-        .bg(rgb(if running { 0x4ade80 } else { 0x64748b }))
+        .bg(rgb(match status {
+            BotStatus::HermesRunning => 0x4ade80,
+            BotStatus::Stopped => 0x64748b,
+        }))
         .into_any_element()
 }

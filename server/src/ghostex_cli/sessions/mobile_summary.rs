@@ -95,6 +95,8 @@ pub(super) fn to_mobile_session_list(result: &Value, settings: &Map<String, Valu
         .and_then(Value::as_array)
         .map(|list| {
             list.iter()
+                // Chief of Staff's chats while Main Hub is off (server/src/chief/presentation.rs).
+                .filter(|session| session.get("mainHubHidden") != Some(&Value::Bool(true)))
                 .filter(|session| match &active_project_ids {
                     None => true,
                     Some(ids) => session
@@ -141,6 +143,14 @@ pub(super) fn to_mobile_session_list(result: &Value, settings: &Map<String, Valu
         .filter(|display| *display != "badge")
     {
         map.insert("sidebarSessionLinks".to_string(), json!(display));
+    }
+    // CDXC:Changes 2026-11-07 SEE-ALSO: the Changes toolbar's Hide test files (apps/desktop/src/app/native_changes/render.rs); the phone's Changes screen starts with test files hidden by the computer's `changesHideTestFiles` (apps/mobile/app/src/screens/ChangesScreen.tsx). Sent only when on (the default is off).
+    if settings
+        .get("changesHideTestFiles")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        map.insert("changesHideTestFiles".to_string(), json!(true));
     }
     // CDXC:SessionSleep 2026-10-27 SEE-ALSO: the 2026-09-29 decision in apps/desktop/src/app/native_sidebar/sessions.rs; the phone's session list fades a sleeping row by the computer's Advanced > Dim sleeping sessions (apps/mobile/app/src/components/sessions/SessionRow.tsx). Sent only when on (the default is off).
     if settings.get("dimSleepingSessions").and_then(Value::as_bool) == Some(true) {
@@ -195,6 +205,17 @@ pub(super) fn to_mobile_session_list(result: &Value, settings: &Map<String, Valu
             json!(true),
         );
     }
+    // CDXC:Chief 2026-11-08 SEE-ALSO: packages/gx-core/src/sidebar_view/assemble.rs (Show on all Spaces) and apps/desktop/src/app/native_sidebar/chief.rs (Ask before New Chat); the phone follows the computer's two switches. Sent only when they differ from the defaults (off, on).
+    if settings
+        .get("chiefShowOnAllSpaces")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        map.insert("chiefShowOnAllSpaces".to_string(), json!(true));
+    }
+    if settings.get("chiefConfirmNewChat").and_then(Value::as_bool) == Some(false) {
+        map.insert("chiefConfirmNewChat".to_string(), json!(false));
+    }
     // Its Parked shelf shows only while session parking is on (the default).
     if settings
         .get("enableSessionParking")
@@ -202,6 +223,33 @@ pub(super) fn to_mobile_session_list(result: &Value, settings: &Map<String, Valu
         == Some(false)
     {
         map.insert("enableSessionParking".to_string(), json!(false));
+    }
+    // CDXC:Sidebar 2026-11-07 SEE-ALSO: packages/gx-core/src/sidebar_view/inputs.rs (Pinned order); the phone orders pinned sessions as the computer does (apps/mobile/app/src/contract/grouping.ts and unified/build.ts). Sent only when it is Most recently updated (the default is Manual).
+    if settings.get("pinnedSessionOrder").and_then(Value::as_str) == Some("recent") {
+        map.insert("pinnedSessionOrder".to_string(), json!("recent"));
+    }
+    // CDXC:Worktrees 2026-11-06 SEE-ALSO: packages/gx-core/src/sidebar_view/worktree_fold.rs; the phone's Project list follows the computer's Worktree sessions show in their project (apps/mobile/app/src/contract/grouping.ts). Sent only when off (the default is on).
+    if settings
+        .get("worktreeSessionsInProject")
+        .and_then(Value::as_bool)
+        == Some(false)
+    {
+        map.insert("worktreeSessionsInProject".to_string(), json!(false));
+    }
+    // CDXC:RemoteMachines 2026-11-09 SEE-ALSO: packages/gx-core/src/sidebar_view/merged.rs; the phone's Project list merges one computer's copies of a repository as the computer's list does (apps/mobile/app/src/contract/grouping.ts). The list merges only while Separate by machine is off, so both are sent: Merge copies of the same repository whenever it is not on (this fork's default is off, while the phone's own default is on), Separate by machine only when on (the default is off).
+    if settings
+        .get("sidebarMergeRepositoryCopies")
+        .and_then(Value::as_bool)
+        != Some(true)
+    {
+        map.insert("sidebarMergeRepositoryCopies".to_string(), json!(false));
+    }
+    if settings
+        .get("sidebarSeparateByMachine")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        map.insert("sidebarSeparateByMachine".to_string(), json!(true));
     }
     if let Some(projects) = &projects {
         map.insert(
@@ -214,11 +262,28 @@ pub(super) fn to_mobile_session_list(result: &Value, settings: &Map<String, Valu
                         insert_present(&mut project_map, "name", project.get("name"));
                         insert_present(&mut project_map, "path", project.get("path"));
                         insert_present(&mut project_map, "projectId", project.get("projectId"));
+                        // The home project, whose header is Main Hub's row (server/src/chief/home.rs).
+                        if crate::chief::is_home_project(project) && crate::chief::chief_shown() {
+                            project_map.insert("isHome".to_string(), json!(true));
+                        }
+                        // A GBot's project: its look while GBots are on, and always the mark that keeps it out of the projects list (server/src/gbots/presentation.rs).
+                        insert_present(&mut project_map, "gbotsBot", project.get("gbotsBot"));
+                        insert_present(
+                            &mut project_map,
+                            "gbotsProject",
+                            project.get("gbotsProject"),
+                        );
                         // The Unified list names a project by its repository, so one repository on two computers is one project (packages/gx-core/src/unified_sidebar/repo.rs).
                         insert_present(
                             &mut project_map,
                             "gitRemoteOriginUrl",
                             project.get("gitRemoteOriginUrl"),
+                        );
+                        // Which folder of that repository it is, so one computer's copies merge only at the same folder (packages/gx-core/src/sidebar_view/merged.rs).
+                        insert_present(
+                            &mut project_map,
+                            "gitRepositoryRootPath",
+                            project.get("gitRepositoryRootPath"),
                         );
                         /*
                          * CDXC:Icons 2026-08-21:
@@ -651,6 +716,17 @@ fn to_mobile_custom_session_tags(tags_state: Option<&Value>) -> Option<Value> {
     }))
 }
 
+/// Exercise both CLI whitelists on the same presentation row the session inventory consumes.
+#[cfg(test)]
+pub(crate) fn mobile_summary_for_session(
+    session: &Value,
+    project: &Value,
+    presentation: &Value,
+) -> Value {
+    let cli = super::to_cli_session(session, Some(project), 0, Some(presentation), Some(0));
+    to_mobile_session_list(&json!({ "sessions": [cli] }), &Map::new())["sessions"][0].clone()
+}
+
 fn to_mobile_session_summary(session: &Value) -> Value {
     let s = |key: &str| session.get(key);
     let mut map = Map::new();
@@ -760,6 +836,11 @@ fn to_mobile_session_summary(session: &Value) -> Value {
     insert_js(&mut map, "agentSessionId", &[s("agentSessionId")]);
     // CDXC:Coordinators 2026-10-01 WHY: the same second-whitelist trap: the phone draws the coordinator crown in place of the agent logo from this field, and nests each open thread under its coordinator from the link and thread state below.
     insert_js(&mut map, "coordinatorRole", &[s("coordinatorRole")]);
+    // The same second-whitelist trap for Chief's flag (cli_session.rs).
+    insert_js(&mut map, "isChief", &[s("isChief")]);
+    insert_js(&mut map, "chiefEarlier", &[s("chiefEarlier")]);
+    // The same trap for a GBot chat's bot and opener (server/src/gbots/presentation.rs).
+    insert_js(&mut map, "gbotsChat", &[s("gbotsChat")]);
     insert_js(
         &mut map,
         "coordinatorProjectId",
@@ -829,6 +910,7 @@ fn to_mobile_session_summary(session: &Value) -> Value {
         &[s("backgroundWorkDetectedAt")],
     );
     insert_js(&mut map, "awaitingApproval", &[s("awaitingApproval")]);
+    insert_js(&mut map, "awaitingAnswer", &[s("awaitingAnswer")]);
     // The Unified list's working start and failed model change (CDXC:Sidebar 2026-10-30 in cli_session.rs).
     insert_js(&mut map, "workingStartedAt", &[s("workingStartedAt")]);
     insert_js(
@@ -837,6 +919,10 @@ fn to_mobile_session_summary(session: &Value) -> Value {
         &[s("modelSelectionFailure")],
     );
     insert_js(&mut map, "sendFailure", &[s("sendFailure")]);
+    // CDXC:Notifications 2026-11-08 SEE-ALSO: the phone row draws the desktop row's blocked red
+    // dot beside the send-failure dot; absent while not blocked, which is also what an older daemon sends.
+    insert_js(&mut map, "blockedSince", &[s("blockedSince")]);
+    insert_js(&mut map, "blockedReason", &[s("blockedReason")]);
     insert_js(
         &mut map,
         "closeAfterDoneDeadlineAt",
@@ -846,6 +932,9 @@ fn to_mobile_session_summary(session: &Value) -> Value {
         insert_js(&mut map, "attention", &[s("attention")]);
     }
     insert_js(&mut map, "sortOrder", &[s("sortOrder")]);
+    // CDXC:Sidebar 2026-11-07 SEE-ALSO: the place a pinned session was dragged to (gx-core
+    // sidebar_drag/pinned_order.rs), one number across projects, which the phone's Pinned follows.
+    insert_non_null(&mut map, "sidebarOrder", s("sidebarOrder"));
     insert_js(&mut map, "status", &[s("status")]);
     insert_js(&mut map, "surface", &[s("surface")]);
     insert_js(&mut map, "title", &[s("title")]);

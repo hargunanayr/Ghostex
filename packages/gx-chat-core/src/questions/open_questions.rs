@@ -22,6 +22,9 @@
 //!
 //! CDXC:SessionChat 2026-10-27 DECISION:
 //! User, of the list: "we're not indicating HTML pages from normal questions here", "also please show "All" "Html" "Q&A" "Charts" as 4 selections so i can jump to previous generated content", "also i wanna see even Htmls that don't have any questions in them so i can jump back to them". Every row says what it is (`kind`: an HTML page, a Q&A form or a chart), and four filters sit over the list (`filters`, the reader's pick `filter`): All, Html (pages, with or without questions), Q&A (```questions forms) and Charts (```visual drawings: charts, stats, tables). Forms and question pages keep the Unanswered, For later, Answered and Withdrawn sections; pages that ask nothing are listed under Pages and charts under Charts, newest first. The pill's count, dot and ping stay about unanswered questions only.
+//!
+//! CDXC:SessionChat 2026-11-06 DECISION:
+//! User: "i hate saying 'inline html' and 'inline q' and inline graphs. can we have different name for those?", then "Let's say ghostex page / gx page, ghostex form / gx form, ghostex visuals / gx visuals", everywhere. The filters read All, Pages, Forms and Visuals (ids `html`, `qa`, `charts` unchanged), and an untitled row is a "Ghostex page", "Ghostex form" or "Ghostex visual". Supersedes the 2026-10-27 labels Html, Q&A and Charts.
 
 // A title shows a link's words, not its Markdown (`questions/form_links.rs`).
 use crate::questions::form_links::plain_words;
@@ -158,9 +161,9 @@ pub struct OpenQuestionsState {
 
 const FILTERS: [(&str, &str); 4] = [
     ("all", "All"),
-    ("html", "Html"),
-    ("qa", "Q&A"),
-    ("charts", "Charts"),
+    ("html", "Pages"),
+    ("qa", "Forms"),
+    ("charts", "Visuals"),
 ];
 
 /// Whether the filter `filter` shows a row of kind `kind` (`form`, `page`, `chart`).
@@ -285,14 +288,11 @@ pub fn waiting(state: &ChatState) -> Vec<&Asker> {
 fn settled_by_index(
     state: &ChatState,
 ) -> (
-    std::collections::HashMap<&str, &str>,
-    std::collections::HashMap<&str, &str>,
+    &std::collections::HashMap<String, &'static str>,
+    &std::collections::HashMap<String, &'static str>,
 ) {
-    let index = &state.session.resource_index;
-    (
-        crate::questions::resource_index::settled_by_index(index, "form"),
-        crate::questions::resource_index::settled_by_index(index, "page"),
-    )
+    let view = state.session.resource_index.view();
+    (view.settled_forms(), view.settled_pages())
 }
 
 /// The forms and pages put off For later that still wait: their cards say For later
@@ -345,41 +345,12 @@ pub(crate) fn indexed(state: &ChatState) -> Vec<ResourceEntry> {
     indexed_entries(state).as_ref().clone()
 }
 
-thread_local! {
-    /// The last resource indexes read as records, newest first, each with the JSON it was read from.
-    static INDEXED: std::cell::RefCell<Vec<(Vec<serde_json::Value>, std::rc::Rc<Vec<ResourceEntry>>)>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-}
-
-/// How many chats' indexes `INDEXED` keeps: the worker drives every open chat on one thread.
-const INDEXED_KEPT: usize = 4;
-
 /// The session's resource index as records, read once per index rather than once per use.
 ///
 /// CDXC:SessionChat 2026-11-04 WHY:
-/// The ? pill and the Resources list are projected again on every chat event (each streamed token), and each projection read the whole index from JSON two or three times: on a coordinator chat with hundreds of pages and questions that was most of the chat worker's CPU while a visible chat streamed (issues-1027/macos-perf). The records are kept with the JSON they came from and reused while the index is equal to it, so what the list shows is exactly what reading it again would give.
-fn indexed_entries(state: &ChatState) -> std::rc::Rc<Vec<ResourceEntry>> {
-    let index = &state.session.resource_index;
-    if index.is_empty() {
-        return std::rc::Rc::default();
-    }
-    INDEXED.with_borrow_mut(|kept| {
-        if let Some(at) = kept.iter().position(|(source, _)| source == index) {
-            let hit = kept.remove(at);
-            let entries = std::rc::Rc::clone(&hit.1);
-            kept.insert(0, hit);
-            return entries;
-        }
-        let entries = std::rc::Rc::new(
-            index
-                .iter()
-                .filter_map(|value| serde_json::from_value(value.clone()).ok())
-                .collect::<Vec<ResourceEntry>>(),
-        );
-        kept.insert(0, (index.clone(), std::rc::Rc::clone(&entries)));
-        kept.truncate(INDEXED_KEPT);
-        entries
-    })
+/// The ? pill and the Resources list are projected again on every chat event (each streamed token), and each projection read the whole index from JSON two or three times: on a coordinator chat with hundreds of pages and questions that was most of the chat worker's CPU while a visible chat streamed (issues-1027/macos-perf). The records are read when the index changes (`ResourceIndex`) and shared until it changes again, so what the list shows is exactly what reading it again would give.
+fn indexed_entries(state: &ChatState) -> std::sync::Arc<Vec<ResourceEntry>> {
+    std::sync::Arc::clone(state.session.resource_index.view().records())
 }
 
 /// The index records the loaded rows do not hold: older than what the chat has loaded, or from a
@@ -451,9 +422,9 @@ fn indexed_row(
 ) -> QuestionListRow {
     let (time, age, time_title) = time_fields(entry.at_ms, context, labels);
     let fallback = match entry.kind.as_str() {
-        "form" => "Questions",
-        "chart" => "Chart",
-        _ => "Page",
+        "form" => "Ghostex form",
+        "chart" => "Ghostex visual",
+        _ => "Ghostex page",
     };
     QuestionListRow {
         id: entry.id.clone(),
@@ -609,8 +580,8 @@ fn list_row(asker: &Asker, context: &ChatContext, labels: bool) -> QuestionListR
     let (time, age, time_title) = time_fields(asker.at, context, labels);
     let title = if asker.title.is_empty() {
         match asker.kind {
-            AskerKind::Form => "Questions".to_string(),
-            AskerKind::Page => "Page".to_string(),
+            AskerKind::Form => "Ghostex form".to_string(),
+            AskerKind::Page => "Ghostex page".to_string(),
         }
     } else {
         plain_words(&asker.title)
@@ -641,8 +612,8 @@ fn content_row(
     use crate::transcript::question_forms::ContentKind;
     let (time, age, time_title) = time_fields(item.at, context, labels);
     let (kind, fallback) = match item.kind {
-        ContentKind::Chart => ("chart", "Chart"),
-        _ => ("page", "Page"),
+        ContentKind::Chart => ("chart", "Ghostex visual"),
+        _ => ("page", "Ghostex page"),
     };
     QuestionListRow {
         id: item.id.clone(),
@@ -700,8 +671,59 @@ pub fn answers_on_the_way(state: &ChatState) -> Vec<PageAnswers> {
     found
 }
 
+/// Everything [`list_rows`] reads, kept beside the list it built (`document::AssembleCache`).
+///
+/// CDXC:SessionChat 2026-11-09 WHY:
+/// User: "ghostex app gets slower with time until it becomes super slow". Every event of the Main Coordinator chat listed its ~1,300 forms, pages and charts again for the ? pill and the Resources panel, a fifth of an idle event, though the list only moves with the questions themselves. The rows without their time fields read no clock, so they are kept while what they are built from is equal; the page shown is cut from them and given its time fields on every event, as before.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ListInputs {
+    askers: Vec<Asker>,
+    questions: crate::questions::forms::QuestionsInputs,
+    content: Vec<crate::questions::content::ContentItem>,
+    queue_prompts: Option<Vec<serde_json::Value>>,
+    resource_index: crate::questions::resource_index::ResourceIndex,
+    later_question_ids: Vec<String>,
+    removed_question_ids: Vec<String>,
+}
+
+impl ListInputs {
+    fn of(state: &ChatState) -> Self {
+        Self {
+            askers: state.transcript_view.askers.clone(),
+            questions: crate::questions::forms::QuestionsInputs::of(&state.questions),
+            content: state.questions.content.items.clone(),
+            queue_prompts: state.session.queue_prompts.clone(),
+            resource_index: state.session.resource_index.clone(),
+            later_question_ids: state.session.later_question_ids.clone(),
+            removed_question_ids: state.session.removed_question_ids.clone(),
+        }
+    }
+
+    fn matches(&self, state: &ChatState) -> bool {
+        self.askers == state.transcript_view.askers
+            && self.questions.matches(&state.questions)
+            && self.content == state.questions.content.items
+            && self.queue_prompts == state.session.queue_prompts
+            && self.resource_index == state.session.resource_index
+            && self.later_question_ids == state.session.later_question_ids
+            && self.removed_question_ids == state.session.removed_question_ids
+    }
+}
+
+/// A kept unlabelled list and the inputs it was built from.
+pub type KeptList = (ListInputs, std::sync::Arc<Vec<QuestionListSection>>);
+
 /// The document's `openQuestions`.
 pub fn project(state: &ChatState, context: &ChatContext) -> OpenQuestions {
+    project_with(state, context, &mut None)
+}
+
+/// [`project`], listing the rows again only when what they are built from changed.
+pub fn project_with(
+    state: &ChatState,
+    context: &ChatContext,
+    kept: &mut Option<KeptList>,
+) -> OpenQuestions {
     let open = unanswered(state);
     // The loaded rows' unanswered questions, plus the ones older than what the chat has loaded.
     let count = (open.len() + indexed_waiting(state, &indexed_entries(state)).len()) as u32;
@@ -710,7 +732,14 @@ pub fn project(state: &ChatState, context: &ChatContext) -> OpenQuestions {
     CDXC:SessionChat 2026-11-04 WHY:
     This runs on every chat event (each streamed token) to learn whether the document changed, and it listed every form, page and chart with its time labels and copied each row twice to keep the first page: on a coordinator chat with hundreds of them that was the chat worker's main cost while a visible chat streamed (issues-1027/macos-perf). Rows are listed without their time fields, moved rather than copied, and only the rows on the page get their time fields (`label_row`), which reads them exactly as listing them would.
     */
-    let all = list_rows(state, context, false);
+    let all = match kept.as_ref().filter(|(inputs, _)| inputs.matches(state)) {
+        Some((_, all)) => std::sync::Arc::clone(all),
+        None => {
+            let all = std::sync::Arc::new(list_rows(state, context, false));
+            *kept = Some((ListInputs::of(state), std::sync::Arc::clone(&all)));
+            all
+        }
+    };
     let total = all.iter().map(|section| section.count).sum();
     let later = all
         .iter()
@@ -737,21 +766,38 @@ pub fn project(state: &ChatState, context: &ChatContext) -> OpenQuestions {
                 .count() as u32,
         })
         .collect();
-    let (sections, remaining) = page_sections(
-        all.into_iter()
-            .filter_map(|mut section| {
-                section.rows.retain(|row| filter_shows(filter, &row.kind));
-                (!section.rows.is_empty()).then(|| QuestionListSection {
-                    count: section.rows.len() as u32,
-                    remaining: 0,
-                    ..section
-                })
+    // `page_sections` over the filtered sections, copying only the rows the page keeps.
+    let budget = (state.questions.open_questions.pages as usize + 1) * LIST_PAGE;
+    let mut remaining = 0u32;
+    let mut sections: Vec<QuestionListSection> = all
+        .iter()
+        .filter_map(|section| {
+            let shown = || {
+                section
+                    .rows
+                    .iter()
+                    .filter(|row| filter_shows(filter, &row.kind))
+            };
+            let count = shown().count();
+            if count == 0 {
+                return None;
+            }
+            let keep = if always_whole(&section.id) {
+                count
+            } else {
+                count.min(budget)
+            };
+            remaining += (count - keep) as u32;
+            Some(QuestionListSection {
+                id: section.id.clone(),
+                title: section.title.clone(),
+                count: count as u32,
+                rows: shown().take(keep).cloned().collect(),
+                remaining: (count - keep) as u32,
             })
-            .collect(),
-        state.questions.open_questions.pages,
-    );
+        })
+        .collect();
     // "Earlier" has a header only beside another group.
-    let mut sections = sections;
     for row in sections
         .iter_mut()
         .flat_map(|section| section.rows.iter_mut())
@@ -961,7 +1007,10 @@ fn newest_one_click_ask(state: &ChatState, tag: &str) -> Option<(String, String)
 }
 
 #[cfg(test)]
-pub(crate) fn newest_one_click_ask_for_test(state: &ChatState, tag: &str) -> Option<(String, String)> {
+pub(crate) fn newest_one_click_ask_for_test(
+    state: &ChatState,
+    tag: &str,
+) -> Option<(String, String)> {
     newest_one_click_ask(state, tag)
 }
 
@@ -1156,7 +1205,8 @@ mod tests {
             indexed("form", "form", "answered", 1_000),
             indexed("page", "page", "answered", 2_000),
             indexed("asked-again", "form", "withdrawn", 3_000),
-        ];
+        ]
+        .into();
         // No form send state survives a reload, and no answer or withdrawal is in this window.
         assert!(state.questions.forms.is_empty());
         let pill = project(&state, &ChatContext::default());
@@ -1176,7 +1226,7 @@ mod tests {
             .transcript_view
             .askers
             .push(asker("old", AskerKind::Form, Some(1_000)));
-        state.session.resource_index = vec![indexed("old", "form", "waiting", 1_000)];
+        state.session.resource_index = vec![indexed("old", "form", "waiting", 1_000)].into();
         assert_eq!(project(&state, &ChatContext::default()).count, 1);
         let effects = previous(&mut state, &ChatContext::default());
         assert!(!effects.is_empty(), "the click loads the older window");
@@ -1537,7 +1587,7 @@ mod tests {
             .collect();
         assert_eq!(
             counts,
-            vec![("All", 4), ("Html", 2), ("Q&A", 1), ("Charts", 1)]
+            vec![("All", 4), ("Pages", 2), ("Forms", 1), ("Visuals", 1)]
         );
         assert_eq!(pill.filter, "all");
         assert_eq!(
@@ -1561,7 +1611,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            pill.sections[1].rows[0].title, "Page",
+            pill.sections[1].rows[0].title, "Ghostex page",
             "a page without a title still reads as one"
         );
 
@@ -1699,7 +1749,8 @@ mod tests {
             indexed("old-page", "page", "other", 3_000),
             // The loaded row for this id says answered; the index record is stale.
             indexed("loaded", "form", "waiting", 9_000),
-        ];
+        ]
+        .into();
         let pill = project(&state, &ChatContext::default());
         assert_eq!(
             pill.total, 4,
@@ -1766,7 +1817,7 @@ mod tests {
         let mut page = indexed("tp", "page", "other", 7_000);
         page["thread"] =
             serde_json::json!({"title": "Fix the sidebar", "projectId": "p", "sessionId": "s"});
-        state.session.resource_index = vec![page];
+        state.session.resource_index = vec![page].into();
         let pill = project(&state, &ChatContext::default());
         assert_eq!(pill.total, 2);
         let ids: Vec<&str> = pill.sections.iter().map(|s| s.id.as_str()).collect();
@@ -1789,7 +1840,8 @@ mod tests {
             thread_page,
             indexed("old-form", "form", "waiting", 3),
             no_place("placeless", "waiting", 4),
-        ];
+        ]
+        .into();
         let context = ChatContext::default();
         let open = |state: &mut ChatState, id: &str| jump_to_id(state, &context, id);
         match &open(&mut state, "own-page")[..] {
@@ -1834,7 +1886,7 @@ mod tests {
     #[test]
     fn a_waiting_record_with_no_place_is_not_counted() {
         let mut state = ChatState::default();
-        state.session.resource_index = vec![no_place("gone", "waiting", 5)];
+        state.session.resource_index = vec![no_place("gone", "waiting", 5)].into();
         let pill = project(&state, &ChatContext::default());
         assert_eq!(pill.count, 0);
         assert_eq!(with_status(&pill, "withdrawn"), vec!["gone"]);
@@ -1926,11 +1978,11 @@ mod paged_labels_tests {
     fn an_index_that_changes_in_place_is_read_again() {
         let entry = |status: &str| serde_json::json!({"id": "r1", "kind": "form", "title": "One", "atMs": 5, "status": status, "offset": 1});
         let mut state = ChatState::default();
-        state.session.resource_index = vec![entry("answered")];
+        state.session.resource_index = vec![entry("answered")].into();
         assert_eq!(project(&state, &ChatContext::default()).count, 0);
-        state.session.resource_index = vec![entry("waiting")];
+        state.session.resource_index = vec![entry("waiting")].into();
         assert_eq!(project(&state, &ChatContext::default()).count, 1);
-        state.session.resource_index = vec![entry("answered")];
+        state.session.resource_index = vec![entry("answered")].into();
         assert_eq!(project(&state, &ChatContext::default()).count, 0);
         state.session.resource_index.clear();
         assert_eq!(project(&state, &ChatContext::default()).total, 0);

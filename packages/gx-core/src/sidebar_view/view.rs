@@ -57,6 +57,18 @@ pub struct SidebarView {
     /// The selected remote machine is not connected, so the list says why above whatever it still
     /// holds (`machines::machine_notice`). Absent for this computer and a connected machine.
     pub machine_notice: Option<MachineNotice>,
+    /// Main Hub's GBots section (`gbots.rs`): at most one, under the drawn home group.
+    pub gbots: Vec<super::gbots::GbotsSectionView>,
+    /// Chief's rows (`chief.rs`): the selected machine's, or with computers combined this
+    /// computer's first and then each other computer's. Drawn under the Spaces bar whether or
+    /// not the Chief extension is on; the host leaves them out while it is off.
+    pub chiefs: Vec<super::chief::ChiefRowView>,
+    /// The home groups' headers (`chief.rs`), in list order: each is drawn as Main Hub's row
+    /// for that computer instead of a project header.
+    pub home_headers: Vec<super::chief::HomeHeaderView>,
+    /// The machines of `chiefs` that have a home project (drawn in this Space or not): their Chief
+    /// is a home header, never the row under the Spaces bar.
+    pub machines_with_home: Vec<String>,
 }
 
 /// One row of the Ghosts section.
@@ -215,6 +227,60 @@ pub struct GroupCore {
     /// group's own project: the project on the machine a session of this repository last
     /// started on (`merged.rs`).
     pub action_target: Option<GroupActionTarget>,
+    /// The worktree projects whose sessions this project lists as its own, while Worktree
+    /// sessions show in their project is on (`worktree_fold.rs`): the header's Delete Worktree
+    /// submenu lists them, and a folded row's menus act on its worktree's project.
+    pub folded_worktrees: Vec<FoldedWorktree>,
+}
+
+/// A worktree project drawn inside its parent project's group (`GroupCore::folded_worktrees`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FoldedWorktree {
+    /// The worktree project's own sidebar group id, which its menus and dialogs are keyed by.
+    pub group_id: String,
+    pub project_context: ProjectContextView,
+    /// Its machine, when that is not this computer.
+    pub remote_machine: Option<RemoteMachineView>,
+}
+
+impl FoldedWorktree {
+    /// What the worktree is called in a menu: its folder's name, else its branch.
+    pub fn label(&self) -> &str {
+        self.project_context
+            .worktree
+            .as_ref()
+            .map(|worktree| {
+                if worktree.name.is_empty() {
+                    worktree.branch.as_str()
+                } else {
+                    worktree.name.as_str()
+                }
+            })
+            .unwrap_or_default()
+    }
+}
+
+/// The worktree a row's session runs in, on a row its parent project's group lists
+/// (`worktree_fold.rs`). The row draws it so a worktree session stays recognisable there.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RowWorktree {
+    /// The worktree project's sidebar group id ([`FoldedWorktree::group_id`]).
+    pub group_id: String,
+    /// The worktree's folder name.
+    pub name: String,
+    /// Its branch; empty when the daemon has none.
+    pub branch: String,
+}
+
+impl RowWorktree {
+    /// What the row draws: the branch, else the folder's name.
+    pub fn label(&self) -> &str {
+        if self.branch.is_empty() {
+            &self.name
+        } else {
+            &self.branch
+        }
+    }
 }
 
 /// The project a merged group's creating actions go to (`GroupCore::action_target`).
@@ -251,6 +317,9 @@ pub struct ProjectContextView {
     /// Issues Workflow is on for this project (server/src/work_mode/project.rs): its sessions get
     /// Link to.
     pub work_mode: bool,
+    /// Autopilot covers this project (`PresentationProject::autopilot`); `None` hides the menu's
+    /// Advanced > Autopilot row.
+    pub autopilot: Option<bool>,
     /// Issues Workflow's Linear parts are on (a Linear key applies), so a project whose tracker is
     /// Linear offers Create Linear ticket and Link to offers Linear issues and projects.
     pub work_linear: bool,
@@ -265,6 +334,11 @@ pub struct ProjectContextView {
     pub work_github: bool,
     /// The workspace's primary tracker is GitHub, so the Linear parts stay hidden even with a key.
     pub work_tracker_github: bool,
+    /// The home project: its header is Main Hub's row (`SidebarView::home_headers`).
+    pub is_home: bool,
+    /// The GBot whose folder this project is: the group is drawn as that bot's row in Main Hub's
+    /// GBots section (`SidebarView::gbots`), never as a project.
+    pub gbot: Option<ghostex_gx_protocol::presentation::PresentationGbotsBot>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -398,9 +472,8 @@ impl FoldedStatus {
         // A thread waiting on the user (a permission prompt, a bell: gxserver's `waiting`) is the
         // pink needs-you dot; only a finished turn is the stack's blue.
         let waiting = row.activity == "attention" && row.thread_state.as_deref() == Some("waiting");
-        self.question |= row.pending_question_count > 0 || waiting;
-        self.attention |=
-            row.pending_question_count == 0 && row.activity == "attention" && !waiting;
+        self.question |= row.has_question() || waiting;
+        self.attention |= !row.has_question() && row.activity == "attention" && !waiting;
         self.background_work |= row.shows_background_work();
     }
 
@@ -498,6 +571,10 @@ pub fn rename_shake_key(rename_failed_at: Option<&str>, now_ms: i64) -> Option<&
 }
 
 impl SessionRow {
+    pub fn has_question(&self) -> bool {
+        ghostex_gx_protocol::session_has_question(self.pending_question_count, self.awaiting_answer)
+    }
+
     /// CDXC:SessionStatus 2026-09-24 DECISION:
     /// User: a section, project, collection, Space or machine header shows the grey dot when it has no working session but has a grey-dot session, so the headers count exactly the rows that draw the grey dot: idle rows with a background shell or monitor still running.
     pub fn shows_background_work(&self) -> bool {
@@ -515,7 +592,7 @@ impl SessionRow {
     pub fn needs_you(&self) -> Option<NeedsYou> {
         if self.awaiting_approval {
             Some(NeedsYou::Approval)
-        } else if self.pending_question_count > 0 {
+        } else if self.has_question() {
             Some(NeedsYou::Question)
         } else if self.activity == "attention" {
             Some(NeedsYou::Attention)
@@ -571,6 +648,8 @@ pub struct SessionRow {
     /// from those reports; drawn as the same red dot until the user has seen it.
     pub program_status_failed: bool,
     pub pending_question_count: u64,
+    /// A hook-stored question card is waiting for an answer, independently of the question count.
+    pub awaiting_answer: bool,
     /// gxserver's `awaitingApproval`: the session is stuck on a permission prompt or approval card
     /// only the user can grant; drawn as the red approval dot ahead of every other status
     /// (CDXC:SessionStatus 2026-10-27 in server/src/session_approval.rs).
@@ -584,7 +663,15 @@ pub struct SessionRow {
     pub session_kind: Option<String>,
     /// The sidebar's own lifecycle vocabulary: `running`, `sleeping`, `error`, `done`.
     pub lifecycle_state: String,
+    /// Pinned by the user, or this is a computer's Chief of Staff, which is always pinned
+    /// (`is_chief`).
     pub is_pinned: bool,
+    /// A computer's Chief of Staff (gxserver's `isChief`): pinned first in its group, ahead of
+    /// every other pinned row (ordering.rs `sort_pinned`).
+    pub is_chief: bool,
+    /// A GBot chat Chief of Staff opened (gxserver's `gbotsChat.openedBy`): its row carries a small
+    /// "Chief" tag under the bot (apps/desktop/src/app/native_sidebar/gbots_rows.rs).
+    pub opened_by_chief: bool,
     /// gxserver's `sidebarOrder`: the manual place the Project sidebar gives the row among its
     /// project's rows (and the order of its Pinned), which the Unified sidebar's pinned cards
     /// follow too (unified_sidebar/build.rs). `None` when the row has none.
@@ -633,6 +720,9 @@ pub struct SessionRow {
     pub machine_name: Option<String>,
     /// That machine's short name (`machine_short_names.rs`), which the badge draws.
     pub machine_short_name: Option<String>,
+    /// The worktree the session runs in, when its parent project's group lists it
+    /// (`worktree_fold.rs`); `None` everywhere else, a worktree's own group included.
+    pub worktree: Option<RowWorktree>,
     /// The agentbox box the session's agent runs in, when it does not run on its machine.
     pub agentbox: Option<crate::agentbox::SessionAgentbox>,
     /// The Cloud Box the session runs on (its ☁ badge and state dot), or the box a draft's tray
@@ -913,5 +1003,20 @@ mod tests {
                 ..FoldedStatus::default()
             }
         );
+    }
+
+    #[test]
+    fn open_question_card_uses_question_dot_without_async_questions() {
+        let row = SessionRow {
+            activity: "attention".to_string(),
+            awaiting_answer: true,
+            pending_question_count: 0,
+            ..SessionRow::default()
+        };
+        assert_eq!(row.needs_you(), Some(NeedsYou::Question));
+        let mut status = FoldedStatus::default();
+        status.add(&row);
+        assert!(status.question);
+        assert!(!status.attention);
     }
 }

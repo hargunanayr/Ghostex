@@ -33,12 +33,6 @@ fn build_row(session: &Value, generated_at: &str) -> Value {
     let lifecycle = effective_lifecycle_state(session);
     let running = lifecycle == "running";
     let activity = presentation_activity(session, generated_at);
-    let questions = if running {
-        crate::session_chat_async_questions::pending_question_count(session)
-            + crate::session_chat_open_questions::open_question_count(session)
-    } else {
-        0
-    };
     let mut row = json!({
         "projectId": session.get("projectId").cloned().unwrap_or(Value::Null),
         "sessionId": session.get("sessionId").cloned().unwrap_or(Value::Null),
@@ -50,7 +44,7 @@ fn build_row(session: &Value, generated_at: &str) -> Value {
     });
     if crate::session_approval::session_awaits_approval(session, generated_at) {
         row["needsApproval"] = json!(true);
-    } else if questions > 0 {
+    } else if running && crate::session_approval::session_has_question(session) {
         row["needsAnswer"] = json!(true);
     }
     // A reply the user has not seen yet, like the sidebar's finished-turn attention.
@@ -69,6 +63,8 @@ fn side_chats_by_parent(
     let mut by_parent: HashMap<SessionKey, Vec<Value>> = HashMap::new();
     let mut parents: HashMap<SessionKey, Value> = HashMap::new();
     let mut parent_titles: HashMap<SessionKey, String> = HashMap::new();
+    // The partial `idx_sessions_side_chats` (migration 0064) serves this only while its `WHERE`
+    // matches this one word for word; without it every tick reads every session's JSON.
     let Ok(mut statement) = db.prepare_cached(&format!(
         "SELECT * FROM sessions WHERE instr(runtimeSettingsJson, '\"{PARENT_KEY}\"') > 0 ORDER BY createdAt"
     )) else {
@@ -182,5 +178,54 @@ pub fn insert_side_chats(frame: &mut Map<String, Value>, project_id: &str, sessi
     }
     if let Some(parent) = cache.parents.get(&key) {
         frame.insert("sideChatOf".to_string(), parent.clone());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_open_question_card_marks_a_side_chat_without_changing_its_count() {
+        let prompt = json!({
+            "kind": "question",
+            "questions": [{ "question": "Which one?", "multiSelect": false, "options": [{ "label": "A" }] }],
+        });
+        let mut session = json!({
+            "projectId": "p", "sessionId": "side", "lifecycleState": "running",
+            "runtimeSettings": {
+                "activity": "attention",
+                "agentActivity": { "activity": "attention", "sessionChatPrompt": prompt.to_string() },
+            },
+        });
+        let now = "2026-11-01T00:00:00.000Z";
+        let row = build_row(&session, now);
+        assert_eq!(row["needsAnswer"], true);
+        assert!(row.get("needsApproval").is_none());
+        assert_eq!(
+            crate::session_chat_async_questions::pending_question_count(&session),
+            0
+        );
+        assert_eq!(
+            crate::session_chat_open_questions::open_question_count(&session),
+            0
+        );
+
+        session["runtimeSettings"]["sessionChatAsyncQuestionIds"] = json!(["counted-question"]);
+        session["runtimeSettings"]["agentActivity"]["sessionChatPrompt"] = json!(
+            json!({ "kind": "approval", "tool": "Bash", "summary": "Run checks" }).to_string()
+        );
+        let row = build_row(&session, now);
+        assert_eq!(row["needsApproval"], true);
+        assert!(row.get("needsAnswer").is_none());
+        assert_eq!(
+            crate::session_chat_async_questions::pending_question_count(&session),
+            1
+        );
+
+        session["lifecycleState"] = json!("sleeping");
+        let row = build_row(&session, now);
+        assert!(row.get("needsAnswer").is_none());
+        assert!(row.get("needsApproval").is_none());
     }
 }

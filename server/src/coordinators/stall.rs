@@ -67,13 +67,13 @@ pub fn nudge_message() -> String {
     )
 }
 /// How often one session's transcript (and, once it is quiet, its screen) is looked at.
-const STALL_CHECK_EVERY_MS: i64 = 30_000;
+pub(super) const STALL_CHECK_EVERY_MS: i64 = 30_000;
 /// The screen is only fingerprinted once the session has been quiet this long: one that writes
 /// rows needs no capture.
-const SCREEN_SAMPLE_AFTER_MS: i64 = 60_000;
+pub(super) const SCREEN_SAMPLE_AFTER_MS: i64 = 60_000;
 /// After a nudge, what Ghostex's own message does (typed into the input box, queued on screen, a
 /// row in an agent that records a message it takes mid-turn) is not the thread moving.
-const NUDGE_GRACE_MS: i64 = 90_000;
+pub(super) const NUDGE_GRACE_MS: i64 = 90_000;
 /// Rows read to learn the newest row's time.
 const QUIET_TAIL_ROWS: usize = 4;
 /// Rows read back to find the last row worth naming in the report.
@@ -138,6 +138,10 @@ impl StallWatch {
             *self = Self::new(now);
         }
         self.run = Some(run);
+        if crate::network_status::session_offline(session) {
+            self.hold(now);
+            return None;
+        }
         if self
             .checked_at
             .is_none_or(|checked| now - checked >= test_scaled(STALL_CHECK_EVERY_MS))
@@ -156,6 +160,16 @@ impl StallWatch {
             round,
             transcript_seen: self.transcript_seen,
         })
+    }
+
+    /// The computer (or the agent's API) is offline: no output can come, so this is not quiet.
+    /// The clock starts again from the last held moment, the screen is compared afresh, and a nudge
+    /// or report of the stretch before belongs to it. See CDXC:OfflineHold in network_status.
+    pub fn hold(&mut self, now: i64) {
+        self.watched_since = self.watched_since.max(now);
+        self.screen = None;
+        self.checked_at = None;
+        self.nudged_at = None;
     }
 
     fn look(&mut self, session: &Value, now: i64) {
@@ -414,7 +428,7 @@ fn screen_fingerprint_of(session: &Value) -> Option<u64> {
 }
 
 /// A screen's text without what changes on its own while nothing happens.
-fn screen_fingerprint(text: &str) -> u64 {
+pub(super) fn screen_fingerprint(text: &str) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     for line in text.lines() {
         let words = line
@@ -531,8 +545,34 @@ pub fn stall_last_row(
     if transcript_activity_at(session, &mut path) > transcript_seen {
         return None;
     }
-    let agent = super::delivery::resolve_thread_transcript(session, &mut path);
-    let messages = agent
+    let messages = transcript_tail(session, &mut path);
+    if moved_after(&messages, quiet_since) {
+        return None;
+    }
+    Some(messages.iter().rev().find_map(describe_row))
+}
+
+/// BLOCKING. Whether the thread did anything after `since` (ms): its agent was launched, resumed
+/// or reloaded since, or its transcript has a row of its own (not Ghostex's nudge) newer than it.
+/// A late "not moving" or "idle" report names a quiet time that no longer holds then
+/// (stale_report.rs).
+pub(super) fn moved_since(session: &Value, since: i64) -> bool {
+    agent_launched_at(session).is_some_and(|launched| launched > since)
+        || moved_after(&transcript_tail(session, &mut None), since)
+}
+
+fn moved_after(messages: &[SessionChatMessage], since: i64) -> bool {
+    messages
+        .iter()
+        .filter(|message| !is_ghostex_nudge(message))
+        .filter_map(|message| message.timestamp)
+        .any(|at| at > since)
+}
+
+/// BLOCKING. The newest rows of the thread's transcript, empty when it cannot be read.
+fn transcript_tail(session: &Value, path: &mut Option<PathBuf>) -> Vec<SessionChatMessage> {
+    let agent = super::delivery::resolve_thread_transcript(session, path);
+    agent
         .zip(path.as_ref())
         .and_then(|(agent, path)| {
             crate::session_chat_tail::read_session_chat_tail_page(
@@ -547,20 +587,11 @@ pub fn stall_last_row(
             SessionChatTailPage::Page { messages, .. } => Some(messages),
             SessionChatTailPage::NotFound => None,
         })
-        .unwrap_or_default();
-    let moved = messages
-        .iter()
-        .filter(|message| !is_ghostex_nudge(message))
-        .filter_map(|message| message.timestamp)
-        .any(|at| at > quiet_since);
-    if moved {
-        return None;
-    }
-    Some(messages.iter().rev().find_map(describe_row))
+        .unwrap_or_default()
 }
 
 /// A message Ghostex typed into the thread itself (a stall or idle nudge).
-fn is_ghostex_nudge(message: &SessionChatMessage) -> bool {
+pub(super) fn is_ghostex_nudge(message: &SessionChatMessage) -> bool {
     message.role == SessionChatRole::User
         && message.blocks.iter().any(|block| {
             matches!(block, SessionChatBlock::Text { text } if text.trim_start().starts_with("Ghostex:"))
@@ -568,7 +599,7 @@ fn is_ghostex_nudge(message: &SessionChatMessage) -> bool {
 }
 
 /// One line naming a transcript row: the step it ran, what it said, or what a tool returned.
-fn describe_row(message: &SessionChatMessage) -> Option<String> {
+pub(super) fn describe_row(message: &SessionChatMessage) -> Option<String> {
     // A message to it (the brief, a follow-up, Ghostex's nudge) says nothing about where it is.
     if message.role == SessionChatRole::User {
         return None;
@@ -632,4 +663,73 @@ fn first_line(text: &str) -> Option<String> {
         .map(str::trim)
         .find(|line| !line.is_empty())
         .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
+}
+
+#[cfg(test)]
+mod offline_tests {
+    use super::*;
+
+    const MIN: i64 = 60_000;
+
+    /// A working Claude session with nothing to read: no transcript, no terminal.
+    fn session() -> Value {
+        serde_json::json!({
+            "projectId": "p-offline",
+            "sessionId": "s-offline",
+            "launchSettings": { "icon": "claude" },
+            "runtimeSettings": { "activity": "working" },
+        })
+    }
+
+    #[test]
+    fn a_quiet_session_is_due_after_a_round() {
+        let mut watch = StallWatch::new(0);
+        assert!(watch.observe(&session(), 0).is_none());
+        let due = watch
+            .observe(&session(), 8 * MIN)
+            .expect("due after 8 minutes");
+        assert_eq!((due.quiet_since, due.round), (0, 1));
+    }
+
+    #[test]
+    fn time_offline_is_not_quiet_and_the_clock_restarts_when_back() {
+        let mut watch = StallWatch::new(0);
+        assert!(watch.observe(&session(), 0).is_none());
+        {
+            let _offline = crate::network_status::simulate_offline(5 * MIN);
+            for minute in (5..=95).step_by(1) {
+                assert!(
+                    watch.observe(&session(), minute * MIN).is_none(),
+                    "nothing is due at minute {minute} while offline"
+                );
+                let view = watch.view(minute * MIN, THREAD_STUCK_ROUNDS);
+                assert!(!view.stalled && !view.stuck, "no red dot while offline");
+            }
+        }
+        // Back at minute 96: the clock starts from the last held moment (minute 95).
+        assert!(watch.observe(&session(), 96 * MIN).is_none());
+        assert!(watch.observe(&session(), 102 * MIN).is_none());
+        let due = watch
+            .observe(&session(), 103 * MIN)
+            .expect("due 8 minutes after");
+        assert_eq!((due.quiet_since, due.round), (95 * MIN, 1));
+    }
+
+    #[test]
+    fn a_nudge_before_the_outage_belongs_to_the_stretch_before() {
+        let mut watch = StallWatch::new(0);
+        let due = watch.observe(&session(), 8 * MIN).expect("first round");
+        watch.mark_reported(due.quiet_since, due.round);
+        watch.note_nudged(8 * MIN);
+        {
+            let _offline = crate::network_status::simulate_offline(10 * MIN);
+            assert!(watch.observe(&session(), 10 * MIN).is_none());
+        }
+        // A fresh stretch: its first round is round 1 again, so the thread is nudged anew rather
+        // than reported stuck at once.
+        let due = watch
+            .observe(&session(), 18 * MIN)
+            .expect("a new first round");
+        assert_eq!((due.quiet_since, due.round), (10 * MIN, 1));
+    }
 }

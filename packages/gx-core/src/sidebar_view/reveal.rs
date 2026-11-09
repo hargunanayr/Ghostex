@@ -206,7 +206,8 @@ pub fn reveal_plan(
             .collapsed_groups
             .contains(&found.group_id),
         collapsed_owner_group: super::assemble::owner_project_group_id(&found.group_id)
-            .filter(|owner| inputs.ui.collapse.collapsed_groups.contains(owner)),
+            .filter(|owner| inputs.ui.collapse.collapsed_groups.contains(owner))
+            .or_else(|| folded_gbots_fold(located, &found.group_id, inputs)),
         collapsed_coordinators: found.folded_by.clone(),
         collapsed_collection_storage_id: collection_storage_id.clone().filter(|storage_id| {
             inputs
@@ -576,4 +577,23 @@ pub(crate) fn machine_key(machine_id: &str) -> MachineId {
     } else {
         MachineId::Remote(machine_id.to_string())
     }
+}
+
+/// For a GBot's chat, the fold that hides its bot: Main Hub's group, the GBots heading or its
+/// department's sub-heading (gbots.rs), whichever is folded first.
+fn folded_gbots_fold(view: &SidebarView, group_id: &str, inputs: &SidebarInputs) -> Option<String> {
+    let section = view
+        .gbots
+        .iter()
+        .find(|section| section.group_ids.iter().any(|id| id == group_id))?;
+    let collapsed = &inputs.ui.collapse.collapsed_groups;
+    let department = section
+        .departments
+        .iter()
+        .find(|department| department.group_ids.iter().any(|id| id == group_id))
+        .map(|department| department.storage_id.clone());
+    [section.home_group_id.clone(), section.storage_id.clone()]
+        .into_iter()
+        .chain(department)
+        .find(|fold| collapsed.contains(fold))
 }

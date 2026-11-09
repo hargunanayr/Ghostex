@@ -3,7 +3,7 @@
 //!
 //! Five groups and the Backlog (stored as `ideas`), in the order every client shows them: Backlog
 //! (folded; the user, later: "rename Ideas to Backlog in the board please"), Later (nobody is on
-//! it yet: parked, up next or held for a release), Needs you, Blocked, Moving, Done (today only).
+//! it yet: parked, up next or held for a release), Needs you, Blocked, In progress, Done (today only).
 //! The user, of the first build: "please move ideas to the top above later". Threads
 //! land in a group from their own state and their PR's checks and review; the coordinator only
 //! places what is not a thread (an item, `B7`) and moves a thread whose state cannot tell where it
@@ -26,9 +26,30 @@ use serde_json::{json, Map, Value};
 use super::records::{now_iso, sql_error, SessionKey};
 use crate::domain::DomainStateError;
 
-/// The groups, in the order every client shows them. `later` is the group the clients call "To do".
-pub const BOARD_GROUPS: [&str; 7] = [
-    "ideas", "later", "needs", "blocked", "moving", "done", "removed",
+/// The groups, in the order every client shows them. `later` is the group the clients call "To do",
+/// `hold` is On hold.
+///
+/// CDXC:Coordinators 2026-11-06 DECISION:
+/// User, of a card under Blocked that waited for a certificate their bot was signing up for:
+/// "please modify the coordinator playbook so this is clear. blocked means requires immediate
+/// attention by the user to unblock it, it doesn't mean waiting on something. waiting on something
+/// can be a new one called On hold for example". Blocked is only what needs the user now to unblock
+/// it (a stuck thread only they can heal, an expired token, a release step only they can fix); work
+/// waiting on something outside (a sign-up, a release, another thread, a vendor, someone else's CI)
+/// is On hold, after Blocked and before In progress, in a calm colour and with no pill of its own. A
+/// finished thread's failing checks or requested changes are To do (work for the coordinator, not
+/// the user), and a thread still not moving after Ghostex's nudge is Blocked. Cards already under
+/// Blocked stay there.
+///
+/// CDXC:Coordinators 2026-11-07 DECISION:
+/// User, with a screenshot of the board's side list showing "Moving 3": "rename to in progress
+/// please". The group stored as `moving` is shown as In progress everywhere the user reads it (the
+/// board's side list and Columns overlay, the Board pill's tooltip, the phone's sheet,
+/// `ghostex coordinator board`, the help and the playbook). The key stays `moving` so stored
+/// boards keep working, and `in-progress` is accepted by `parse_group` besides `moving`. The
+/// Unified sidebar's Moving shelf is a different thing and keeps its name.
+pub const BOARD_GROUPS: [&str; 8] = [
+    "ideas", "later", "needs", "blocked", "hold", "moving", "done", "removed",
 ];
 
 /// The rows per group the chat's copy carries; the CLI reads every row.
@@ -75,6 +96,9 @@ pub struct BoardItem {
     pub answers: String,
     /// The answer the user gave (op `answer`), "" before one; a second is refused.
     pub answered: String,
+    /// The user's tag for an item (one of the sidebar's session tags), "" for none; a thread's
+    /// card shows its session's own tag instead (op `tag`).
+    pub tag: String,
 }
 
 impl BoardItem {
@@ -102,9 +126,11 @@ pub fn parse_group(word: &str) -> Option<(&'static str, &'static str)> {
         "later" | "todo" | "to-do" => ("later", ""),
         "parked" | "park" => ("later", "parked"),
         "next" | "up-next" | "upnext" => ("later", "next"),
-        "held" | "hold" | "held-for-release" => ("later", "held"),
+        "held" | "held-for-release" => ("later", "held"),
         "needs" | "needs-you" | "you" => ("needs", ""),
         "blocked" | "block" => ("blocked", ""),
+        // `hold` is On hold (the group's own id, which a card's drag sends); a release is `held`.
+        "hold" | "on-hold" | "onhold" | "waiting" | "paused" => ("hold", ""),
         "moving" | "in-progress" | "working" => ("moving", ""),
         "done" => ("done", ""),
         "backlog" | "ideas" | "idea" => ("ideas", ""),
@@ -134,6 +160,8 @@ fn item_from_row(row: &Row<'_>) -> rusqlite::Result<BoardItem> {
         answers: row.get("answers").unwrap_or_default(),
         // Nor before 0058.
         answered: row.get("answered").unwrap_or_default(),
+        // Nor before 0060.
+        tag: row.get("tag").unwrap_or_default(),
     })
 }
 
@@ -203,14 +231,14 @@ fn write_item(db: &Connection, key: &SessionKey, item: &BoardItem) -> Result<(),
         INSERT INTO coordinator_board_items (
           coordinatorProjectId, coordinatorSessionId, itemNumber, title, boardGroup, reason, note,
           link, release, untested, threadServerId, threadProjectId, threadSessionId, createdAt,
-          updatedAt, doneAt, removedAt, answers, answered
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+          updatedAt, doneAt, removedAt, answers, answered, tag
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
         ON CONFLICT (coordinatorProjectId, coordinatorSessionId, itemNumber) DO UPDATE SET
           title = excluded.title, boardGroup = excluded.boardGroup, reason = excluded.reason,
           note = excluded.note, link = excluded.link, release = excluded.release,
           untested = excluded.untested, updatedAt = excluded.updatedAt, doneAt = excluded.doneAt,
           removedAt = excluded.removedAt, answers = excluded.answers,
-          answered = excluded.answered
+          answered = excluded.answered, tag = excluded.tag
         "#,
         params![
             key.0,
@@ -232,6 +260,7 @@ fn write_item(db: &Connection, key: &SessionKey, item: &BoardItem) -> Result<(),
             item.removed_at,
             item.answers,
             item.answered,
+            item.tag,
         ],
     )
     .map_err(sql_error)?;
@@ -400,8 +429,10 @@ fn item_pr(link: &str) -> Option<Value> {
     pr_tag(&pr)
 }
 
-/// Where an open PR puts a thread that is not working or waiting: failing checks block it, running
-/// checks keep it moving, and green checks or a review to give put it with the user.
+/// Where an open PR puts a thread that is not working or waiting: failing checks or requested
+/// changes are To do (work for the coordinator, not the user: the 2026-11-06 meaning of Blocked on
+/// `BOARD_GROUPS`), running checks keep it moving, and green checks or a review to give put it with
+/// the user.
 fn pr_group(pr: &Value) -> Option<(&'static str, String)> {
     let state = text(pr, "state");
     if !matches!(state.as_str(), "open" | "draft" | "") {
@@ -410,9 +441,9 @@ fn pr_group(pr: &Value) -> Option<(&'static str, String)> {
     let number = pr["number"].as_u64()?;
     Some(
         match (text(pr, "checks").as_str(), text(pr, "review").as_str()) {
-            ("failing", _) => ("blocked", format!("CI failing on PR #{number}")),
+            ("failing", _) => ("later", format!("CI failing on PR #{number}")),
             ("pending", _) => ("moving", format!("CI running on PR #{number}")),
-            (_, "changesRequested") => ("blocked", format!("Changes asked on PR #{number}")),
+            (_, "changesRequested") => ("later", format!("Changes asked on PR #{number}")),
             _ if state == "draft" => return None,
             (_, "approved") => ("needs", format!("PR #{number} approved, ready to merge")),
             _ => ("needs", format!("PR #{number} waiting on your review")),
@@ -508,6 +539,13 @@ fn thread_row(
             }
         }
     };
+    // A thread still not moving after Ghostex's nudge (or whose terminal Ghostex could not
+    // restart) waits on the user to heal it: Blocked, the 2026-11-06 meaning on `BOARD_GROUPS`.
+    let group = if row["stuck"] == true && group == "moving" {
+        "blocked"
+    } else {
+        group
+    };
     if let Some(note) = pin
         .map(|pin| pin.note.trim())
         .filter(|note| !note.is_empty())
@@ -578,6 +616,11 @@ fn thread_row(
     if let Some(pr) = pr {
         out["pr"] = pr;
     }
+    // The session's own tag, the one its sidebar row shows (panel.rs `build_row`).
+    let tag = text(row, "sessionTag");
+    if !tag.is_empty() {
+        out["tag"] = json!(tag);
+    }
     Some(out)
 }
 
@@ -644,7 +687,34 @@ fn item_row(item: &BoardItem, today: NaiveDate, now: DateTime<Utc>) -> Option<Va
     if !item.answered.is_empty() {
         out["answered"] = json!(item.answered);
     }
+    if !item.tag.is_empty() {
+        out["tag"] = json!(item.tag);
+    }
     Some(out)
+}
+
+/// The sidebar's session tags as the board offers them (`tagOptions`, the menu's Tags list), and
+/// each row's `tag` turned into its look (`tagLook`: label, glyph, colour), from this computer's
+/// custom tag catalog. A row whose custom tag is gone from the catalog shows none.
+pub fn add_tag_looks(board: &mut Value, custom_tags: &Value) {
+    let custom: Option<ghostex_gx_protocol::CustomSessionTagsState> =
+        serde_json::from_value(custom_tags.clone()).ok();
+    for group in board["groups"].as_array_mut().into_iter().flatten() {
+        for row in group["rows"].as_array_mut().into_iter().flatten() {
+            let Some(tag) = row.get("tag").and_then(Value::as_str).map(str::to_string) else {
+                continue;
+            };
+            match ghostex_gx_core::tag_choice(&tag, custom.as_ref()) {
+                Some(look) => row["tagLook"] = json!(look),
+                None => {
+                    if let Some(row) = row.as_object_mut() {
+                        row.remove("tag");
+                    }
+                }
+            }
+        }
+    }
+    board["tagOptions"] = json!(ghostex_gx_core::tag_choices(custom.as_ref()));
 }
 
 /// An item's link that is not a PR: a GitHub issue, a Linear ticket, or any other URL or file,
@@ -758,7 +828,20 @@ pub fn board_value(
             json!({ "id": group, "total": total, "rows": shown })
         })
         .collect();
-    json!({ "groups": groups })
+    // Every item on the board by its ref, whatever the cap leaves out of its group, so a chat can
+    // tell a `[title](board:B4)` mention of a card still on it from one that left it.
+    //
+    // CDXC:Coordinators 2026-11-08 DECISION:
+    // User, of `[Deploy guest page 0.1.2 to share.ghostex.dev](board:B43)` in a message: "please
+    // color this different so it's clear that it's a mention for a board item". A board mention is
+    // its own tinted chip with the card's current title, dimmed when the card has left the board;
+    // the capped groups cannot say that (a busy Done holds more than `SUMMARY_ROWS`), this can.
+    let items: Map<String, Value> = rows
+        .iter()
+        .filter(|row| row["kind"] == "item")
+        .map(|row| (text(row, "ref"), json!(text(row, "title"))))
+        .collect();
+    json!({ "groups": groups, "items": items })
 }
 
 fn param_text(params: &Map<String, Value>, key: &str) -> Option<String> {
@@ -798,7 +881,7 @@ fn apply_fields(item: &mut BoardItem, params: &Map<String, Value>) -> Result<(),
     if let Some(group) = param_text(params, "group") {
         let (group, reason) = parse_group(&group).ok_or_else(|| {
             bad(format!(
-                "Unknown group {group}. Use todo (or later), parked, next, held, needs-you, blocked, moving, done or backlog."
+                "Unknown group {group}. Use todo (or later), parked, next, held, needs-you, blocked, on-hold, in-progress (or moving), done or backlog."
             ))
         })?;
         item.group = group.to_string();
@@ -838,7 +921,8 @@ fn apply_fields(item: &mut BoardItem, params: &Map<String, Value>) -> Result<(),
 }
 
 /// `/api/coordinatorBoard`: `op` is `read` (the whole board, every row), `add`, `move`, `note`,
-/// `done`, `drop` (to Removed), `restore` or `answer` (records a card's answer once). Returns the
+/// `done`, `drop` (to Removed), `restore`, `answer` (records a card's answer once) or `tag` (the
+/// user's tag on a card). Returns the
 /// answer and whether the board changed.
 pub fn handle_board_request(
     db: &Connection,
@@ -987,6 +1071,49 @@ pub fn handle_board_request(
                 true,
             ))
         }
+        // The user's tag on a card: an item keeps it here, a thread's goes on its session, where
+        // its sidebar row shows it too.
+        "tag" => {
+            let tag = param_text(params, "tag").unwrap_or_default();
+            if !tag.is_empty()
+                && ghostex_gx_core::tag_choice(&tag, None).is_none()
+                && !crate::custom_session_tags::is_custom_session_tag_id(&tag)
+            {
+                return Err(bad(format!("Unknown tag {tag}.")));
+            }
+            if let Some(number) = item_number(params) {
+                let mut item = read_item(db, key, number)?
+                    .filter(|item| !item.is_pin() && item.group != "dropped")
+                    .ok_or_else(|| bad(format!("This board has no item B{number}.")))?;
+                // A tag is the user's label, not the work moving: the card keeps its place and age.
+                item.tag = tag.clone();
+                write_item(db, key, &item)?;
+                return Ok((json!({ "item": format!("B{number}"), "tag": tag }), true));
+            }
+            let target =
+                thread_target(params).ok_or_else(|| bad("Name an item (B7) or a thread."))?;
+            if !target.0.is_empty() {
+                return Err(bad(
+                    "Tag a thread on another computer from its own sidebar.",
+                ));
+            }
+            let changed = db
+                .execute(
+                    "UPDATE sessions SET sessionTag = ?3, isFavorite = ?4, updatedAt = ?5 WHERE projectId = ?1 AND sessionId = ?2",
+                    params![
+                        target.1,
+                        target.2,
+                        (!tag.is_empty()).then_some(tag.as_str()),
+                        i64::from(tag == "favorite"),
+                        now,
+                    ],
+                )
+                .map_err(sql_error)?;
+            if changed == 0 {
+                return Err(bad("That thread's session is gone."));
+            }
+            Ok((json!({ "item": target.2, "tag": tag }), true))
+        }
         "drop" | "restore" => {
             let removing = op == "drop";
             let mut item = if let Some(number) = item_number(params) {
@@ -1036,7 +1163,7 @@ pub fn handle_board_request(
             ))
         }
         other => Err(bad(format!(
-            "Unknown board request {other}. Use read, add, move, note, done, drop or restore."
+            "Unknown board request {other}. Use read, add, move, note, done, drop, restore or tag."
         ))),
     }
 }
@@ -1061,6 +1188,10 @@ mod tests {
         .unwrap();
         db.execute_batch(include_str!(
             "../storage/migrations/0058_coordinator_board_answered.sql"
+        ))
+        .unwrap();
+        db.execute_batch(include_str!(
+            "../storage/migrations/0060_coordinator_board_tag.sql"
         ))
         .unwrap();
         db
@@ -1130,8 +1261,9 @@ mod tests {
         assert!(!done.contains(&"Gidle".to_string()) && !done.contains(&"Gold".to_string()));
     }
 
-    /// A finished thread's open PR places it: failing checks block it, running checks move it,
-    /// green checks put it with the user.
+    /// A finished thread's open PR places it: failing checks are To do (work for the coordinator,
+    /// not Blocked), running checks move it, green checks put it with the user; a stuck thread is
+    /// Blocked; an item goes On hold.
     #[test]
     fn a_threads_pr_places_it() {
         let with_pr = |id: &str, checks: &str| {
@@ -1149,13 +1281,26 @@ mod tests {
             None,
             now(),
         );
-        assert_eq!(refs(&board, "blocked"), vec!["Gred"]);
+        assert_eq!(refs(&board, "later"), vec!["Gred"]);
         assert_eq!(
-            group_of(&board, "blocked")["rows"][0]["detail"],
+            group_of(&board, "later")["rows"][0]["detail"],
             "CI failing on PR #12"
         );
         assert_eq!(refs(&board, "moving"), vec!["Gamber"]);
         assert_eq!(refs(&board, "needs"), vec!["Ggreen"]);
+        let mut stuck = thread("Gstuck", "working", 0);
+        stuck["stuck"] = json!(true);
+        let board = board_value(&[stuck], &[], None, now());
+        assert_eq!(refs(&board, "blocked"), vec!["Gstuck"]);
+        assert_eq!(parse_group("on-hold"), Some(("hold", "")));
+        assert_eq!(parse_group("on hold"), Some(("hold", "")));
+        let ids: Vec<&str> = board["groups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|group| group["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(&ids[3..6], &["blocked", "hold", "moving"]);
     }
 
     /// The coordinator's items and pins: an item lands where it was put, a release holds it, a
@@ -1329,10 +1474,18 @@ mod tests {
             request(json!({"op": "drop", "item": "B1"})).is_err(),
             "already removed"
         );
-        let threads = vec![
-            thread("Gsleep", "sleeping", 2),
-            thread("Gwork", "working", 0),
-        ];
+        // Idle since earlier today (two hours ago, or local midnight if sooner), before it was
+        // removed: an idle thread from yesterday is off the board, so a fixed two hours failed
+        // between midnight and 2 am.
+        let since_midnight = i64::from(chrono::Timelike::num_seconds_from_midnight(
+            &Local::now().time(),
+        ));
+        let mut sleeping = thread("Gsleep", "sleeping", 0);
+        sleeping["activeAt"] = json!(
+            (now() - chrono::Duration::seconds(since_midnight.min(7200)))
+                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+        );
+        let threads = vec![sleeping, thread("Gwork", "working", 0)];
         let board = board_value(&threads, &list_board_items(&db, &key).unwrap(), None, now());
         assert_eq!(refs(&board, "removed"), vec!["Gsleep", "B1"]);
         assert_eq!(
@@ -1354,6 +1507,37 @@ mod tests {
             .unwrap()
             .iter()
             .all(|item| item.thread_session_id != "Gsleep"));
+    }
+
+    /// An item keeps the user's tag; a thread's card shows its session's tag; the board offers the
+    /// sidebar's tag list and resolves each row's tag to its look.
+    #[test]
+    fn cards_carry_the_sidebars_tags() {
+        let db = db();
+        let key = ("P1".to_string(), "Gcoord".to_string());
+        let request =
+            |params: Value| handle_board_request(&db, &key, &[], params.as_object().unwrap());
+        request(json!({"op": "add", "title": "Help text"})).unwrap();
+        request(json!({"op": "tag", "item": "B1", "tag": "bug"})).unwrap();
+        assert!(request(json!({"op": "tag", "item": "B1", "tag": "nonsense"})).is_err());
+        let mut tagged = thread("Gtag", "working", 0);
+        tagged["sessionTag"] = json!("research");
+        let mut board = board_value(
+            &[tagged],
+            &list_board_items(&db, &key).unwrap(),
+            None,
+            now(),
+        );
+        add_tag_looks(&mut board, &Value::Null);
+        let later = &group_of(&board, "later")["rows"][0];
+        assert_eq!(later["tag"], "bug");
+        assert_eq!(later["tagLook"]["label"], "Bug");
+        assert_eq!(later["tagLook"]["icon"], "bug");
+        let moving = &group_of(&board, "moving")["rows"][0];
+        assert_eq!(moving["tagLook"]["label"], "Research");
+        assert_eq!(board["tagOptions"][0]["value"], "favorite");
+        request(json!({"op": "tag", "item": "B1", "tag": ""})).unwrap();
+        assert_eq!(list_board_items(&db, &key).unwrap()[0].tag, "");
     }
 
     /// The chat's copy carries at most `SUMMARY_ROWS` per group, with the true total.

@@ -38,7 +38,10 @@ pub enum Family {
 /// must never be able to crash the brain.
 pub fn owner(kind: &ActionKind) -> Option<Family> {
     Some(match kind {
-        ActionKind::Retry | ActionKind::Refresh | ActionKind::LoadEarlier => Family::Session,
+        ActionKind::Retry
+        | ActionKind::Refresh
+        | ActionKind::LoadEarlier
+        | ActionKind::ComputerRetry => Family::Session,
 
         ActionKind::RowDetails
         | ActionKind::ToggleSummary
@@ -55,7 +58,8 @@ pub fn owner(kind: &ActionKind) -> Option<Family> {
         | ActionKind::RunInTerminal
         | ActionKind::PasteInTerminal
         | ActionKind::LoadImage
-        | ActionKind::LoadPageThumbnail => Family::Transcript,
+        | ActionKind::LoadPageThumbnail
+        | ActionKind::GbotCard => Family::Transcript,
 
         ActionKind::Answer
         | ActionKind::QuestionText
@@ -178,9 +182,15 @@ pub fn owner(kind: &ActionKind) -> Option<Family> {
         | ActionKind::ToggleCoordinatorThreadsMore
         | ActionKind::ToggleCoordinatorBoardGroup
         | ActionKind::CoordinatorBoardMore
+        | ActionKind::ShowCoordinatorBoardGroup
         | ActionKind::CoordinatorBoardChange
         | ActionKind::CoordinatorBoardAnswer
         | ActionKind::InsertBoardReference
+        | ActionKind::HideCoordinatorIntro
+        | ActionKind::ToggleAutopilot
+        | ActionKind::SetCollabGuest
+        | ActionKind::ResolveCollabMessage
+        | ActionKind::UseCoordinatorIntroExample
         | ActionKind::ToggleBackgroundTasks
         | ActionKind::OpenCoordinatorThread
         | ActionKind::OpenSideChat
@@ -323,9 +333,15 @@ fn clears_error(kind: &ActionKind) -> bool {
             | ActionKind::ToggleCoordinatorThreadsMore
             | ActionKind::ToggleCoordinatorBoardGroup
             | ActionKind::CoordinatorBoardMore
+            | ActionKind::ShowCoordinatorBoardGroup
             | ActionKind::CoordinatorBoardChange
             | ActionKind::CoordinatorBoardAnswer
             | ActionKind::InsertBoardReference
+            | ActionKind::HideCoordinatorIntro
+        | ActionKind::ToggleAutopilot
+        | ActionKind::SetCollabGuest
+        | ActionKind::ResolveCollabMessage
+            | ActionKind::UseCoordinatorIntroExample
             | ActionKind::ToggleBackgroundTasks
             | ActionKind::OpenCoordinatorThread
             | ActionKind::OpenSideChat
@@ -386,9 +402,15 @@ fn publishes_at_once(kind: &ActionKind) -> bool {
             | ActionKind::ToggleCoordinatorThreadsMore
             | ActionKind::ToggleCoordinatorBoardGroup
             | ActionKind::CoordinatorBoardMore
+            | ActionKind::ShowCoordinatorBoardGroup
             | ActionKind::CoordinatorBoardChange
             | ActionKind::CoordinatorBoardAnswer
             | ActionKind::InsertBoardReference
+            | ActionKind::HideCoordinatorIntro
+            | ActionKind::ToggleAutopilot
+            | ActionKind::SetCollabGuest
+            | ActionKind::ResolveCollabMessage
+            | ActionKind::UseCoordinatorIntroExample
             | ActionKind::ToggleBackgroundTasks
             | ActionKind::OpenCoordinatorThread
             | ActionKind::OpenSideChat
